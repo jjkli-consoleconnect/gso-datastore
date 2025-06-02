@@ -311,7 +311,7 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
 #             logging.warning(f"Retrying query after {delay} seconds. Attempt {attempt + 1}/{retries}. Error: {e}")
 #             time.sleep(delay)
 #     logging.error("Failed to execute query after multiple retries.")
-#     return False
+#     return False --test
 
 def main():
     config = load_config()
