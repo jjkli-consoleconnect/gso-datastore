@@ -497,3 +497,57 @@
 2025-06-02 14:47:11 - Starting Docker image jira_ccascomments.
 2025-06-02 14:47:43 - Docker image jira_ccascomments ran successfully.
 2025-06-02 14:47:43 - All Docker images have been processed.
+2025-06-03 08:00:04 - ALLUSERSPROFILE=C:\ProgramData
+2025-06-03 08:00:04 - APPDATA=C:\Users\jjkli\AppData\Roaming
+2025-06-03 08:00:04 - CommonProgramFiles=C:\Program Files\Common Files
+2025-06-03 08:00:04 - CommonProgramFiles(x86)=C:\Program Files (x86)\Common Files
+2025-06-03 08:00:04 - CommonProgramW6432=C:\Program Files\Common Files
+2025-06-03 08:00:04 - COMPUTERNAME=ISD1733864A
+2025-06-03 08:00:04 - ComSpec=C:\WINDOWS\system32\cmd.exe
+2025-06-03 08:00:04 - DriverData=C:\Windows\System32\Drivers\DriverData
+2025-06-03 08:00:04 - GOOGLE_APPLICATION_CREDENTIALS=C:\Users\jjkli\Downloads\pccw-internal-virt-agent-uat-6ebfbde617c3.json
+2025-06-03 08:00:04 - HOMEDRIVE=C:
+2025-06-03 08:00:04 - HOMEPATH=\Users\jjkli
+2025-06-03 08:00:04 - LOCALAPPDATA=C:\Users\jjkli\AppData\Local
+2025-06-03 08:00:04 - LOGONSERVER=\\US-AD1-RST1
+2025-06-03 08:00:04 - NUMBER_OF_PROCESSORS=8
+2025-06-03 08:00:04 - OneDrive=C:\Users\jjkli\OneDrive
+2025-06-03 08:00:04 - OS=Windows_NT
+2025-06-03 08:00:04 - Path=C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\Intel\WiFi\bin\;C:\Program Files\Common Files\Intel\WirelessCommon\;C:\Windows\system32;C:\Program Files\dotnet\;C:\WINDOWS\system32;C:\Program Files\Google\Google Apps Sync\;C:\Program Files\Google\Google Apps Migration\;C:\Program Files\nodejs\;C:\Program Files\Docker\Docker\resources\bin;C:\Program Files\Git\cmd;C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\jjkli\AppData\Local\Programs\Python\Python313\;C:\Users\jjkli\AppData\Local\Programs\Python\Launcher\;C:\Users\jjkli\AppData\Local\Microsoft\WindowsApps;C:\Users\jjkli\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\jjkli\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin;C:\Users\jjkli\AppData\Roaming\npm
+2025-06-03 08:00:04 - PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL
+2025-06-03 08:00:04 - PROCESSOR_ARCHITECTURE=AMD64
+2025-06-03 08:00:04 - PROCESSOR_IDENTIFIER=Intel64 Family 6 Model 142 Stepping 10, GenuineIntel
+2025-06-03 08:00:04 - PROCESSOR_LEVEL=6
+2025-06-03 08:00:04 - PROCESSOR_REVISION=8e0a
+2025-06-03 08:00:04 - ProgramData=C:\ProgramData
+2025-06-03 08:00:04 - ProgramFiles=C:\Program Files
+2025-06-03 08:00:04 - ProgramFiles(x86)=C:\Program Files (x86)
+2025-06-03 08:00:04 - ProgramW6432=C:\Program Files
+2025-06-03 08:00:04 - PSExecutionPolicyPreference=Bypass
+2025-06-03 08:00:04 - PSModulePath=C:\Users\jjkli\Documents\WindowsPowerShell\Modules;C:\Users\jjkli\AppData\Local\Google\Cloud SDK\google-cloud-sdk\platform\PowerShell;C:\Program Files\WindowsPowerShell\Modules;C:\WINDOWS\system32\WindowsPowerShell\v1.0\Modules
+2025-06-03 08:00:04 - PUBLIC=C:\Users\Public
+2025-06-03 08:00:04 - SystemDrive=C:
+2025-06-03 08:00:04 - SystemRoot=C:\WINDOWS
+2025-06-03 08:00:04 - TEMP=C:\Users\jjkli\AppData\Local\Temp
+2025-06-03 08:00:04 - TMP=C:\Users\jjkli\AppData\Local\Temp
+2025-06-03 08:00:04 - USERDNSDOMAIN=CORP.PCCWGLOBAL.COM
+2025-06-03 08:00:04 - USERDOMAIN=CORP
+2025-06-03 08:00:04 - USERDOMAIN_ROAMINGPROFILE=CORP
+2025-06-03 08:00:04 - USERNAME=jjkli
+2025-06-03 08:00:04 - USERPROFILE=C:\Users\jjkli
+2025-06-03 08:00:04 - windir=C:\WINDOWS
+2025-06-03 08:00:04 - ZES_ENABLE_SYSMAN=1
+2025-06-03 08:00:04 - Starting to process Docker images.
+2025-06-03 08:00:04 - Starting Docker image jira_projecttracking.
+2025-06-03 08:00:23 - Docker image jira_projecttracking ran successfully.
+2025-06-03 08:00:23 - Starting Docker image jira_ccas.
+2025-06-03 08:00:40 - Docker image jira_ccas ran successfully.
+2025-06-03 08:00:40 - Starting Docker image jira_ccprov.
+2025-06-03 08:00:53 - Docker image jira_ccprov ran successfully.
+2025-06-03 08:00:53 - Starting Docker image jira_secondtier.
+2025-06-03 08:01:08 - Docker image jira_secondtier ran successfully.
+2025-06-03 08:01:08 - Starting Docker image jira_ccaschangelog.
+2025-06-03 08:01:31 - Docker image jira_ccaschangelog ran successfully.
+2025-06-03 08:01:31 - Starting Docker image jira_ccascomments.
+2025-06-03 08:01:55 - Docker image jira_ccascomments ran successfully.
+2025-06-03 08:01:55 - All Docker images have been processed.
