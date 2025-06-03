@@ -1,0 +1,511 @@
+2024-11-05 17:41:10 - Starting to process Docker images.
+2024-11-05 17:41:10 - Running Docker image: jira_projecttracking
+2024-11-05 17:41:33 - Docker image jira_projecttracking ran successfully.
+2024-11-05 17:41:33 - Running Docker image: jira_secondtier
+2024-11-05 17:42:44 - Docker image jira_secondtier ran successfully.
+2024-11-05 17:42:44 - Running Docker image: jira_ccas
+2024-11-05 17:43:35 - Docker image jira_ccas ran successfully.
+2024-11-05 17:43:35 - All Docker images have been processed.
+2024-11-05 17:48:33 - Starting to process Docker images.
+2024-11-05 17:48:33 - Running Docker image: jira_projecttracking
+2024-11-05 17:48:48 - Docker image jira_projecttracking ran successfully.
+2024-11-05 17:48:48 - Running Docker image: jira_secondtier
+2024-11-05 17:49:41 - Docker image jira_secondtier ran successfully.
+2024-11-05 17:49:41 - Running Docker image: jira_ccas
+2024-11-05 17:51:01 - Docker image jira_ccas ran successfully.
+2024-11-05 17:51:01 - All Docker images have been processed.
+2024-11-06 08:00:04 - Starting to process Docker images.
+2024-11-06 08:00:04 - Running Docker image: jira_projecttracking
+2024-11-06 08:00:20 - Docker image jira_projecttracking ran successfully.
+2024-11-06 08:00:20 - Running Docker image: jira_secondtier
+2024-11-06 08:01:57 - Docker image jira_secondtier ran successfully.
+2024-11-06 08:01:57 - Running Docker image: jira_ccas
+2024-11-06 08:03:34 - Docker image jira_ccas ran successfully.
+2024-11-06 08:03:34 - All Docker images have been processed.
+2024-11-06 11:18:52 - Starting to process Docker images.
+2024-11-06 11:18:52 - Running Docker image: jira_projecttracking
+2024-11-06 11:19:13 - Docker image jira_projecttracking ran successfully.
+2024-11-06 11:19:13 - Running Docker image: jira_secondtier
+2024-11-06 11:20:36 - Docker image jira_secondtier ran successfully.
+2024-11-06 11:20:36 - Running Docker image: jira_ccas
+2024-11-06 11:22:11 - Docker image jira_ccas ran successfully.
+2024-11-06 11:22:11 - Running Docker image: jira_ccprov
+2024-11-06 11:22:51 - Docker image jira_ccprov ran successfully.
+2024-11-06 11:22:51 - All Docker images have been processed.
+2024-11-06 15:59:23 - Starting to process Docker images.
+2024-11-06 15:59:23 - Running Docker image: jira_projecttracking
+2024-11-06 15:59:44 - Docker image jira_projecttracking ran successfully.
+2024-11-06 15:59:44 - Running Docker image: jira_secondtier
+2024-11-06 16:01:27 - Docker image jira_secondtier ran successfully.
+2024-11-06 16:01:27 - Running Docker image: jira_ccas
+2024-11-06 16:03:41 - Docker image jira_ccas ran successfully.
+2024-11-06 16:03:41 - Running Docker image: jira_ccprov
+2024-11-06 16:04:18 - Docker image jira_ccprov ran successfully.
+2024-11-06 16:04:18 - All Docker images have been processed.
+2024-11-06 16:58:43 - Starting to process Docker images.
+2024-11-06 16:58:43 - Running Docker image: jira_projecttracking
+2024-11-06 16:58:49 - Docker image jira_projecttracking ran successfully.
+2024-11-06 16:58:49 - Running Docker image: jira_secondtier
+2024-11-06 16:58:54 - Docker image jira_secondtier ran successfully.
+2024-11-06 16:58:54 - Running Docker image: jira_ccas
+2024-11-06 16:58:59 - Docker image jira_ccas ran successfully.
+2024-11-06 16:58:59 - Running Docker image: jira_ccprov
+2024-11-06 16:59:03 - Docker image jira_ccprov ran successfully.
+2024-11-06 16:59:03 - All Docker images have been processed.
+2024-11-06 17:13:46 - Starting to process Docker images.
+2024-11-06 17:13:46 - Running Docker image: jira_projecttracking
+2024-11-06 17:13:56 - Docker image jira_projecttracking ran successfully.
+2024-11-06 17:13:56 - Running Docker image: jira_secondtier
+2024-11-06 17:14:02 - Docker image jira_secondtier ran successfully.
+2024-11-06 17:14:02 - Running Docker image: jira_ccas
+2024-11-06 17:14:07 - Docker image jira_ccas ran successfully.
+2024-11-06 17:14:07 - Running Docker image: jira_ccprov
+2024-11-06 17:14:12 - Docker image jira_ccprov ran successfully.
+2024-11-06 17:14:12 - All Docker images have been processed.
+2024-11-07 08:00:07 - Starting to process Docker images.
+2024-11-07 08:00:07 - Running Docker image: jira_projecttracking
+2024-11-07 08:00:38 - Docker image jira_projecttracking ran successfully.
+2024-11-07 08:00:38 - Running Docker image: jira_secondtier
+2024-11-07 08:02:21 - Docker image jira_secondtier ran successfully.
+2024-11-07 08:02:21 - Running Docker image: jira_ccas
+2024-11-07 08:18:14 - Docker image jira_ccas ran successfully.
+2024-11-07 08:18:14 - Running Docker image: jira_ccprov
+2024-11-07 08:19:04 - Docker image jira_ccprov ran successfully.
+2024-11-07 08:19:04 - All Docker images have been processed.
+2024-11-07 10:11:51 - Starting to process Docker images.
+2024-11-07 10:11:51 - Running Docker image: jira_projecttracking
+2024-11-07 10:12:15 - Docker image jira_projecttracking ran successfully.
+2024-11-07 10:12:15 - Running Docker image: jira_secondtier
+2024-11-07 10:13:33 - Docker image jira_secondtier ran successfully.
+2024-11-07 10:13:33 - Running Docker image: jira_ccas
+2024-11-07 10:15:08 - Docker image jira_ccas ran successfully.
+2024-11-07 10:15:08 - Running Docker image: jira_ccprov
+2024-11-07 10:16:02 - Docker image jira_ccprov ran successfully.
+2024-11-07 10:16:02 - All Docker images have been processed.
+2024-11-08 08:00:05 - Starting to process Docker images.
+2024-11-08 08:00:05 - Running Docker image: jira_projecttracking
+2024-11-08 08:00:37 - Docker image jira_projecttracking ran successfully.
+2024-11-08 08:00:37 - Running Docker image: jira_secondtier
+2024-11-08 08:02:27 - Docker image jira_secondtier ran successfully.
+2024-11-08 08:02:27 - Running Docker image: jira_ccas
+2024-11-08 08:04:00 - Docker image jira_ccas ran successfully.
+2024-11-08 08:04:00 - Running Docker image: jira_ccprov
+2024-11-08 08:04:51 - Docker image jira_ccprov ran successfully.
+2024-11-08 08:04:51 - All Docker images have been processed.
+2024-11-09 08:00:04 - Starting to process Docker images.
+2024-11-09 08:00:04 - Running Docker image: jira_projecttracking
+2024-11-09 08:01:12 - Docker image jira_projecttracking ran successfully.
+2024-11-09 08:01:12 - Running Docker image: jira_secondtier
+2024-11-09 08:02:48 - Docker image jira_secondtier ran successfully.
+2024-11-09 08:02:48 - Running Docker image: jira_ccas
+2024-11-09 08:04:08 - Docker image jira_ccas ran successfully.
+2024-11-09 08:04:08 - Running Docker image: jira_ccprov
+2024-11-09 08:04:45 - Docker image jira_ccprov ran successfully.
+2024-11-09 08:04:45 - All Docker images have been processed.
+2024-11-10 08:00:06 - Starting to process Docker images.
+2024-11-10 08:00:06 - Running Docker image: jira_projecttracking
+2024-11-10 08:01:04 - Docker image jira_projecttracking ran successfully.
+2024-11-10 08:01:04 - Running Docker image: jira_secondtier
+2024-11-10 08:02:25 - Docker image jira_secondtier ran successfully.
+2024-11-10 08:02:25 - Running Docker image: jira_ccas
+2024-11-10 08:03:24 - Docker image jira_ccas ran successfully.
+2024-11-10 08:03:24 - Running Docker image: jira_ccprov
+2024-11-10 08:03:54 - Docker image jira_ccprov ran successfully.
+2024-11-10 08:03:54 - All Docker images have been processed.
+2024-11-11 08:00:04 - Starting to process Docker images.
+2024-11-11 08:00:04 - Running Docker image: jira_projecttracking
+2024-11-11 08:00:25 - Docker image jira_projecttracking ran successfully.
+2024-11-11 08:00:25 - Running Docker image: jira_secondtier
+2024-11-11 08:01:07 - Docker image jira_secondtier ran successfully.
+2024-11-11 08:01:07 - Running Docker image: jira_ccas
+2024-11-11 08:02:16 - Docker image jira_ccas ran successfully.
+2024-11-11 08:02:16 - Running Docker image: jira_ccprov
+2024-11-11 08:02:56 - Docker image jira_ccprov ran successfully.
+2024-11-11 08:02:56 - All Docker images have been processed.
+2024-11-11 09:41:28 - Starting to process Docker images.
+2024-11-11 09:41:28 - Running Docker image: jira_projecttracking
+2024-11-11 09:41:51 - Docker image jira_projecttracking ran successfully.
+2024-11-11 09:41:51 - Running Docker image: jira_secondtier
+2024-11-11 09:42:24 - Docker image jira_secondtier ran successfully.
+2024-11-11 09:42:24 - Running Docker image: jira_ccas
+2024-11-11 09:43:23 - Docker image jira_ccas ran successfully.
+2024-11-11 09:43:23 - Running Docker image: jira_ccprov
+2024-11-11 09:44:22 - Docker image jira_ccprov ran successfully.
+2024-11-11 09:44:22 - All Docker images have been processed.
+2024-11-12 08:00:07 - Starting to process Docker images.
+2024-11-12 08:00:07 - Running Docker image: jira_projecttracking
+2024-11-12 08:00:29 - Docker image jira_projecttracking ran successfully.
+2024-11-12 08:00:29 - Running Docker image: jira_secondtier
+2024-11-12 08:02:02 - Docker image jira_secondtier ran successfully.
+2024-11-12 08:02:02 - Running Docker image: jira_ccas
+2024-11-12 08:02:14 - Docker image jira_ccas ran successfully.
+2024-11-12 08:02:14 - Running Docker image: jira_ccprov
+2024-11-12 08:02:59 - Docker image jira_ccprov ran successfully.
+2024-11-12 08:02:59 - All Docker images have been processed.
+2024-11-12 12:15:40 - Starting to process Docker images.
+2024-11-12 12:15:40 - Running Docker image: jira_projecttracking
+2024-11-12 12:15:53 - Docker image jira_projecttracking ran successfully.
+2024-11-12 12:15:53 - Running Docker image: jira_secondtier
+2024-11-12 12:17:02 - Docker image jira_secondtier ran successfully.
+2024-11-12 12:17:02 - Running Docker image: jira_ccas
+2024-11-12 12:17:58 - Docker image jira_ccas ran successfully.
+2024-11-12 12:17:58 - Running Docker image: jira_ccprov
+2024-11-12 12:18:35 - Docker image jira_ccprov ran successfully.
+2024-11-12 12:18:35 - All Docker images have been processed.
+2024-11-12 17:49:51 - Starting to process Docker images.
+2024-11-12 17:49:51 - Running Docker image: jira_projecttracking
+2024-11-12 17:50:13 - Docker image jira_projecttracking ran successfully.
+2024-11-12 17:50:13 - Running Docker image: jira_secondtier
+2024-11-12 17:51:39 - Docker image jira_secondtier ran successfully.
+2024-11-12 17:51:39 - Running Docker image: jira_ccas
+2024-11-12 17:52:47 - Docker image jira_ccas ran successfully.
+2024-11-12 17:52:47 - Running Docker image: jira_ccprov
+2024-11-12 17:53:16 - Docker image jira_ccprov ran successfully.
+2024-11-12 17:53:16 - All Docker images have been processed.
+2024-11-13 08:00:04 - Starting to process Docker images.
+2024-11-13 08:00:04 - Running Docker image: jira_projecttracking
+2024-11-13 08:00:26 - Docker image jira_projecttracking ran successfully.
+2024-11-13 08:00:26 - Running Docker image: jira_secondtier
+2024-11-13 08:01:56 - Docker image jira_secondtier ran successfully.
+2024-11-13 08:01:56 - Running Docker image: jira_ccas
+2024-11-13 08:03:05 - Docker image jira_ccas ran successfully.
+2024-11-13 08:03:05 - Running Docker image: jira_ccprov
+2024-11-13 08:03:28 - Docker image jira_ccprov ran successfully.
+2024-11-13 08:03:28 - All Docker images have been processed.
+2024-11-14 08:00:04 - Starting to process Docker images.
+2024-11-14 08:00:05 - Running Docker image: jira_projecttracking
+2024-11-14 08:00:26 - Docker image jira_projecttracking ran successfully.
+2024-11-14 08:00:26 - Running Docker image: jira_secondtier
+2024-11-14 08:01:56 - Docker image jira_secondtier ran successfully.
+2024-11-14 08:01:56 - Running Docker image: jira_ccas
+2024-11-14 08:03:00 - Docker image jira_ccas ran successfully.
+2024-11-14 08:03:00 - Running Docker image: jira_ccprov
+2024-11-14 08:03:30 - Docker image jira_ccprov ran successfully.
+2024-11-14 08:03:30 - All Docker images have been processed.
+2024-11-15 08:00:04 - Starting to process Docker images.
+2024-11-15 08:00:04 - Running Docker image: jira_projecttracking
+2024-11-15 08:00:29 - Docker image jira_projecttracking ran successfully.
+2024-11-15 08:00:29 - Running Docker image: jira_secondtier
+2024-11-15 08:02:11 - Docker image jira_secondtier ran successfully.
+2024-11-15 08:02:11 - Running Docker image: jira_ccas
+2024-11-15 08:03:23 - Docker image jira_ccas ran successfully.
+2024-11-15 08:03:23 - Running Docker image: jira_ccprov
+2024-11-15 08:03:50 - Docker image jira_ccprov ran successfully.
+2024-11-15 08:03:51 - All Docker images have been processed.
+2024-11-18 09:55:10 - Starting to process Docker images.
+2024-11-18 09:55:10 - Running Docker image: jira_projecttracking
+2024-11-18 09:55:24 - Docker image jira_projecttracking ran successfully.
+2024-11-18 09:55:24 - Running Docker image: jira_secondtier
+2024-11-18 09:56:26 - Docker image jira_secondtier ran successfully.
+2024-11-18 09:56:26 - Running Docker image: jira_ccas
+2024-11-18 09:57:38 - Docker image jira_ccas ran successfully.
+2024-11-18 09:57:38 - Running Docker image: jira_ccprov
+2024-11-18 09:58:28 - Docker image jira_ccprov ran successfully.
+2024-11-18 09:58:28 - All Docker images have been processed.
+2024-11-19 08:00:04 - Starting to process Docker images.
+2024-11-19 08:00:04 - Running Docker image: jira_projecttracking
+2024-11-19 08:01:09 - Docker image jira_projecttracking ran successfully.
+2024-11-19 08:01:09 - Running Docker image: jira_secondtier
+2024-11-19 08:02:52 - Docker image jira_secondtier ran successfully.
+2024-11-19 08:02:52 - Running Docker image: jira_ccas
+2024-11-19 08:03:59 - Docker image jira_ccas ran successfully.
+2024-11-19 08:03:59 - Running Docker image: jira_ccprov
+2024-11-19 08:04:27 - Docker image jira_ccprov ran successfully.
+2024-11-19 08:04:27 - All Docker images have been processed.
+2024-11-20 08:00:04 - Starting to process Docker images.
+2024-11-20 08:00:04 - Running Docker image: jira_projecttracking
+2024-11-20 08:00:49 - Docker image jira_projecttracking ran successfully.
+2024-11-20 08:00:49 - Running Docker image: jira_secondtier
+2024-11-20 08:03:04 - Docker image jira_secondtier ran successfully.
+2024-11-20 08:03:04 - Running Docker image: jira_ccas
+2024-11-20 08:04:53 - Docker image jira_ccas ran successfully.
+2024-11-20 08:04:53 - Running Docker image: jira_ccprov
+2024-11-20 08:05:20 - Docker image jira_ccprov ran successfully.
+2024-11-20 08:05:20 - All Docker images have been processed.
+2024-11-21 08:00:05 - Starting to process Docker images.
+2024-11-21 08:00:05 - Running Docker image: jira_projecttracking
+2024-11-21 08:00:24 - Docker image jira_projecttracking ran successfully.
+2024-11-21 08:00:24 - Running Docker image: jira_secondtier
+2024-11-21 08:02:09 - Docker image jira_secondtier ran successfully.
+2024-11-21 08:02:09 - Running Docker image: jira_ccas
+2024-11-21 08:04:08 - Docker image jira_ccas ran successfully.
+2024-11-21 08:04:08 - Running Docker image: jira_ccprov
+2024-11-21 08:05:12 - Docker image jira_ccprov ran successfully.
+2024-11-21 08:05:12 - All Docker images have been processed.
+2024-11-22 08:00:04 - Starting to process Docker images.
+2024-11-22 08:00:04 - Running Docker image: jira_projecttracking
+2024-11-22 08:00:33 - Docker image jira_projecttracking ran successfully.
+2024-11-22 08:00:33 - Running Docker image: jira_secondtier
+2024-11-22 08:02:44 - Docker image jira_secondtier ran successfully.
+2024-11-22 08:02:44 - Running Docker image: jira_ccas
+2024-11-22 08:05:39 - Docker image jira_ccas ran successfully.
+2024-11-22 08:05:39 - Running Docker image: jira_ccprov
+2024-11-22 08:06:16 - Docker image jira_ccprov ran successfully.
+2024-11-22 08:06:16 - All Docker images have been processed.
+2024-11-25 09:33:42 - Starting to process Docker images.
+2024-11-25 09:33:42 - Running Docker image: jira_projecttracking
+2024-11-25 09:33:42 - Docker image jira_projecttracking ran successfully.
+2024-11-25 09:33:42 - Running Docker image: jira_secondtier
+2024-11-25 09:33:42 - Docker image jira_secondtier ran successfully.
+2024-11-25 09:33:42 - Running Docker image: jira_ccas
+2024-11-25 09:33:43 - Docker image jira_ccas ran successfully.
+2024-11-25 09:33:43 - Running Docker image: jira_ccprov
+2024-11-25 09:33:43 - Docker image jira_ccprov ran successfully.
+2024-11-25 09:33:43 - All Docker images have been processed.
+2024-11-25 09:34:56 - Starting to process Docker images.
+2024-11-25 09:34:56 - Running Docker image: jira_projecttracking
+2024-11-25 09:35:14 - Docker image jira_projecttracking ran successfully.
+2024-11-25 09:35:14 - Running Docker image: jira_secondtier
+2024-11-25 09:36:27 - Docker image jira_secondtier ran successfully.
+2024-11-25 09:36:27 - Running Docker image: jira_ccas
+2024-11-25 09:38:16 - Docker image jira_ccas ran successfully.
+2024-11-25 09:38:16 - Running Docker image: jira_ccprov
+2024-11-25 09:39:41 - Docker image jira_ccprov ran successfully.
+2024-11-25 09:39:41 - All Docker images have been processed.
+2024-11-25 09:40:38 - Starting to process Docker images.
+2024-11-25 09:40:38 - Running Docker image: jira_projecttracking
+2024-11-25 09:40:52 - Docker image jira_projecttracking ran successfully.
+2024-11-25 09:40:52 - Running Docker image: jira_secondtier
+2024-11-25 09:43:20 - Docker image jira_secondtier ran successfully.
+2024-11-25 09:43:20 - Running Docker image: jira_ccas
+2024-11-25 09:47:23 - Docker image jira_ccas ran successfully.
+2024-11-25 09:47:23 - Running Docker image: jira_ccprov
+2024-11-25 09:48:41 - Docker image jira_ccprov ran successfully.
+2024-11-25 09:48:41 - All Docker images have been processed.
+2024-11-25 14:06:01 [WARN] - Docker is not running. Attempting to start Docker service...
+2024-11-25 14:11:01 [ERROR] - Failed to start Docker service within the timeout period. Exiting script.
+2024-11-25 14:22:11 [WARN] - Docker is not running. Attempting to start Docker service...
+2024-11-25 14:27:11 [ERROR] - Failed to start Docker service within the timeout period. Exiting script.
+2024-11-25 14:28:15 [WARN] - Docker is not running. Attempting to start Docker service...
+2024-11-25 14:33:10 [WARN] - Docker is not running. Attempting to start Docker service...
+2024-11-25 14:36:33 [WARN] - Docker is not running. Attempting to start Docker service...
+2024-11-25 14:40:27 [WARN] - Docker is not running. Attempting to start Docker service...
+2024-11-25 14:40:27 [ERROR] - Failed to start Docker service: Service 'Docker Desktop Service (com.docker.service)' cannot be started due to the following error: Cannot open com.docker.service service on computer '.'.
+2024-11-25 14:43:13 [WARN] - Docker is not running. Attempting to start Docker service...
+2024-11-25 14:43:13 [ERROR] - Failed to start Docker service: Service 'Docker Desktop Service (com.docker.service)' cannot be started due to the following error: Cannot open com.docker.service service on computer '.'.
+2024-11-25 14:54:17 [INFO] - Docker is already running.
+2024-11-25 14:54:17 [INFO] - Polling Docker image: jira_projecttracking
+2024-11-25 14:54:23 [INFO] - Successfully pulled Docker image: jira_projecttracking
+2024-11-25 14:54:23 [INFO] - Polling Docker image: jira_secondtier
+2024-11-25 14:54:25 [INFO] - Successfully pulled Docker image: jira_secondtier
+2024-11-25 14:54:25 [INFO] - Polling Docker image: jira_ccas
+2024-11-25 14:54:28 [INFO] - Successfully pulled Docker image: jira_ccas
+2024-11-25 14:54:28 [INFO] - Polling Docker image: jira_ccprov
+2024-11-25 14:54:30 [INFO] - Successfully pulled Docker image: jira_ccprov
+2024-11-25 14:56:49 [INFO] - Docker is already running.
+2024-11-25 14:56:49 [INFO] - Polling Docker image: jira_projecttracking
+2024-11-25 14:56:54 [INFO] - Successfully pulled Docker image: jira_projecttracking
+2024-11-25 14:56:54 [INFO] - Polling Docker image: jira_secondtier
+2024-11-25 14:56:56 [INFO] - Successfully pulled Docker image: jira_secondtier
+2024-11-25 14:56:56 [INFO] - Polling Docker image: jira_ccas
+2024-11-25 14:56:59 [INFO] - Successfully pulled Docker image: jira_ccas
+2024-11-25 14:56:59 [INFO] - Polling Docker image: jira_ccprov
+2024-11-25 14:57:01 [INFO] - Successfully pulled Docker image: jira_ccprov
+2024-11-25 14:58:01 [INFO] - Docker is already running.
+2024-11-25 14:58:01 [INFO] - Polling Docker image: jira_projecttracking
+2024-11-25 14:58:04 [ERROR] - Failed to pull Docker image: jira_projecttracking. Error: 1
+2024-11-25 14:58:04 [INFO] - Polling Docker image: jira_secondtier
+2024-11-25 14:58:05 [ERROR] - Failed to pull Docker image: jira_secondtier. Error: 1
+2024-11-25 14:58:05 [INFO] - Polling Docker image: jira_ccas
+2024-11-25 14:58:07 [ERROR] - Failed to pull Docker image: jira_ccas. Error: 1
+2024-11-25 14:58:07 [INFO] - Polling Docker image: jira_ccprov
+2024-11-25 14:58:08 [ERROR] - Failed to pull Docker image: jira_ccprov. Error: 1
+2024-11-25 14:58:50 [INFO] - Docker is already running.
+2024-11-25 14:58:50 [INFO] - Polling Docker image: jira_projecttracking
+2024-11-25 14:58:53 [ERROR] - Failed to pull Docker image: jira_projecttracking. Error: Using default tag: latest Error response from daemon: pull access denied for jira_projecttracking, repository does not exist or may require 'docker login'
+2024-11-25 14:58:53 [INFO] - Polling Docker image: jira_secondtier
+2024-11-25 14:58:54 [ERROR] - Failed to pull Docker image: jira_secondtier. Error: Using default tag: latest Error response from daemon: pull access denied for jira_secondtier, repository does not exist or may require 'docker login'
+2024-11-25 14:58:54 [INFO] - Polling Docker image: jira_ccas
+2024-11-25 14:58:56 [ERROR] - Failed to pull Docker image: jira_ccas. Error: Using default tag: latest Error response from daemon: pull access denied for jira_ccas, repository does not exist or may require 'docker login'
+2024-11-25 14:58:56 [INFO] - Polling Docker image: jira_ccprov
+2024-11-25 14:58:58 [ERROR] - Failed to pull Docker image: jira_ccprov. Error: Using default tag: latest Error response from daemon: pull access denied for jira_ccprov, repository does not exist or may require 'docker login'
+2024-11-25 15:01:56 [INFO] - Docker is already running.
+2024-11-25 15:01:56 [INFO] - Checking Docker image: jira_projecttracking
+2024-11-25 15:01:56 [INFO] - Docker image jira_projecttracking exists locally.
+2024-11-25 15:01:56 [INFO] - Checking Docker image: jira_secondtier
+2024-11-25 15:01:57 [INFO] - Docker image jira_secondtier exists locally.
+2024-11-25 15:01:57 [INFO] - Checking Docker image: jira_ccas
+2024-11-25 15:01:57 [INFO] - Docker image jira_ccas exists locally.
+2024-11-25 15:01:57 [INFO] - Checking Docker image: jira_ccprov
+2024-11-25 15:01:57 [INFO] - Docker image jira_ccprov exists locally.
+2024-11-25 15:03:09 [INFO] - Docker is already running.
+2024-11-25 15:03:09 [INFO] - Checking Docker image: jira_projecttracking
+2024-11-25 15:03:09 [INFO] - Docker image jira_projecttracking exists locally.
+2024-11-25 15:03:09 [INFO] - Running container from image: jira_projecttracking
+2024-11-25 15:03:10 [INFO] - Successfully started container from image: jira_projecttracking
+2024-11-25 15:03:10 [INFO] - Checking Docker image: jira_secondtier
+2024-11-25 15:03:11 [INFO] - Docker image jira_secondtier exists locally.
+2024-11-25 15:03:11 [INFO] - Running container from image: jira_secondtier
+2024-11-25 15:03:12 [INFO] - Successfully started container from image: jira_secondtier
+2024-11-25 15:03:12 [INFO] - Checking Docker image: jira_ccas
+2024-11-25 15:03:12 [INFO] - Docker image jira_ccas exists locally.
+2024-11-25 15:03:12 [INFO] - Running container from image: jira_ccas
+2024-11-25 15:03:13 [INFO] - Successfully started container from image: jira_ccas
+2024-11-25 15:03:13 [INFO] - Checking Docker image: jira_ccprov
+2024-11-25 15:03:13 [INFO] - Docker image jira_ccprov exists locally.
+2024-11-25 15:03:13 [INFO] - Running container from image: jira_ccprov
+2024-11-25 15:03:14 [INFO] - Successfully started container from image: jira_ccprov
+2024-11-25 15:05:38 [INFO] - Docker is already running.
+2024-11-25 15:05:38 [INFO] - Checking Docker image: jira_projecttracking
+2024-11-25 15:05:38 [INFO] - Docker image jira_projecttracking exists locally.
+2024-11-25 15:05:38 [INFO] - Starting container from image: jira_projecttracking at 11/25/2024 15:05:38
+2024-11-25 15:05:43 [INFO] - Successfully ran container from image: jira_projecttracking at 11/25/2024 15:05:43 (Duration: 00:00:05.2122212)
+2024-11-25 15:05:43 [INFO] - Checking Docker image: jira_secondtier
+2024-11-25 15:05:44 [INFO] - Docker image jira_secondtier exists locally.
+2024-11-25 15:05:44 [INFO] - Starting container from image: jira_secondtier at 11/25/2024 15:05:44
+2024-11-25 15:05:49 [INFO] - Successfully ran container from image: jira_secondtier at 11/25/2024 15:05:49 (Duration: 00:00:04.9196606)
+2024-11-25 15:05:49 [INFO] - Checking Docker image: jira_ccas
+2024-11-25 15:05:49 [INFO] - Docker image jira_ccas exists locally.
+2024-11-25 15:05:49 [INFO] - Starting container from image: jira_ccas at 11/25/2024 15:05:49
+2024-11-25 15:05:54 [INFO] - Successfully ran container from image: jira_ccas at 11/25/2024 15:05:54 (Duration: 00:00:05.3721933)
+2024-11-25 15:05:54 [INFO] - Checking Docker image: jira_ccprov
+2024-11-25 15:05:55 [INFO] - Docker image jira_ccprov exists locally.
+2024-11-25 15:05:55 [INFO] - Starting container from image: jira_ccprov at 11/25/2024 15:05:55
+2024-11-25 15:06:00 [INFO] - Successfully ran container from image: jira_ccprov at 11/25/2024 15:06:00 (Duration: 00:00:05.5628299)
+2024-11-25 15:06:06 [INFO] - Docker is already running.
+2024-11-25 15:06:06 [INFO] - Checking Docker image: jira_projecttracking
+2024-11-25 15:06:07 [INFO] - Docker image jira_projecttracking exists locally.
+2024-11-25 15:06:07 [INFO] - Starting container from image: jira_projecttracking at 11/25/2024 15:06:07
+2024-11-25 15:06:13 [INFO] - Successfully ran container from image: jira_projecttracking at 11/25/2024 15:06:13 (Duration: 00:00:06.4858488)
+2024-11-25 15:06:13 [INFO] - Checking Docker image: jira_secondtier
+2024-11-25 15:06:13 [INFO] - Docker image jira_secondtier exists locally.
+2024-11-25 15:06:13 [INFO] - Starting container from image: jira_secondtier at 11/25/2024 15:06:13
+2024-11-25 15:06:19 [INFO] - Successfully ran container from image: jira_secondtier at 11/25/2024 15:06:19 (Duration: 00:00:05.5603097)
+2024-11-25 15:06:19 [INFO] - Checking Docker image: jira_ccas
+2024-11-25 15:06:19 [INFO] - Docker image jira_ccas exists locally.
+2024-11-25 15:06:19 [INFO] - Starting container from image: jira_ccas at 11/25/2024 15:06:19
+2024-11-25 15:06:25 [INFO] - Successfully ran container from image: jira_ccas at 11/25/2024 15:06:25 (Duration: 00:00:05.3164644)
+2024-11-25 15:06:25 [INFO] - Checking Docker image: jira_ccprov
+2024-11-25 15:06:25 [INFO] - Docker image jira_ccprov exists locally.
+2024-11-25 15:06:25 [INFO] - Starting container from image: jira_ccprov at 11/25/2024 15:06:25
+2024-11-25 15:06:30 [INFO] - Successfully ran container from image: jira_ccprov at 11/25/2024 15:06:30 (Duration: 00:00:05.4510138)
+2024-11-25 15:08:28 [INFO] - Docker is already running.
+2024-11-25 15:08:28 [INFO] - Checking Docker image: jira_projecttracking
+2024-11-25 15:08:29 [INFO] - Docker image jira_projecttracking exists locally.
+2024-11-25 15:08:29 [INFO] - Starting container from image: jira_projecttracking at 11/25/2024 15:08:29
+2024-11-25 15:08:33 [INFO] - Successfully ran container from image: jira_projecttracking at 11/25/2024 15:08:33 (Duration: 00:00:04.7834311)
+2024-11-25 15:08:33 [INFO] - Container output: 2024-11-25 07:08:30,382 - WARNING - Compute Engine Metadata server unavailable on attempt 1 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:31,474 - WARNING - Compute Engine Metadata server unavailable on attempt 2 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:33,308 - WARNING - Compute Engine Metadata server unavailable on attempt 3 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:33,308 - WARNING - Authentication failed using Compute Engine authentication due to unavailable metadata server. 2024-11-25 07:08:33,308 - ERROR - Unexpected error: Your default credentials were not found. To set up Application Default Credentials, see https://cloud.google.com/docs/authentication/external/set-up-adc for more information.
+2024-11-25 15:08:33 [INFO] - Checking Docker image: jira_secondtier
+2024-11-25 15:08:34 [INFO] - Docker image jira_secondtier exists locally.
+2024-11-25 15:08:34 [INFO] - Starting container from image: jira_secondtier at 11/25/2024 15:08:34
+2024-11-25 15:08:39 [INFO] - Successfully ran container from image: jira_secondtier at 11/25/2024 15:08:39 (Duration: 00:00:05.3761397)
+2024-11-25 15:08:39 [INFO] - Container output: 2024-11-25 07:08:35,677 - WARNING - Compute Engine Metadata server unavailable on attempt 1 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:36,688 - WARNING - Compute Engine Metadata server unavailable on attempt 2 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:38,782 - WARNING - Compute Engine Metadata server unavailable on attempt 3 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:38,782 - WARNING - Authentication failed using Compute Engine authentication due to unavailable metadata server. 2024-11-25 07:08:38,783 - ERROR - Unexpected error: Your default credentials were not found. To set up Application Default Credentials, see https://cloud.google.com/docs/authentication/external/set-up-adc for more information. Traceback (most recent call last):   File "/app/main.py", line 78, in fetch_and_sync_jira_data     client = bigquery.Client()   File "/usr/local/lib/python3.9/site-packages/google/cloud/bigquery/client.py", line 243, in __init__     super(Client, self).__init__(   File "/usr/local/lib/python3.9/site-packages/google/cloud/client/__init__.py", line 320, in __init__     _ClientProjectMixin.__init__(self, project=project, credentials=credentials)   File "/usr/local/lib/python3.9/site-packages/google/cloud/client/__init__.py", line 268, in __init__     project = self._determine_default(project)   File "/usr/local/lib/python3.9/site-packages/google/cloud/client/__init__.py", line 287, in _determine_default     return _determine_default_project(project)   File "/usr/local/lib/python3.9/site-packages/google/cloud/_helpers/__init__.py", line 152, in _determine_default_project     _, project = google.auth.default()   File "/usr/local/lib/python3.9/site-packages/google/auth/_default.py", line 693, in default     raise exceptions.DefaultCredentialsError(_CLOUD_SDK_MISSING_CREDENTIALS) google.auth.exceptions.DefaultCredentialsError: Your default credentials were not found. To set up Application Default Credentials, see https://cloud.google.com/docs/authentication/external/set-up-adc for more information.
+2024-11-25 15:08:39 [INFO] - Checking Docker image: jira_ccas
+2024-11-25 15:08:39 [INFO] - Docker image jira_ccas exists locally.
+2024-11-25 15:08:39 [INFO] - Starting container from image: jira_ccas at 11/25/2024 15:08:39
+2024-11-25 15:08:45 [INFO] - Successfully ran container from image: jira_ccas at 11/25/2024 15:08:45 (Duration: 00:00:05.5865344)
+2024-11-25 15:08:45 [INFO] - Container output: 2024-11-25 07:08:41,712 - WARNING - Compute Engine Metadata server unavailable on attempt 1 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:42,691 - WARNING - Compute Engine Metadata server unavailable on attempt 2 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:44,838 - WARNING - Compute Engine Metadata server unavailable on attempt 3 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:44,839 - WARNING - Authentication failed using Compute Engine authentication due to unavailable metadata server. 2024-11-25 07:08:44,839 - ERROR - Unexpected error: Your default credentials were not found. To set up Application Default Credentials, see https://cloud.google.com/docs/authentication/external/set-up-adc for more information. Traceback (most recent call last):   File "/app/main.py", line 91, in fetch_and_sync_jira_data     client = bigquery.Client()   File "/usr/local/lib/python3.9/site-packages/google/cloud/bigquery/client.py", line 243, in __init__     super(Client, self).__init__(   File "/usr/local/lib/python3.9/site-packages/google/cloud/client/__init__.py", line 320, in __init__     _ClientProjectMixin.__init__(self, project=project, credentials=credentials)   File "/usr/local/lib/python3.9/site-packages/google/cloud/client/__init__.py", line 268, in __init__     project = self._determine_default(project)   File "/usr/local/lib/python3.9/site-packages/google/cloud/client/__init__.py", line 287, in _determine_default     return _determine_default_project(project)   File "/usr/local/lib/python3.9/site-packages/google/cloud/_helpers/__init__.py", line 152, in _determine_default_project     _, project = google.auth.default()   File "/usr/local/lib/python3.9/site-packages/google/auth/_default.py", line 697, in default     raise exceptions.DefaultCredentialsError(_CLOUD_SDK_MISSING_CREDENTIALS) google.auth.exceptions.DefaultCredentialsError: Your default credentials were not found. To set up Application Default Credentials, see https://cloud.google.com/docs/authentication/external/set-up-adc for more information.
+2024-11-25 15:08:45 [INFO] - Checking Docker image: jira_ccprov
+2024-11-25 15:08:45 [INFO] - Docker image jira_ccprov exists locally.
+2024-11-25 15:08:45 [INFO] - Starting container from image: jira_ccprov at 11/25/2024 15:08:45
+2024-11-25 15:08:51 [INFO] - Successfully ran container from image: jira_ccprov at 11/25/2024 15:08:51 (Duration: 00:00:05.2421598)
+2024-11-25 15:08:51 [INFO] - Container output: 2024-11-25 07:08:47,590 - WARNING - Compute Engine Metadata server unavailable on attempt 1 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:48,494 - WARNING - Compute Engine Metadata server unavailable on attempt 2 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:50,505 - WARNING - Compute Engine Metadata server unavailable on attempt 3 of 3. Reason: [Errno 111] Connection refused 2024-11-25 07:08:50,505 - WARNING - Authentication failed using Compute Engine authentication due to unavailable metadata server. 2024-11-25 07:08:50,505 - ERROR - Unexpected error: Your default credentials were not found. To set up Application Default Credentials, see https://cloud.google.com/docs/authentication/external/set-up-adc for more information. Traceback (most recent call last):   File "/app/main.py", line 78, in fetch_and_sync_jira_data     client = bigquery.Client()   File "/usr/local/lib/python3.9/site-packages/google/cloud/bigquery/client.py", line 243, in __init__     super(Client, self).__init__(   File "/usr/local/lib/python3.9/site-packages/google/cloud/client/__init__.py", line 320, in __init__     _ClientProjectMixin.__init__(self, project=project, credentials=credentials)   File "/usr/local/lib/python3.9/site-packages/google/cloud/client/__init__.py", line 268, in __init__     project = self._determine_default(project)   File "/usr/local/lib/python3.9/site-packages/google/cloud/client/__init__.py", line 287, in _determine_default     return _determine_default_project(project)   File "/usr/local/lib/python3.9/site-packages/google/cloud/_helpers/__init__.py", line 152, in _determine_default_project     _, project = google.auth.default()   File "/usr/local/lib/python3.9/site-packages/google/auth/_default.py", line 693, in default     raise exceptions.DefaultCredentialsError(_CLOUD_SDK_MISSING_CREDENTIALS) google.auth.exceptions.DefaultCredentialsError: Your default credentials were not found. To set up Application Default Credentials, see https://cloud.google.com/docs/authentication/external/set-up-adc for more information.
+2024-11-25 15:12:36 [INFO] - Docker is already running.
+2024-11-25 15:12:36 [INFO] - Polling Docker image: jira_projecttracking
+2024-11-25 15:12:40 [INFO] - Successfully pulled Docker image: jira_projecttracking
+2024-11-25 15:12:40 [INFO] - Polling Docker image: jira_secondtier
+2024-11-25 15:12:43 [INFO] - Successfully pulled Docker image: jira_secondtier
+2024-11-25 15:12:43 [INFO] - Polling Docker image: jira_ccas
+2024-11-25 15:12:45 [INFO] - Successfully pulled Docker image: jira_ccas
+2024-11-25 15:12:45 [INFO] - Polling Docker image: jira_ccprov
+2024-11-25 15:12:48 [INFO] - Successfully pulled Docker image: jira_ccprov
+2024-11-25 15:13:45 [INFO] - Polling Docker image: jira_projecttracking
+2024-11-25 15:13:49 [INFO] - Successfully pulled Docker image: jira_projecttracking
+2024-11-25 15:13:49 [INFO] - Polling Docker image: jira_secondtier
+2024-11-25 15:13:52 [INFO] - Successfully pulled Docker image: jira_secondtier
+2024-11-25 15:13:52 [INFO] - Polling Docker image: jira_ccas
+2024-11-25 15:13:55 [INFO] - Successfully pulled Docker image: jira_ccas
+2024-11-25 15:13:55 [INFO] - Polling Docker image: jira_ccprov
+2024-11-25 15:13:58 [INFO] - Successfully pulled Docker image: jira_ccprov
+2024-11-25 15:15:19 - Starting to process Docker images.
+2024-11-25 15:15:19 - Running Docker image: jira_projecttracking
+2024-11-25 15:15:32 - Docker image jira_projecttracking ran successfully.
+2024-11-25 15:15:32 - Running Docker image: jira_secondtier
+2024-11-25 15:16:53 - Docker image jira_secondtier ran successfully.
+2024-11-25 15:16:53 - Running Docker image: jira_ccas
+2024-11-25 15:18:35 - Docker image jira_ccas ran successfully.
+2024-11-25 15:18:35 - Running Docker image: jira_ccprov
+2024-11-25 15:19:17 - Docker image jira_ccprov ran successfully.
+2024-11-25 15:19:17 - All Docker images have been processed.
+2024-11-25 15:24:28 [INFO] Starting to process Docker images.
+2024-11-25 15:24:28 [INFO] Successfully processed Docker image: jira_projecttracking
+2024-11-25 15:24:28 [INFO] Successfully processed Docker image: jira_secondtier
+2024-11-25 15:24:28 [ERROR] Failed to process Docker image: jira_ccas. Error: Simulated failure for jira_ccas
+2024-11-25 15:24:28 [INFO] Successfully processed Docker image: jira_ccprov
+2024-11-25 15:24:28 [INFO] All Docker images have been processed.
+2024-11-25 15:25:29 - Starting to process Docker images.
+2024-11-25 15:25:29 - Running Docker image: jira_projecttracking
+2024-11-25 15:25:46 - Docker image jira_projecttracking ran successfully.
+2024-11-25 15:25:46 - Running Docker image: jira_secondtier
+2024-11-25 15:26:52 - Docker image jira_secondtier ran successfully.
+2024-11-25 15:26:52 - Running Docker image: jira_ccas
+2024-11-25 15:29:01 - Docker image jira_ccas ran successfully.
+2024-11-25 15:29:01 - Running Docker image: jira_ccprov
+2024-11-25 15:29:43 - Docker image jira_ccprov ran successfully.
+2024-11-25 15:29:43 - All Docker images have been processed.
+2024-11-26 08:00:04 - Starting to process Docker images.
+2024-11-26 08:00:04 - Running Docker image: jira_projecttracking
+2024-11-26 08:00:43 - Docker image jira_projecttracking ran successfully.
+2024-11-26 08:00:43 - Running Docker image: jira_secondtier
+2024-11-26 08:02:25 - Docker image jira_secondtier ran successfully.
+2024-11-26 08:02:25 - Running Docker image: jira_ccas
+2024-11-26 08:04:09 - Docker image jira_ccas ran successfully.
+2024-11-26 08:04:09 - Running Docker image: jira_ccprov
+2024-11-26 08:04:49 - Docker image jira_ccprov ran successfully.
+2024-11-26 08:04:49 - All Docker images have been processed.
+2024-11-27 08:00:03 - Starting to process Docker images.
+2024-11-27 08:00:03 - Running Docker image: jira_projecttracking
+2024-11-27 08:00:32 - Docker image jira_projecttracking ran successfully.
+2024-11-27 08:00:32 - Running Docker image: jira_secondtier
+2024-11-27 08:02:17 - Docker image jira_secondtier ran successfully.
+2024-11-27 08:02:17 - Running Docker image: jira_ccas
+2024-11-27 08:04:18 - Docker image jira_ccas ran successfully.
+2024-11-27 08:04:18 - Running Docker image: jira_ccprov
+2024-11-27 08:04:57 - Docker image jira_ccprov ran successfully.
+2024-11-27 08:04:57 - All Docker images have been processed.
+2024-11-28 08:00:04 - Starting to process Docker images.
+2024-11-28 08:00:04 - Running Docker image: jira_projecttracking
+2024-11-28 08:00:58 - Docker image jira_projecttracking ran successfully.
+2024-11-28 08:00:58 - Running Docker image: jira_secondtier
+2024-11-28 08:02:41 - Docker image jira_secondtier ran successfully.
+2024-11-28 08:02:41 - Running Docker image: jira_ccas
+2024-11-28 08:04:20 - Docker image jira_ccas ran successfully.
+2024-11-28 08:04:20 - Running Docker image: jira_ccprov
+2024-11-28 08:04:50 - Docker image jira_ccprov ran successfully.
+2024-11-28 08:04:50 - All Docker images have been processed.
+2024-11-28 09:49:24 - Starting to process Docker images.
+2024-11-28 09:49:24 - Running Docker image: jira_projecttracking
+2024-11-28 09:50:04 - Docker image jira_projecttracking ran successfully.
+2024-11-28 09:50:04 - Running Docker image: jira_secondtier
+2024-11-28 09:51:56 - Docker image jira_secondtier ran successfully.
+2024-11-28 09:51:56 - Running Docker image: jira_ccas
+2024-11-28 09:53:33 - Docker image jira_ccas ran successfully.
+2024-11-28 09:53:33 - Running Docker image: jira_ccprov
+2024-11-28 09:54:04 - Docker image jira_ccprov ran successfully.
+2024-11-28 09:54:04 - All Docker images have been processed.
+2 0 2 4 - 1 1 - 2 8   0 9 : 5 8 : 2 7   -   S t a r t i n g   t o   p r o c e s s   D o c k e r   i m a g e s .  
+ 2 0 2 4 - 1 1 - 2 8   0 9 : 5 8 : 2 7   -   A l l   D o c k e r   i m a g e s   h a v e   b e e n   p r o c e s s e d .  
+ 2 0 2 4 - 1 1 - 2 8   0 9 : 5 8 : 3 3   -   S t a r t i n g   t o   p r o c e s s   D o c k e r   i m a g e s .  
+ 2 0 2 4 - 1 1 - 2 8   0 9 : 5 8 : 3 3   -   A l l   D o c k e r   i m a g e s   h a v e   b e e n   p r o c e s s e d .  
+ 2024-11-28 09:59:36 - Starting to process Docker images.
+2024-11-28 09:59:36 - Starting Docker image image1.
+2024-11-28 09:59:40 - Error running Docker image image1. Output: Unable to find image 'image1:latest' locally docker: Error response from daemon: pull access denied for image1, repository does not exist or may require 'docker login'. See 'docker run --help'.
+2024-11-28 09:59:40 - Starting Docker image image2.
+2024-11-28 09:59:43 - Error running Docker image image2. Output: Unable to find image 'image2:latest' locally docker: Error response from daemon: pull access denied for image2, repository does not exist or may require 'docker login'. See 'docker run --help'.
+2024-11-28 09:59:43 - All Docker images have been processed.
+2024-11-28 10:03:31 - Starting to process Docker images.
+2024-11-28 10:03:31 - Starting Docker image jira_projecttracking.
+2024-11-28 10:04:09 - Docker image jira_projecttracking ran successfully.
+2024-11-28 10:04:09 - Starting Docker image jira_CCAS.
+2024-11-28 10:04:09 - Error running Docker image jira_CCAS. Output: docker: invalid reference format: repository name (library/jira_CCAS) must be lowercase. See 'docker run --help'.
+2024-11-28 10:04:09 - Starting Docker image jira_ccprov.
+2024-11-28 10:04:41 - Docker image jira_ccprov ran successfully.
+2024-11-28 10:04:41 - Starting Docker image jira_secondtier.
+2024-11-28 10:06:48 - Docker image jira_secondtier ran successfully.
+2024-11-28 10:06:48 - All Docker images have been processed.
+2024-11-28 10:11:07 - Starting to process Docker images.
+2024-11-28 10:11:07 - Starting Docker image jira_projecttracking.
+2024-11-28 10:11:53 - Docker image jira_projecttracking ran successfully.
+2024-11-28 10:11:53 - Starting Docker image jira_ccas.
+2024-11-28 10:15:00 - Docker image jira_ccas ran successfully.
+2024-11-28 10:15:00 - Starting Docker image jira_ccprov.
