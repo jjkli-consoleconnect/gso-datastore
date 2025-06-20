@@ -125,11 +125,9 @@ def fetch_and_sync_jira_data():
     jql_query = (
         '('
         'project = "Google Contact Center AI Solution" OR '
-        'project = "Knowledge Management on BMC ComAround Platform" OR '
-        'project = "Console Connect Philippines Incorporate" OR '
-        'project = "Digital Platform Business and Support" OR '
         'project = "GS&O Data Analytics" OR '
-        'project = "GS&O Knowledge Consolidation"'
+        'project = "GS&O Knowledge Consolidation" OR '
+        'project = "GS&O Tool Automation" '
         ') AND updated >= endOfDay(-8) ORDER BY updated DESC'
     )
 
