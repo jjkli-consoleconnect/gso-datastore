@@ -1,0 +1,29 @@
+2025-07-03 10:12:52 - =========================================
+2025-07-03 10:12:52 - SCRIPT EXECUTION STARTED
+2025-07-03 10:12:52 - =========================================
+2025-07-03 10:12:52 - Executing image(s): jira_tiertwo
+2025-07-03 10:12:52 - Running Docker image: jira_tiertwo
+2025-07-03 10:12:52 - ❌ ERROR: jira_tiertwo exited with code 127.
+2025-07-03 10:12:52 - Retrying failed image(s): jira_tiertwo
+2025-07-03 10:12:52 - Running Docker image: jira_tiertwo
+2025-07-03 10:12:53 - ❌ ERROR: jira_tiertwo exited with code 127.
+2025-07-03 10:12:53 - SCRIPT COMPLETED WITH FAILURES:
+2025-07-03 10:12:53 -   ❌ jira_tiertwo
+2025-07-03 10:12:53 -   ❌ jira_tiertwo
+2025-07-03 10:12:53 - Total runtime: 0.6604186 seconds
+2025-07-03 10:12:53 - =========================================
+2025-07-03 10:12:53 - SCRIPT EXECUTION ENDED
+2025-07-03 10:12:53 - =========================================
+
+2025-07-03 10:17:12 - =========================================
+2025-07-03 10:17:13 - SCRIPT EXECUTION STARTED
+2025-07-03 10:17:13 - =========================================
+2025-07-03 10:17:13 - Executing image(s): jira_tiertwo
+2025-07-03 10:17:13 - Running Docker image: jira_tiertwo
+2025-07-03 10:17:34 - jira_tiertwo ran successfully.
+2025-07-03 10:17:34 - SCRIPT COMPLETED SUCCESSFULLY ✅
+2025-07-03 10:17:34 - Total runtime: 21.3787804 seconds
+2025-07-03 10:17:34 - =========================================
+2025-07-03 10:17:34 - SCRIPT EXECUTION ENDED
+2025-07-03 10:17:34 - =========================================
+

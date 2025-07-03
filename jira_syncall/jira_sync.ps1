@@ -1,5 +1,5 @@
 # Define the log file path
-$logFilePath = "C:\Users\jjkli\Scripts\jira_syncall\jira_sync.log"
+$logFilePath = "G:\My Drive\Scripts\jira_syncall\jira_sync.log"
 
 # Function to log messages with timestamps
 function Write-Log {
@@ -16,7 +16,7 @@ function Write-Log {
 Get-ChildItem Env: | ForEach-Object { Write-Log "$($_.Name)=$($_.Value)" }
 
 # Set working directory
-Set-Location "C:\Users\jjkli\Scripts\jira_syncall"
+Set-Location "G:\My Drive\Scripts\jira_syncall"
 
 # Full path to docker executable
 $dockerPath = "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
@@ -61,7 +61,7 @@ function Invoke-DockerImages {
 }
 
 # Initialize Docker images array
-$dockerImages = @("jira_projecttracking", "jira_ccas", "jira_ccprov", "jira_secondtier", "jira_ccaschangelog", "jira_ccascomments")  # Replace with your actual Docker images
+$dockerImages = @("jira_projecttracking", "jira_ccas", "jira_ccprov", "jira_secondtier", "jira_ccas_changelog", "jira_ccas_comments", "jira_tiertwo")  # Replace with your actual Docker images
 $failedImages = @()
 
 # Start logging
