@@ -1,0 +1,27 @@
+{
+  "queryInput": {
+    "languageCode": "en",
+    "text": {
+      "text": "Please provide all detailed cable outage event in 2023 for EAC"
+    }
+  },
+  "queryParams": {
+    "channel": "dm",
+    "payload": {
+      "data": {
+        "channel_id": "D075L9B0QPJ",
+        "channel_type": "im",
+        "email": "elayug@consoleconnect.com",
+        "files": [],
+        "full_name": "Edizon M. Layug",
+        "team_id": "TH4C2Q30B",
+        "text": "Please provide all detailed cable outage event in 2023 for EAC",
+        "user_id": "U0745BC1LTY"
+      }
+    },
+    "sessionTtl": {
+      "seconds": 3600
+    }
+  },
+  "session": "projects/pccw-internal-virtual-agent/locations/global/agents/58dec047-5fa6-4a99-9c95-4fe678eee6e8/sessions/slack-U0745BC1LTY-dm-1946127"
+}

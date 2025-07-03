@@ -109,7 +109,7 @@ def fetch_and_sync_jira_data():
     jira_url = 'https://consoleconnect.atlassian.net/rest/api/latest/search'
     
     jql_query = (
-        '(project = TAC OR project = "Console Application Support" OR project = "Console Connect Provisioning" OR project = "Global Service Delivery Team")' 
+        '(project = TAC OR project = "Console Application Support")' 
         'AND updated >= endOfDay(-2) ORDER BY updated DESC'
     )
     
