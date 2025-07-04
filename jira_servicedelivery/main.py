@@ -117,16 +117,16 @@ def fetch_and_sync_jira_data():
     api_token = config.get('jira_api_token')
     start_at = 0
     max_results = 200
-    CHUNK_SIZE = 1000  # Number of rows to insert into BQ at once
-    RETRY_COUNT = 5  
-    RETRY_DELAY = 5  
+    CHUNK_SIZE = 1000   # Number of rows to insert into BQ at once
+    RETRY_COUNT = 5   
+    RETRY_DELAY = 5   
 
     try:
         client = bigquery.Client()
         project_id = client.project # Dynamically get project ID
         dataset_id = 'GSO'
-        table_id = 'ServiceDelivery'  
-        temp_table_id = 'ServiceDelivery_temp'  
+        table_id = 'ServiceDelivery'   
+        temp_table_id = 'ServiceDelivery_temp'   
 
         # Create/recreate the temp table, now with polling
         # This function will now ensure the table is ready before returning
@@ -141,6 +141,8 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("Assignee", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
+            # --- NEW FIELD ADDED HERE ---
+            bigquery.SchemaField("SR_Ref", "STRING", mode="NULLABLE"), 
         ])
 
         rows_to_insert = []
@@ -149,7 +151,8 @@ def fetch_and_sync_jira_data():
         while True:
             logging.info(f"Fetching data from Jira, startAt: {start_at}")
             
-            fields_to_request = 'issuetype,summary,status,created,updated,resolutiondate,assignee,customfield_10647,issuelinks'
+            # --- CUSTOM FIELD ADDED TO REQUEST HERE ---
+            fields_to_request = 'issuetype,summary,status,created,updated,resolutiondate,assignee,customfield_10647,issuelinks,customfield_10133' # Added customfield_10133
 
             params = {
                 'jql': jql_query,
@@ -189,6 +192,10 @@ def fetch_and_sync_jira_data():
 
                         remedy_ticket_number = fields.get('customfield_10647') 
                         
+                        # --- NEW FIELD EXTRACTION HERE ---
+                        sr_ref_data = fields.get('customfield_10133')
+                        sr_ref_value = get_field_value(sr_ref_data) # Uses your existing helper function
+
                         assignee_data = fields.get('assignee')
                         assignee_name = assignee_data.get('displayName') if assignee_data else None
                         
@@ -208,7 +215,9 @@ def fetch_and_sync_jira_data():
                             'Resolved': convert_timestamp(fields.get('resolutiondate')),
                             'Assignee': assignee_name,
                             'RemedyTicketNumber': str(remedy_ticket_number) if remedy_ticket_number is not None else None,
-                            'Links': issue_keys
+                            'Links': issue_keys,
+                            # --- NEW FIELD ADDED TO ROW DICTIONARY ---
+                            'SR_Ref': sr_ref_value, 
                         }
                         rows_to_insert.append(row)
 
@@ -312,10 +321,13 @@ def fetch_and_sync_jira_data():
                         T.Resolved = S.Resolved,
                         T.Assignee = S.Assignee,
                         T.RemedyTicketNumber = S.RemedyTicketNumber,
-                        T.Links = S.Links
+                        T.Links = S.Links,
+                        -- --- NEW FIELD ADDED TO UPDATE SET HERE ---
+                        T.SR_Ref = S.SR_Ref
                 WHEN NOT MATCHED THEN
-                    INSERT (T, Key, Summary, Status, Created, Updated, Resolved, Assignee, RemedyTicketNumber, Links)
-                    VALUES (S.T, S.Key, S.Summary, S.Status, S.Created, S.Updated, S.Resolved, S.Assignee, S.RemedyTicketNumber, S.Links)
+                    INSERT (T, Key, Summary, Status, Created, Updated, Resolved, Assignee, RemedyTicketNumber, Links, SR_Ref)
+                    -- --- NEW FIELD ADDED TO INSERT VALUES HERE ---
+                    VALUES (S.T, S.Key, S.Summary, S.Status, S.Created, S.Updated, S.Resolved, S.Assignee, S.RemedyTicketNumber, S.Links, S.SR_Ref)
             """
             logging.info(f"Executing merge query...")
             try:

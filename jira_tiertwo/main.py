@@ -4,7 +4,7 @@ from google.cloud import bigquery
 import logging
 from datetime import datetime
 import time
-from google.api_core.exceptions import Conflict, NotFound, GoogleAPIError # Import GoogleAPIError
+from google.api_core.exceptions import Conflict, NotFound, GoogleAPIError
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.Formatter.converter = time.localtime
@@ -36,6 +36,7 @@ def get_field_value(field):
     if field is None:
         return None
     elif isinstance(field, dict):
+        # Prioritize 'value', then 'name', then 'displayName' for dictionaries
         return field.get('value') or field.get('name') or field.get('displayName')
     elif isinstance(field, list):
         # Ensure items in list are dictionaries before trying .get()
@@ -47,8 +48,8 @@ def get_field_value(field):
 
 def create_temp_table(client, dataset_id, table_id, schema):
     table_ref = client.dataset(dataset_id).table(table_id)
-    max_wait_seconds = 60 # Total time to wait for table to be ready
-    poll_interval_seconds = 5 # How often to check
+    max_wait_seconds = 60
+    poll_interval_seconds = 5
 
     try:
         client.delete_table(table_ref, not_found_ok=True)
@@ -58,39 +59,37 @@ def create_temp_table(client, dataset_id, table_id, schema):
     
     table = bigquery.Table(table_ref, schema=schema)
     try:
+        logging.info(f"Attempting to create temporary table '{dataset_id}.{table_id}'.")
         client.create_table(table)
         logging.info(f"Temporary table '{dataset_id}.{table_id}' initiated creation.")
         
-        # --- Add polling logic here ---
         start_time = time.time()
         while time.time() - start_time < max_wait_seconds:
             try:
-                client.get_table(table_ref) # This will raise NotFound if not ready
+                client.get_table(table_ref)
                 logging.info(f"Temporary table '{dataset_id}.{table_id}' is ready.")
-                return # Table found and confirmed, exit function
+                return
             except NotFound:
                 logging.info(f"Table '{dataset_id}.{table_id}' not found yet, retrying in {poll_interval_seconds}s...")
-            except GoogleAPIError as api_err: # Catch other transient BigQuery API errors
+            except GoogleAPIError as api_err:
                 logging.warning(f"API error while checking table '{dataset_id}.{table_id}' status: {api_err}. Retrying in {poll_interval_seconds}s...")
             time.sleep(poll_interval_seconds)
         
-        # If loop finishes without returning, table never became ready
         logging.error(f"Temporary table '{dataset_id}.{table_id}' could not be confirmed as ready after {max_wait_seconds} seconds.")
         raise RuntimeError(f"Failed to confirm readiness of temporary table '{dataset_id}.{table_id}'.")
-        # --- End of polling logic ---
 
     except Conflict:
         logging.info(f"Temporary table '{dataset_id}.{table_id}' already exists. Attempting to confirm readiness.")
         try:
-            client.get_table(table_ref) # Verify if the existing table is accessible
+            client.get_table(table_ref)
             logging.info(f"Existing temporary table '{dataset_id}.{table_id}' confirmed ready.")
             return
         except Exception as e:
             logging.error(f"Existing temporary table '{dataset_id}.{table_id}' not accessible: {e}")
-            raise # Re-raise if existing table is not accessible
+            raise
     except Exception as e:
         logging.error(f"Failed to create temporary table '{dataset_id}.{table_id}': {e}")
-        raise # Re-raise if table creation fails, as we cannot proceed without it
+        raise
 
 def delete_temp_table(client, dataset_id, table_id):
     table_ref = client.dataset(dataset_id).table(table_id)
@@ -110,27 +109,31 @@ def fetch_and_sync_jira_data():
     
     jql_query = (
         '(project = TAC OR project = "Console Application Support")' 
-        'AND updated >= endOfDay(-2) ORDER BY updated DESC'
+        'AND updated >= endOfDay(-2)'
     )
     
     username = 'jjkli@consoleconnect.com' 
     api_token = config.get('jira_api_token')
     start_at = 0
     max_results = 100
-    CHUNK_SIZE = 1000  # Number of rows to insert into BQ at once
-    RETRY_COUNT = 5  
-    RETRY_DELAY = 5  
+    CHUNK_SIZE = 1000
+    RETRY_COUNT = 5
+    RETRY_DELAY = 5
 
+    # --- Configuration for the new custom field ---
+    SR_REF_JIRA_ID = 'customfield_10133' # Jira internal ID for the Service Request Reference field
+    SR_REF_BQ_NAME = 'SR_Ref'            # Desired BigQuery column name
+    # ---------------------------------------------
+    
     try:
         client = bigquery.Client()
-        project_id = client.project # Dynamically get project ID
+        project_id = client.project
         dataset_id = 'GSO'
-        table_id = 'TierTwo'  
-        temp_table_id = 'TierTwo_temp'  
+        table_id = 'TierTwo' 
+        temp_table_id = 'TierTwo_temp' 
 
-        # Create/recreate the temp table, now with polling
-        # This function will now ensure the table is ready before returning
-        create_temp_table(client, dataset_id, temp_table_id, [ 
+        # 1. BigQuery Schema: Add a new SchemaField for the SR_Ref custom field
+        bq_schema = [ 
             bigquery.SchemaField("T", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Key", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("Summary", "STRING", mode="NULLABLE"),
@@ -141,7 +144,9 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("Assignee", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
-        ])
+            bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"), # <--- ADDED SR_Ref SCHEMA
+        ]
+        create_temp_table(client, dataset_id, temp_table_id, bq_schema)
 
         rows_to_insert = []
         total_issues_fetched = 0
@@ -149,7 +154,8 @@ def fetch_and_sync_jira_data():
         while True:
             logging.info(f"Fetching data from Jira, startAt: {start_at}")
             
-            fields_to_request = 'issuetype,summary,status,created,updated,resolutiondate,assignee,customfield_10647,issuelinks'
+            # 2. Jira API Request: Add SR_REF_JIRA_ID to the fields_to_request
+            fields_to_request = f'issuetype,summary,status,created,updated,resolutiondate,assignee,customfield_10647,issuelinks,{SR_REF_JIRA_ID}'
 
             params = {
                 'jql': jql_query,
@@ -191,13 +197,17 @@ def fetch_and_sync_jira_data():
                         
                         assignee_data = fields.get('assignee')
                         assignee_name = assignee_data.get('displayName') if assignee_data else None
-                        
+
                         issuetype_data = fields.get('issuetype')
                         issuetype_name = issuetype_data.get('name') if issuetype_data else None
 
                         status_data = fields.get('status')
                         status_name = status_data.get('name') if status_data else None
 
+                        # 3. Data Extraction: Get value for the SR_Ref custom field
+                        # The get_field_value function is perfect for this: it handles the {'id':'val', 'value':'val'} structure
+                        sr_ref_value = get_field_value(fields.get(SR_REF_JIRA_ID))
+                        
                         row = {
                             'T': issuetype_name,
                             'Key': issue['key'],
@@ -208,7 +218,8 @@ def fetch_and_sync_jira_data():
                             'Resolved': convert_timestamp(fields.get('resolutiondate')),
                             'Assignee': assignee_name,
                             'RemedyTicketNumber': str(remedy_ticket_number) if remedy_ticket_number is not None else None,
-                            'Links': issue_keys
+                            'Links': issue_keys,
+                            SR_REF_BQ_NAME: sr_ref_value, # <--- ADDED SR_Ref TO ROW
                         }
                         rows_to_insert.append(row)
 
@@ -216,7 +227,6 @@ def fetch_and_sync_jira_data():
                             logging.info(f"Inserting chunk of {len(rows_to_insert)} rows into BigQuery temp table.")
                             for attempt in range(RETRY_COUNT):
                                 try:
-                                    # This insert should now consistently find the table
                                     errors = client.insert_rows_json(client.dataset(dataset_id).table(temp_table_id), rows_to_insert)
                                     if errors:
                                         logging.error(f"Errors inserting rows (attempt {attempt + 1}/{RETRY_COUNT}): {errors}")
@@ -231,7 +241,7 @@ def fetch_and_sync_jira_data():
                                         time.sleep(RETRY_DELAY)
                                     else:
                                         logging.error(f"Failed to insert chunk after {RETRY_COUNT} attempts. This chunk will likely be lost.")
-                                        rows_to_insert = [] # Clear chunk on final failure to avoid reprocessing
+                                        rows_to_insert = []
                                         break 
                             
                     except Exception as e:
@@ -260,7 +270,6 @@ def fetch_and_sync_jira_data():
 
         logging.info(f"Total issues processed from Jira: {total_issues_fetched}")
 
-        # Final insertion of any remaining rows
         if rows_to_insert:
             logging.info(f"Inserting remaining {len(rows_to_insert)} rows into BigQuery temp table.")
             for attempt in range(RETRY_COUNT):
@@ -268,7 +277,7 @@ def fetch_and_sync_jira_data():
                     errors = client.insert_rows_json(client.dataset(dataset_id).table(temp_table_id), rows_to_insert)
                     if not errors:
                         logging.info(f"Successfully inserted remaining {len(rows_to_insert)} rows.")
-                        rows_to_insert = [] # Clear the chunk on success
+                        rows_to_insert = []
                         break
                     else:
                         logging.error(f"Errors inserting remaining rows (attempt {attempt + 1}/{RETRY_COUNT}): {errors}")
@@ -291,13 +300,14 @@ def fetch_and_sync_jira_data():
                 temp_table_row_count = verify_temp_result[0]['row_count']
             logging.info(f"Row count in temporary table '{temp_table_id}': {temp_table_row_count}")
             if temp_table_row_count == 0 and total_issues_fetched > 0:
-                 logging.warning("Temp table is empty but issues were fetched. Check insertion logic and errors, or if all fetched issues were filtered out before insertion.")
+                   logging.warning("Temp table is empty but issues were fetched. Check insertion logic and errors, or if all fetched issues were filtered out before insertion.")
         except Exception as e:
             logging.error(f"Could not verify temp table count: {e}")
             temp_table_row_count = -1 
 
         if temp_table_row_count > 0:
             logging.info(f"Proceeding with MERGE operation as temp table has {temp_table_row_count} rows.")
+            # 4. BigQuery MERGE Statement: Include the new SR_Ref column
             merge_query = f"""
                 MERGE `{project_id}.{dataset_id}.{table_id}` T
                 USING `{project_id}.{dataset_id}.{temp_table_id}` S
@@ -312,10 +322,11 @@ def fetch_and_sync_jira_data():
                         T.Resolved = S.Resolved,
                         T.Assignee = S.Assignee,
                         T.RemedyTicketNumber = S.RemedyTicketNumber,
-                        T.Links = S.Links
+                        T.Links = S.Links,
+                        T.{SR_REF_BQ_NAME} = S.{SR_REF_BQ_NAME} -- <--- ADDED SR_Ref TO UPDATE
                 WHEN NOT MATCHED THEN
-                    INSERT (T, Key, Summary, Status, Created, Updated, Resolved, Assignee, RemedyTicketNumber, Links)
-                    VALUES (S.T, S.Key, S.Summary, S.Status, S.Created, S.Updated, S.Resolved, S.Assignee, S.RemedyTicketNumber, S.Links)
+                    INSERT (T, Key, Summary, Status, Created, Updated, Resolved, Assignee, RemedyTicketNumber, Links, {SR_REF_BQ_NAME}) -- <--- ADDED SR_Ref TO INSERT
+                    VALUES (S.T, S.Key, S.Summary, S.Status, S.Created, S.Updated, S.Resolved, S.Assignee, S.RemedyTicketNumber, S.Links, S.{SR_REF_BQ_NAME}) -- <--- ADDED SR_Ref TO VALUES
             """
             logging.info(f"Executing merge query...")
             try:

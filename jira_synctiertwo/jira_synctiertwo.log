@@ -370,3 +370,101 @@
 2025-07-04 09:00:38 - SCRIPT EXECUTION ENDED
 2025-07-04 09:00:38 - =========================================
 
+2025-07-04 10:00:03 - =========================================
+2025-07-04 10:00:03 - SCRIPT EXECUTION STARTED
+2025-07-04 10:00:03 - =========================================
+2025-07-04 10:00:03 - Executing image(s): jira_tiertwo, jira_servicedelivery
+2025-07-04 10:00:03 - Running Docker image: jira_tiertwo
+2025-07-04 10:00:20 - jira_tiertwo ran successfully.
+2025-07-04 10:00:20 - Running Docker image: jira_servicedelivery
+2025-07-04 10:00:36 - jira_servicedelivery ran successfully.
+2025-07-04 10:00:36 - SCRIPT COMPLETED SUCCESSFULLY ✅
+2025-07-04 10:00:36 - Total runtime: 32.7036534 seconds
+2025-07-04 10:00:36 - =========================================
+2025-07-04 10:00:36 - SCRIPT EXECUTION ENDED
+2025-07-04 10:00:36 - =========================================
+
+2025-07-04 11:00:03 - =========================================
+2025-07-04 11:00:03 - SCRIPT EXECUTION STARTED
+2025-07-04 11:00:03 - =========================================
+2025-07-04 11:00:03 - Executing image(s): jira_tiertwo, jira_servicedelivery
+2025-07-04 11:00:03 - Running Docker image: jira_tiertwo
+2025-07-04 11:00:24 - jira_tiertwo ran successfully.
+2025-07-04 11:00:24 - Running Docker image: jira_servicedelivery
+2025-07-04 11:00:51 - jira_servicedelivery ran successfully.
+2025-07-04 11:00:51 - SCRIPT COMPLETED SUCCESSFULLY ✅
+2025-07-04 11:00:51 - Total runtime: 47.5644177 seconds
+2025-07-04 11:00:51 - =========================================
+2025-07-04 11:00:51 - SCRIPT EXECUTION ENDED
+2025-07-04 11:00:51 - =========================================
+
+2025-07-04 12:00:03 - =========================================
+2025-07-04 12:00:03 - SCRIPT EXECUTION STARTED
+2025-07-04 12:00:03 - =========================================
+2025-07-04 12:00:03 - Executing image(s): jira_tiertwo, jira_servicedelivery
+2025-07-04 12:00:03 - Running Docker image: jira_tiertwo
+2025-07-04 12:00:18 - jira_tiertwo ran successfully.
+2025-07-04 12:00:18 - Running Docker image: jira_servicedelivery
+2025-07-04 12:00:35 - jira_servicedelivery ran successfully.
+2025-07-04 12:00:35 - SCRIPT COMPLETED SUCCESSFULLY ✅
+2025-07-04 12:00:35 - Total runtime: 32.3688214 seconds
+2025-07-04 12:00:35 - =========================================
+2025-07-04 12:00:35 - SCRIPT EXECUTION ENDED
+2025-07-04 12:00:35 - =========================================
+
+2025-07-04 13:00:03 - =========================================
+2025-07-04 13:00:03 - SCRIPT EXECUTION STARTED
+2025-07-04 13:00:03 - =========================================
+2025-07-04 13:00:03 - Executing image(s): jira_tiertwo, jira_servicedelivery
+2025-07-04 13:00:03 - Running Docker image: jira_tiertwo
+2025-07-04 13:00:19 - jira_tiertwo ran successfully.
+2025-07-04 13:00:19 - Running Docker image: jira_servicedelivery
+2025-07-04 13:00:39 - jira_servicedelivery ran successfully.
+2025-07-04 13:00:39 - SCRIPT COMPLETED SUCCESSFULLY ✅
+2025-07-04 13:00:39 - Total runtime: 35.6151389 seconds
+2025-07-04 13:00:39 - =========================================
+2025-07-04 13:00:39 - SCRIPT EXECUTION ENDED
+2025-07-04 13:00:39 - =========================================
+
+2025-07-04 14:00:04 - =========================================
+2025-07-04 14:00:04 - SCRIPT EXECUTION STARTED
+2025-07-04 14:00:04 - =========================================
+2025-07-04 14:00:04 - Executing image(s): jira_tiertwo, jira_servicedelivery
+2025-07-04 14:00:04 - Running Docker image: jira_tiertwo
+2025-07-04 14:00:22 - jira_tiertwo ran successfully.
+2025-07-04 14:00:22 - Running Docker image: jira_servicedelivery
+2025-07-04 14:00:43 - jira_servicedelivery ran successfully.
+2025-07-04 14:00:43 - SCRIPT COMPLETED SUCCESSFULLY ✅
+2025-07-04 14:00:43 - Total runtime: 38.9881657 seconds
+2025-07-04 14:00:43 - =========================================
+2025-07-04 14:00:43 - SCRIPT EXECUTION ENDED
+2025-07-04 14:00:43 - =========================================
+
+2025-07-04 15:00:03 - =========================================
+2025-07-04 15:00:03 - SCRIPT EXECUTION STARTED
+2025-07-04 15:00:03 - =========================================
+2025-07-04 15:00:03 - Executing image(s): jira_tiertwo, jira_servicedelivery
+2025-07-04 15:00:03 - Running Docker image: jira_tiertwo
+2025-07-04 15:00:18 - jira_tiertwo ran successfully.
+2025-07-04 15:00:18 - Running Docker image: jira_servicedelivery
+2025-07-04 15:00:37 - jira_servicedelivery ran successfully.
+2025-07-04 15:00:37 - SCRIPT COMPLETED SUCCESSFULLY ✅
+2025-07-04 15:00:37 - Total runtime: 33.8176508 seconds
+2025-07-04 15:00:37 - =========================================
+2025-07-04 15:00:37 - SCRIPT EXECUTION ENDED
+2025-07-04 15:00:37 - =========================================
+
+2025-07-04 16:00:03 - =========================================
+2025-07-04 16:00:03 - SCRIPT EXECUTION STARTED
+2025-07-04 16:00:03 - =========================================
+2025-07-04 16:00:03 - Executing image(s): jira_tiertwo, jira_servicedelivery
+2025-07-04 16:00:03 - Running Docker image: jira_tiertwo
+2025-07-04 16:00:30 - jira_tiertwo ran successfully.
+2025-07-04 16:00:30 - Running Docker image: jira_servicedelivery
+2025-07-04 16:00:48 - jira_servicedelivery ran successfully.
+2025-07-04 16:00:48 - SCRIPT COMPLETED SUCCESSFULLY ✅
+2025-07-04 16:00:48 - Total runtime: 44.7257434 seconds
+2025-07-04 16:00:48 - =========================================
+2025-07-04 16:00:48 - SCRIPT EXECUTION ENDED
+2025-07-04 16:00:48 - =========================================
+
