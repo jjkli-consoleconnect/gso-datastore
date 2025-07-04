@@ -2651,3 +2651,57 @@
 2025-07-03 08:02:05 - Starting Docker image jira_tiertwo.
 2025-07-03 08:02:28 - Docker image jira_tiertwo ran successfully.
 2025-07-03 08:02:28 - All Docker images have been processed.
+2025-07-04 08:00:04 - ALLUSERSPROFILE=C:\ProgramData
+2025-07-04 08:00:05 - APPDATA=C:\Users\jjkli\AppData\Roaming
+2025-07-04 08:00:05 - CommonProgramFiles=C:\Program Files\Common Files
+2025-07-04 08:00:05 - CommonProgramFiles(x86)=C:\Program Files (x86)\Common Files
+2025-07-04 08:00:05 - CommonProgramW6432=C:\Program Files\Common Files
+2025-07-04 08:00:05 - COMPUTERNAME=ISD1901122
+2025-07-04 08:00:05 - ComSpec=C:\WINDOWS\system32\cmd.exe
+2025-07-04 08:00:05 - DriverData=C:\Windows\System32\Drivers\DriverData
+2025-07-04 08:00:05 - HOMEDRIVE=C:
+2025-07-04 08:00:05 - HOMEPATH=\Users\jjkli
+2025-07-04 08:00:05 - LOCALAPPDATA=C:\Users\jjkli\AppData\Local
+2025-07-04 08:00:05 - LOGONSERVER=\\ISD1901122
+2025-07-04 08:00:05 - NUMBER_OF_PROCESSORS=14
+2025-07-04 08:00:05 - OneDrive=C:\Users\jjkli\OneDrive
+2025-07-04 08:00:05 - OneDriveConsumer=C:\Users\jjkli\OneDrive
+2025-07-04 08:00:05 - OS=Windows_NT
+2025-07-04 08:00:05 - Path=C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\Google\Google Apps Sync\;C:\Program Files\Git\cmd;C:\Program Files\dotnet\;C:\Program Files\Docker\Docker\resources\bin;C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\jjkli\AppData\Local\Programs\Python\Python313\;C:\Users\jjkli\AppData\Local\Microsoft\WindowsApps;C:\Users\jjkli\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\jjkli\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin
+2025-07-04 08:00:05 - PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL
+2025-07-04 08:00:05 - PROCESSOR_ARCHITECTURE=AMD64
+2025-07-04 08:00:05 - PROCESSOR_IDENTIFIER=Intel64 Family 6 Model 170 Stepping 4, GenuineIntel
+2025-07-04 08:00:05 - PROCESSOR_LEVEL=6
+2025-07-04 08:00:05 - PROCESSOR_REVISION=aa04
+2025-07-04 08:00:05 - ProgramData=C:\ProgramData
+2025-07-04 08:00:05 - ProgramFiles=C:\Program Files
+2025-07-04 08:00:05 - ProgramFiles(x86)=C:\Program Files (x86)
+2025-07-04 08:00:05 - ProgramW6432=C:\Program Files
+2025-07-04 08:00:05 - PSExecutionPolicyPreference=Bypass
+2025-07-04 08:00:05 - PSModulePath=G:\My Drive\WindowsPowerShell\Modules;C:\Program Files\WindowsPowerShell\Modules;C:\WINDOWS\system32\WindowsPowerShell\v1.0\Modules
+2025-07-04 08:00:05 - PUBLIC=C:\Users\Public
+2025-07-04 08:00:05 - SystemDrive=C:
+2025-07-04 08:00:05 - SystemRoot=C:\WINDOWS
+2025-07-04 08:00:05 - TEMP=C:\Users\jjkli\AppData\Local\Temp
+2025-07-04 08:00:05 - TMP=C:\Users\jjkli\AppData\Local\Temp
+2025-07-04 08:00:05 - USERDOMAIN=ISD1901122
+2025-07-04 08:00:05 - USERDOMAIN_ROAMINGPROFILE=ISD1901122
+2025-07-04 08:00:05 - USERNAME=jjkli
+2025-07-04 08:00:05 - USERPROFILE=C:\Users\jjkli
+2025-07-04 08:00:05 - windir=C:\WINDOWS
+2025-07-04 08:00:05 - Starting to process Docker images.
+2025-07-04 08:00:05 - Starting Docker image jira_projecttracking.
+2025-07-04 08:00:20 - Docker image jira_projecttracking ran successfully.
+2025-07-04 08:00:20 - Starting Docker image jira_ccas.
+2025-07-04 08:00:35 - Docker image jira_ccas ran successfully.
+2025-07-04 08:00:35 - Starting Docker image jira_ccprov.
+2025-07-04 08:00:46 - Docker image jira_ccprov ran successfully.
+2025-07-04 08:00:46 - Starting Docker image jira_secondtier.
+2025-07-04 08:01:03 - Docker image jira_secondtier ran successfully.
+2025-07-04 08:01:03 - Starting Docker image jira_ccas_changelog.
+2025-07-04 08:01:35 - Docker image jira_ccas_changelog ran successfully.
+2025-07-04 08:01:35 - Starting Docker image jira_ccas_comments.
+2025-07-04 08:02:01 - Docker image jira_ccas_comments ran successfully.
+2025-07-04 08:02:01 - Starting Docker image jira_tiertwo.
+2025-07-04 08:02:19 - Docker image jira_tiertwo ran successfully.
+2025-07-04 08:02:19 - All Docker images have been processed.
