@@ -35,7 +35,7 @@ SELECT
   hd.Cust_ID,
   UPPER(REPLACE(hd.Carrier, '"', '')) AS Carrier,
   UPPER(REPLACE(hd.Customer_Name, '"', '')) AS Customer_Name,
-  hd.SRno,
+  UPPER(REPLACE(hd.SRno, '"', '')) AS SRno,
   hd.LastResolvedDate,
   hd.ReportedDate,
   hd.RespondedDate,
