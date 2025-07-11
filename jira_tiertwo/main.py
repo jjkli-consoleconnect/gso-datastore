@@ -108,7 +108,7 @@ def fetch_and_sync_jira_data():
     jira_url = 'https://consoleconnect.atlassian.net/rest/api/latest/search'
     
     jql_query = (
-        '(project = TAC OR project = "Console Application Support")' 
+        '(project = "Console Application Support" OR project = TAC OR project = "Global Service Delivery Team" OR project = "Console Connect Provisioning")' 
         'AND updated >= endOfDay(-2)'
     )
     
@@ -121,7 +121,7 @@ def fetch_and_sync_jira_data():
     RETRY_DELAY = 5
 
     # --- Configuration for the new custom field ---
-    SR_REF_JIRA_ID = 'customfield_10133' # Jira internal ID for the Service Request Reference field
+    SR_REF_JIRA_ID = 'customfield_10382' # Jira internal ID for the Service Request Reference field
     SR_REF_BQ_NAME = 'SR_Ref'            # Desired BigQuery column name
     # ---------------------------------------------
     
@@ -147,6 +147,7 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"), # <--- ADDED SR_Ref SCHEMA
         ]
         create_temp_table(client, dataset_id, temp_table_id, bq_schema)
+        time.sleep(2)  # Wait 2 seconds for table propagation
 
         rows_to_insert = []
         total_issues_fetched = 0
@@ -219,8 +220,13 @@ def fetch_and_sync_jira_data():
                             'Assignee': assignee_name,
                             'RemedyTicketNumber': str(remedy_ticket_number) if remedy_ticket_number is not None else None,
                             'Links': issue_keys,
-                            SR_REF_BQ_NAME: sr_ref_value, # <--- ADDED SR_Ref TO ROW
+                            SR_REF_BQ_NAME: sr_ref_value,
                         }
+                        
+                        required_fields = ['T', 'Key', 'Summary', 'Status', 'Created', 'Updated']
+                        if any(row[field] is None for field in required_fields):
+                            logging.error(f"Skipping row due to missing required fields: {row}")
+                            continue
                         rows_to_insert.append(row)
 
                         if len(rows_to_insert) >= CHUNK_SIZE:
@@ -244,6 +250,7 @@ def fetch_and_sync_jira_data():
                                         rows_to_insert = []
                                         break 
                             
+
                     except Exception as e:
                         logging.exception(f"Error processing issue {issue.get('key', 'N/A')}: {e}")
 
@@ -355,6 +362,14 @@ def fetch_and_sync_jira_data():
         logging.error(f"BigQuery resource not found (e.g., dataset or table): {e}")
     except Exception as e:
         logging.exception(f"An unexpected error occurred in fetch_and_sync_jira_data: {e}")
+
+def ensure_temp_table_exists(client, dataset_id, temp_table_id, bq_schema):
+    table_ref = client.dataset(dataset_id).table(temp_table_id)
+    try:
+        client.get_table(table_ref)
+    except NotFound:
+        logging.warning(f"Temp table '{dataset_id}.{temp_table_id}' not found, recreating.")
+        create_temp_table(client, dataset_id, temp_table_id, bq_schema)
 
 if __name__ == '__main__':
     fetch_and_sync_jira_data()
