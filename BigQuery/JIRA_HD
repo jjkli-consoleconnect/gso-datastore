@@ -1,3 +1,12 @@
+WITH FlattenedTierTwo AS (
+  SELECT
+    *,
+    remedy_incident AS RemedyTicketNumber_flat
+  FROM
+    `pccw-internal-virt-agent-uat.GSO.TierTwo`,
+    UNNEST(RemedyTicketNumber) AS remedy_incident
+)
+
 SELECT
   hd.Incident_Number,
   hd.Status AS hdStatus,
@@ -100,10 +109,9 @@ SELECT
     ELSE hd.Product_Family
   END AS ProductFamily
 
-
 FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` AS hd
-FULL OUTER JOIN `pccw-internal-virt-agent-uat.GSO.TierTwo` AS st
-  ON hd.Incident_Number = st.RemedyTicketNumber
+FULL OUTER JOIN FlattenedTierTwo AS st
+  ON hd.Incident_Number = st.RemedyTicketNumber_flat
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON CONCAT('SR', st.SR_Ref) = shr.SRNo
 

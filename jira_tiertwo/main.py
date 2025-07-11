@@ -5,6 +5,7 @@ import logging
 from datetime import datetime
 import time
 from google.api_core.exceptions import Conflict, NotFound, GoogleAPIError
+import re
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.Formatter.converter = time.localtime
@@ -142,7 +143,7 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("Updated", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("Resolved", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("Assignee", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="REPEATED"),  # <-- CHANGED HERE
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"), # <--- ADDED SR_Ref SCHEMA
         ]
@@ -218,7 +219,7 @@ def fetch_and_sync_jira_data():
                             'Updated': convert_timestamp(fields.get('updated')),
                             'Resolved': convert_timestamp(fields.get('resolutiondate')),
                             'Assignee': assignee_name,
-                            'RemedyTicketNumber': str(remedy_ticket_number) if remedy_ticket_number is not None else None,
+                            'RemedyTicketNumber': extract_incident_numbers(remedy_ticket_number),  # <-- CHANGED HERE
                             'Links': issue_keys,
                             SR_REF_BQ_NAME: sr_ref_value,
                         }
@@ -380,6 +381,12 @@ def transform_sr_ref(value):
     # Remove all occurrences of 'SR' (case-insensitive)
     value = value.replace('SR', '').replace('sr', '').replace('Sr', '').replace('sR', '')
     return value
+
+def extract_incident_numbers(remedy_ticket_number):
+    """Extracts all incident numbers matching INC followed by 9+ digits."""
+    if not remedy_ticket_number:
+        return []
+    return re.findall(r'INC\d{9,}', str(remedy_ticket_number))
 
 if __name__ == '__main__':
     fetch_and_sync_jira_data()
