@@ -32,43 +32,51 @@ function searchForEmailAndAttachments() {
     return b.getLastMessageDate().getTime() - a.getLastMessageDate().getTime();
   });
 
-  var latestThread = threads[0];
-  var messages = latestThread.getMessages();
-  var latestMessage = messages[messages.length - 1];
+  for (var i = 0; i < threads.length; i++) {
+    var thread = threads[i];
+    var messages = thread.getMessages();
 
-  // Print actual subject for debugging
-  console.log('Actual subject: "' + latestMessage.getSubject() + '"');
+    for (var m = 0; m < messages.length; m++) {
+      var message = messages[m];
+      console.log('Actual subject: "' + message.getSubject() + '"');
 
-  var attachments = latestMessage.getAttachments();
-  console.log('  Number of attachments:', attachments.length);
+      var attachments = message.getAttachments();
+      console.log('  Number of attachments:', attachments.length);
 
-  if (attachments.length > 0) {
-    console.log('  Attachment names:');
-    for (var j = 0; j < attachments.length; j++) {
-      console.log('    ' + attachments[j].getName());
-      processAttachment(attachments[j]);
+      if (attachments.length > 0) {
+        console.log('  Attachment names:');
+        for (var j = 0; j < attachments.length; j++) {
+          var attachment = attachments[j];
+          var name = attachment.getName();
+          if (name.toLowerCase().endsWith('.csv')) {
+            console.log('    Processing CSV: ' + name);
+            processAttachment(attachment);
+          } else {
+            console.log('    Skipped non-CSV attachment: ' + name);
+          }
+        }
+      } else {
+        console.log('  No attachments found.');
+      }
     }
 
-    // Label Handling
+    // Label Handling (after processing all messages in the thread)
     var archivedLabelObj = GmailApp.getUserLabelByName(archivedLabel);
     var dashboardLabelObj = GmailApp.getUserLabelByName(label);
 
     if (dashboardLabelObj) {
-      latestThread.removeLabel(dashboardLabelObj);
+      thread.removeLabel(dashboardLabelObj);
       console.log('Label "' + label + '" removed from email thread.');
     } else {
       console.log('Label "' + label + '" not found.');
     }
 
     if (archivedLabelObj) {
-      latestThread.addLabel(archivedLabelObj);
+      thread.addLabel(archivedLabelObj);
       console.log('Label "' + archivedLabel + '" added to email thread.');
     } else {
       console.log('Label "' + archivedLabel + '" not found.');
     }
-
-  } else {
-    console.log('  No attachments found.');
   }
 }
 

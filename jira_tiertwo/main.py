@@ -206,9 +206,9 @@ def fetch_and_sync_jira_data():
                         status_name = status_data.get('name') if status_data else None
 
                         # 3. Data Extraction: Get value for the SR_Ref custom field
-                        # The get_field_value function is perfect for this: it handles the {'id':'val', 'value':'val'} structure
                         sr_ref_value = get_field_value(fields.get(SR_REF_JIRA_ID))
-                        
+                        sr_ref_value = transform_sr_ref(sr_ref_value)  # <--- Apply transformation
+
                         row = {
                             'T': issuetype_name,
                             'Key': issue['key'],
@@ -370,6 +370,16 @@ def ensure_temp_table_exists(client, dataset_id, temp_table_id, bq_schema):
     except NotFound:
         logging.warning(f"Temp table '{dataset_id}.{temp_table_id}' not found, recreating.")
         create_temp_table(client, dataset_id, temp_table_id, bq_schema)
+
+def transform_sr_ref(value):
+    """Remove leading/trailing spaces and all 'SR' (case-insensitive) from the value."""
+    if value is None:
+        return None
+    # Remove leading/trailing spaces
+    value = str(value).strip()
+    # Remove all occurrences of 'SR' (case-insensitive)
+    value = value.replace('SR', '').replace('sr', '').replace('Sr', '').replace('sR', '')
+    return value
 
 if __name__ == '__main__':
     fetch_and_sync_jira_data()
