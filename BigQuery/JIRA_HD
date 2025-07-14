@@ -34,7 +34,10 @@ SELECT
   hd.TrueMTTR_mins,
   hd.Cust_ID,
   UPPER(REPLACE(hd.Carrier, '"', '')) AS Carrier,
-  UPPER(REPLACE(hd.Customer_Name, '"', '')) AS Customer_Name,
+  CASE 
+    WHEN hd.Customer_Name IS NULL THEN UPPER(REPLACE(shr.CustName, '"', ''))
+    ELSE UPPER(REPLACE(hd.Customer_Name, '"', ''))
+  END AS Customer_Name,
   UPPER(REPLACE(hd.SRno, '"', '')) AS SRno,
   hd.LastResolvedDate,
   hd.ReportedDate,
@@ -107,11 +110,14 @@ SELECT
   CASE 
     WHEN hd.Product_Family IS NULL THEN shr.`Product Family`
     ELSE hd.Product_Family
-  END AS ProductFamily
+  END AS ProductFamily,
+  st.SR_Ref AS JiraSRNo
 
 FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` AS hd
 FULL OUTER JOIN FlattenedTierTwo AS st
   ON hd.Incident_Number = st.RemedyTicketNumber_flat
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON CONCAT('SR', st.SR_Ref) = shr.SRNo
+
+
 
