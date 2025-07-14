@@ -1,10 +1,10 @@
 WITH FlattenedTierTwo AS (
   SELECT
-    *,
+    t.*,
     remedy_incident AS RemedyTicketNumber_flat
   FROM
-    `pccw-internal-virt-agent-uat.GSO.TierTwo`,
-    UNNEST(RemedyTicketNumber) AS remedy_incident
+    `pccw-internal-virt-agent-uat.GSO.TierTwo` t
+    LEFT JOIN UNNEST(t.RemedyTicketNumber) AS remedy_incident
 )
 
 SELECT
