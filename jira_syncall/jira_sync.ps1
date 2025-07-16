@@ -61,7 +61,7 @@ function Invoke-DockerImages {
 }
 
 # Initialize Docker images array
-$dockerImages = @("jira_projecttracking", "jira_ccas", "jira_ccprov", "jira_secondtier", "jira_ccas_changelog", "jira_ccas_comments")  # Replace with your actual Docker images
+$dockerImages = @("jira_ccas", "jira_ccprov", "jira_secondtier", "jira_ccas_changelog", "jira_ccas_comments")  # Replace with your actual Docker images
 $failedImages = @()
 
 # Start logging

@@ -50,14 +50,11 @@ def create_or_replace_temp_table(client, dataset_id, table_id, schema):
             part = f"`{field.name}` {field.field_type}"
             if field.mode == "REQUIRED":
                 part += " NOT NULL"
+            elif field.mode == "REPEATED":
+                part = f"`{field.name}` ARRAY<{field.field_type}>"
             schema_ddl_parts.append(part)
 
         query = f"CREATE OR REPLACE TABLE `{dataset_id}.{table_id}` ({', '.join(schema_ddl_parts)})"
-
-        if DEBUG:
-            logging.info(f"Executing DDL for temp table: {query}")
-        else:
-            logging.info(f"Ensuring temporary table '{dataset_id}.{table_id}' schema.")
 
         client.query(query).result()
         logging.info(f"Temporary table '{dataset_id}.{table_id}' created or replaced successfully.")
@@ -128,7 +125,7 @@ def fetch_and_sync_jira_data():
         'project = "GS&O Data Analytics" OR '
         'project = "GS&O Knowledge Consolidation" OR '
         'project = "GS&O Tool Automation" '
-        ') AND updated >= endOfDay(-8) ORDER BY updated DESC'
+        ') AND updated >= endOfDay(-1) ORDER BY updated DESC'
     )
 
     username = 'jjkli@consoleconnect.com'
@@ -177,6 +174,7 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField('Resolved', 'TIMESTAMP', mode='NULLABLE'),
             bigquery.SchemaField('Reporter', 'STRING', mode='NULLABLE'),
             bigquery.SchemaField('Assignee', 'STRING', mode='NULLABLE'),
+            bigquery.SchemaField('Component', 'STRING', mode='REPEATED'),  # <-- This is the fix!
         ]
 
         create_or_replace_temp_table(client, dataset_id, temp_table_id, schema)
@@ -197,7 +195,7 @@ def fetch_and_sync_jira_data():
                         'jql': jql_query,
                         'startAt': start_at,
                         'maxResults': max_results,
-                        'fields': 'issuetype,project,summary,status,created,updated,resolutiondate,reporter,assignee'
+                        'fields': 'issuetype,project,summary,status,created,updated,resolutiondate,reporter,assignee,components'
                     },
                     timeout=300
                 )
@@ -229,6 +227,9 @@ def fetch_and_sync_jira_data():
                     issuetype_data = fields.get('issuetype')
                     issuetype_name = issuetype_data.get('name') if issuetype_data else "Unknown"
 
+                    components = fields.get('components', [])
+                    component_names = [c['name'] for c in components] if components else []
+
                     row = {
                         'T': issuetype_name,
                         'Project': project_name,
@@ -240,6 +241,7 @@ def fetch_and_sync_jira_data():
                         'Resolved': convert_timestamp(fields.get('resolutiondate')),
                         'Reporter': reporter_name,
                         'Assignee': assignee_name,
+                        'Component': component_names,  # <-- Now a list/array
                     }
 
                     if not row['Created'] or not row['Updated']:
@@ -368,8 +370,8 @@ def fetch_and_sync_jira_data():
             if table_exists(client, dataset_id, temp_table_id):
                 logging.info("Attempting to clean up temporary table due to error in main function.")
                 delete_table(client, dataset_id, temp_table_id)
-
 if __name__ == '__main__':
     logging.info("Starting Jira to BigQuery sync process.")
     fetch_and_sync_jira_data()
+    logging.info("Jira to BigQuery sync process finished.")
     logging.info("Jira to BigQuery sync process finished.")
