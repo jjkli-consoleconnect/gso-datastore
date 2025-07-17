@@ -121,7 +121,8 @@ SELECT
     WHEN hd.Product_Family IS NULL THEN shr.`Product Family`
     ELSE hd.Product_Family
   END AS ProductFamily,
-  st.SR_Ref AS JiraSRNo
+  st.SR_Ref AS JiraSRNo,
+  st.SyncTime
 
 FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` AS hd
 FULL OUTER JOIN FlattenedTierTwo AS st

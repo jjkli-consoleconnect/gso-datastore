@@ -174,7 +174,8 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField('Resolved', 'TIMESTAMP', mode='NULLABLE'),
             bigquery.SchemaField('Reporter', 'STRING', mode='NULLABLE'),
             bigquery.SchemaField('Assignee', 'STRING', mode='NULLABLE'),
-            bigquery.SchemaField('Component', 'STRING', mode='REPEATED'),  # <-- This is the fix!
+            bigquery.SchemaField('Component', 'STRING', mode='REPEATED'),
+            bigquery.SchemaField('SyncTime', 'TIMESTAMP', mode='NULLABLE'),  # <--- ADDED SyncTime
         ]
 
         create_or_replace_temp_table(client, dataset_id, temp_table_id, schema)
@@ -241,7 +242,8 @@ def fetch_and_sync_jira_data():
                         'Resolved': convert_timestamp(fields.get('resolutiondate')),
                         'Reporter': reporter_name,
                         'Assignee': assignee_name,
-                        'Component': component_names,  # <-- Now a list/array
+                        'Component': component_names,
+                        'SyncTime': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),  # <--- ADDED SyncTime
                     }
 
                     if not row['Created'] or not row['Updated']:
