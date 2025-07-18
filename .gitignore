@@ -10,3 +10,4 @@
 
 # Ensure .gitignore itself is tracked
 !.gitignore
+jira_syncall/jira_sync.log
