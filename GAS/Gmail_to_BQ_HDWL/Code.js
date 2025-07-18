@@ -23,7 +23,7 @@ const csvTypeConfigurations = [
       "Closed_Date", "Submit_Date", "Assignee", "Closed_By", "Submitter", "TrueMTTR_mins",
       "Cust_ID", "Carrier", "Customer_Name", "SRno", "LastResolvedDate", "ReportedDate",
       "RespondedDate", "FaultCauseDetail", "LastModifiedDate", "ReportedBy",
-      "Product_Family", "ProductDescription" // <-- Add these two fields
+      "Product_Family", "ProductDescription" // <-- Removed ExtractedDescription from here
     ],
     primaryKeyForMerge: "Incident_Number",
     fieldMap: {
@@ -52,14 +52,15 @@ const csvTypeConfigurations = [
     targetTableId: "WorkLogAllNOC",
     allColumns: [
       "Incident_Number", "WorkLog_Type", "WorkLog_ID", "WorkLog_Submit_Date",
-      "WorkLog_Submitter", "Last_Modified_Date", "Last_Modified_By"
+      "WorkLog_Submitter", "Last_Modified_Date", "Last_Modified_By", "ExtractedDescription" // <-- Added here
     ],
     primaryKeyForMerge: "WorkLog_ID",
     fieldMap: {
       "IncidentNumber": "Incident_Number", "WorkLogType": "WorkLog_Type",
       "WorkLogID": "WorkLog_ID", "WorkLogSubmitDate": "WorkLog_Submit_Date",
       "WorkLogSubmitter": "WorkLog_Submitter", "LastModifiedDate": "Last_Modified_Date",
-      "LastModifiedBy": "Last_Modified_By"
+      "LastModifiedBy": "Last_Modified_By",
+      "ExtractedDescription": "ExtractedDescription" // <-- Added here
     },
     timestampFields: ["WorkLog_Submit_Date", "Last_Modified_Date"],
     integerFields: []

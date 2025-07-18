@@ -56,14 +56,15 @@ const csvTypeConfigurations = [
     targetTableId: "WorkLogAllNOC", // BigQuery target table for Worklog
     allColumns: [ // Ensure these map exactly to BigQuery schema for testwl
       "Incident_Number", "WorkLog_Type", "WorkLog_ID", "WorkLog_Submit_Date",
-      "WorkLog_Submitter", "Last_Modified_Date", "Last_Modified_By"
+      "WorkLog_Submitter", "Last_Modified_Date", "Last_Modified_By", "ExtractedDescription" // <-- Added new field
     ],
     primaryKeyForMerge: "WorkLog_ID", // WorkLog_ID is the primary key for WL
     fieldMap: { // Header mapping for Worklog CSV
       "IncidentNumber": "Incident_Number", "WorkLogType": "WorkLog_Type",
       "WorkLogID": "WorkLog_ID", "WorkLogSubmitDate": "WorkLog_Submit_Date",
       "WorkLogSubmitter": "WorkLog_Submitter", "LastModifiedDate": "Last_Modified_Date",
-      "LastModifiedBy": "Last_Modified_By"
+      "LastModifiedBy": "Last_Modified_By",
+      "ExtractedDescription": "ExtractedDescription" // <-- Added new mapping
     },
     // Timestamp and Integer fields for WorkLog
     timestampFields: ["WorkLog_Submit_Date", "Last_Modified_Date"],
