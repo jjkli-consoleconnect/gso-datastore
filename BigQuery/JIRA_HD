@@ -76,7 +76,7 @@ SELECT
   REGEXP_EXTRACT(Key, r'^([A-Z]+)') AS ProjectCode,
   CASE
     WHEN (
-      (STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'TAC') > 0) AND
+      (STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'VOICECE') > 0) AND
       (
         STRPOS(Links, 'AS3491') > 0 OR
         STRPOS(Links, 'CCONB') > 0 OR
@@ -87,7 +87,7 @@ SELECT
     ) THEN 'T3'
 
     WHEN (
-      (STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'CCAS') > 0) AND
+      (STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'VOICECE') > 0) AND
       (
         Links IS NULL OR NOT (
           STRPOS(Links, 'AS3491') > 0 OR
@@ -111,6 +111,7 @@ SELECT
     WHEN STRPOS(Links, 'SH') > 0 THEN 'SH'
     WHEN STRPOS(Key, 'CCAS') > 0 THEN 'CCAS'
     WHEN STRPOS(Key, 'TAC') > 0 THEN 'TAC'
+    WHEN STRPOS(Key, 'VOICECE') > 0 THEN 'VOICECE'
     ELSE NULL
   END AS SolvedByProject,
   CASE 
