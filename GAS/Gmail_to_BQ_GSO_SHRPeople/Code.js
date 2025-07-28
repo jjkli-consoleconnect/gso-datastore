@@ -32,51 +32,86 @@ function searchForEmailAndAttachments() {
     return b.getLastMessageDate().getTime() - a.getLastMessageDate().getTime();
   });
 
-  for (var i = 0; i < threads.length; i++) {
-    var thread = threads[i];
-    var messages = thread.getMessages();
+  var latestThread = threads[0];
+  var messages = latestThread.getMessages();
+  var latestMessage = messages[messages.length - 1];
 
-    for (var m = 0; m < messages.length; m++) {
-      var message = messages[m];
-      console.log('Actual subject: "' + message.getSubject() + '"');
+  // Print actual subject for debugging
+  console.log('Actual subject: "' + latestMessage.getSubject() + '"');
 
-      var attachments = message.getAttachments();
-      console.log('  Number of attachments:', attachments.length);
+  var attachments = latestMessage.getAttachments();
+  console.log('  Number of attachments:', attachments.length);
 
-      if (attachments.length > 0) {
-        console.log('  Attachment names:');
-        for (var j = 0; j < attachments.length; j++) {
-          var attachment = attachments[j];
-          var name = attachment.getName();
-          if (name.toLowerCase().endsWith('.csv')) {
-            console.log('    Processing CSV: ' + name);
-            processAttachment(attachment);
-          } else {
-            console.log('    Skipped non-CSV attachment: ' + name);
-          }
-        }
-      } else {
-        console.log('  No attachments found.');
-      }
+  if (attachments.length > 0) {
+    console.log('  Attachment names:');
+    var allRows = [];
+    for (var j = 0; j < attachments.length; j++) {
+      console.log('    ' + attachments[j].getName());
+      var csvData = Utilities.parseCsv(attachments[j].getDataAsString());
+      csvData.shift(); // remove header row
+      csvData = csvData.filter(row => row.some(cell => cell !== ''));
+      var transformedData = csvData.map(row => [
+        row[0],  // CustID
+        row[1],  // CustName
+        row[2],  // SRNo
+        row[3],  // Product Family
+        row[4],  // SiteA
+        row[5],  // SiteB
+        row[6],  // Region A
+        row[7],  // Region B
+        row[8],  // Product ID
+        row[9],  // Insight Circuit ID
+        row[10], // Circuit Owner
+        row[11]  // ProductDescription
+      ]);
+      allRows = allRows.concat(transformedData);
     }
 
-    // Label Handling (after processing all messages in the thread)
+    var processedCsvContent = allRows.map(row => row.join(',')).join('\n');
+    var fileName = 'combined_attachments_amended.csv';
+    var file = DriveApp.getFolderById(folderId).createFile(fileName, processedCsvContent);
+    console.log('Processed combined CSV file saved to Google Drive:', file.getUrl());
+
+    var job = {
+      configuration: {
+        load: {
+          destinationTable: {
+            projectId: projectId,
+            datasetId: datasetId,
+            tableId: tableId
+          },
+          sourceFormat: 'CSV',
+          skipLeadingRows: 0,
+          writeDisposition: 'WRITE_TRUNCATE'
+        }
+      }
+    };
+
+    BigQuery.Jobs.insert(job, projectId, Utilities.newBlob(processedCsvContent));
+    console.log("CSV data updated in BigQuery table successfully!");
+
+    deleteCsvFile(fileName, folderId);
+
+    // Label Handling
     var archivedLabelObj = GmailApp.getUserLabelByName(archivedLabel);
     var dashboardLabelObj = GmailApp.getUserLabelByName(label);
 
     if (dashboardLabelObj) {
-      thread.removeLabel(dashboardLabelObj);
+      latestThread.removeLabel(dashboardLabelObj);
       console.log('Label "' + label + '" removed from email thread.');
     } else {
       console.log('Label "' + label + '" not found.');
     }
 
     if (archivedLabelObj) {
-      thread.addLabel(archivedLabelObj);
+      latestThread.addLabel(archivedLabelObj);
       console.log('Label "' + archivedLabel + '" added to email thread.');
     } else {
       console.log('Label "' + archivedLabel + '" not found.');
     }
+
+  } else {
+    console.log('  No attachments found.');
   }
 }
 
