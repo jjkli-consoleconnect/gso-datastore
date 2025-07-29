@@ -148,13 +148,14 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
     temp_table_id = f"{table_id}_temp"
 
     schema = [
-        bigquery.SchemaField("Issue_Key", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("History_ID", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("Transition_Timestamp", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("Issue_Key", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("History_ID", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("Transition_Timestamp", "TIMESTAMP", mode="NULLABLE"),
         bigquery.SchemaField("Transitioned_From", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("Transitioned_To", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("Transitioned_By_Account_ID", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("Transitioned_By_Display_Name", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
     ]
 
     if not create_or_replace_temp_table(client, dataset_id, temp_table_id, schema):
@@ -209,7 +210,7 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         # Fetch histories in parallel for the current page of issues
         issue_histories = fetch_issue_histories_parallel(jira_base_url, issues, username, api_token)
 
-        for issue_data in issues: # Renamed 'issue' to 'issue_data' to avoid conflict with 'issues' list
+        for issue_data in issues:
             issue_key = issue_data.get('key')
             if not issue_key:
                 logging.warning(f"Issue missing key in search results. Data: {issue_data}. Skipping.")
@@ -223,25 +224,24 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
 
             histories = issue_history_detail.get('changelog', {}).get('histories', [])
 
-            for history_entry in histories: # Renamed 'history' to 'history_entry'
+            for history_entry in histories:
                 history_id = history_entry.get('id')
                 author = history_entry.get('author', {})
-                created_timestamp = convert_timestamp(history_entry.get('created')) # Renamed 'created'
-
+                created_timestamp = convert_timestamp(history_entry.get('created'))
                 if not created_timestamp:
                     logging.warning(f"Skipping history entry {history_id} for issue {issue_key} due to invalid creation timestamp.")
                     continue
-
                 for item in history_entry.get('items', []):
-                    if item.get('fieldId') == 'status' or item.get('field') == 'status': # Check both field and fieldId for status
+                    if item.get('fieldId') == 'status' or item.get('field') == 'status':
                         rows_to_insert.append({
                             "Issue_Key": issue_key,
                             "History_ID": history_id,
                             "Transition_Timestamp": created_timestamp,
                             "Transitioned_From": item.get('fromString'),
                             "Transitioned_To": item.get('toString'),
-                            "Transitioned_By_Account_ID": author.get('accountId'), # Account ID is preferred for Cloud
+                            "Transitioned_By_Account_ID": author.get('accountId'),
                             "Transitioned_By_Display_Name": author.get('displayName'),
+                            "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
                         })
 
             # Insert rows in batches to BigQuery temp table
@@ -266,38 +266,22 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         logging.info(f"Processed details for {len(issues)} issues. Total issues processed so far: {issues_processed} out of {total_issues}")
         time.sleep(1) # Reduced sleep, rely more on retry backoff for rate limits. Original was 2s.
 
-    # MERGE from temp table to final table
-    # Ensure project ID is included in table references for clarity and cross-project queries
-    merge_query = f"""
-        MERGE `{client.project}.{dataset_id}.{table_id}` T
-        USING `{client.project}.{dataset_id}.{temp_table_id}` S
-        ON T.History_ID = S.History_ID AND T.Issue_Key = S.Issue_Key
-        WHEN MATCHED THEN
-            UPDATE SET
-                T.Transition_Timestamp = S.Transition_Timestamp,
-                T.Transitioned_From = S.Transitioned_From,
-                T.Transitioned_To = S.Transitioned_To,
-                T.Transitioned_By_Account_ID = S.Transitioned_By_Account_ID,
-                T.Transitioned_By_Display_Name = S.Transitioned_By_Display_Name
-        WHEN NOT MATCHED THEN
-            INSERT (Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To, Transitioned_By_Account_ID, Transitioned_By_Display_Name)
-            VALUES (S.Issue_Key, S.History_ID, S.Transition_Timestamp, S.Transitioned_From, S.Transitioned_To, S.Transitioned_By_Account_ID, S.Transitioned_By_Display_Name)
+    # Insert into final table from temp table
+    insert_query = f"""
+        INSERT INTO `{client.project}.{dataset_id}.{table_id}` (Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To, Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime)
+        SELECT Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To, Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime
+        FROM `{client.project}.{dataset_id}.{temp_table_id}`
     """
-    logging.info(f"Executing MERGE query into {client.project}.{dataset_id}.{table_id}")
+    logging.info(f"Executing INSERT query into {client.project}.{dataset_id}.{table_id}")
     try:
-        query_job = client.query(merge_query)
-        query_job.result()  # Wait for the job to complete
-        logging.info(f"Merge query executed successfully. {query_job.num_dml_affected_rows} rows affected.")
+        query_job = client.query(insert_query)
+        query_job.result()
+        logging.info(f"Insert query executed successfully. {query_job.num_dml_affected_rows} rows inserted.")
     except Exception as e:
-        logging.exception(f"Error running merge query: {e}")
-        # Consider not deleting temp table on MERGE failure for debugging
+        logging.exception(f"Error running insert query: {e}")
         return False
     finally:
-        # Delete the temporary table after merging or if merge fails but we want to clean up
-        if not delete_temp_table(client, dataset_id, temp_table_id):
-            logging.error(f"Failed to delete temporary table: {client.project}.{dataset_id}.{temp_table_id}")
-            # This doesn't cause the main function to return False, which might be intended.
-            # If deletion failure is critical, add 'return False' here.
+        delete_temp_table(client, dataset_id, temp_table_id)
 
     return True
 
@@ -320,7 +304,7 @@ def main():
         return
 
     jira_base_url = 'https://consoleconnect.atlassian.net' # Base URL for Jira Cloud
-    jql_query = 'project = "CCAS" AND updated >= endOfDay(-3) ORDER BY updated ASC'
+    jql_query = 'project = "GS&O Tool Automation" OR project = "Google Contact Center AI Solution" OR project = "GS&O Knowledge Consolidation"'
 
     username = 'jjkli@consoleconnect.com'
     logging.info(f"Using Jira username: {username}")
@@ -331,8 +315,8 @@ def main():
         logging.error("Jira API token not found in config.json. Exiting.")
         return
 
-    dataset_id = 'JIRAProjects'  # Replace with your BigQuery dataset ID if different
-    table_id = 'CCAS_changelog'  # Replace with your desired BigQuery table ID if different
+    dataset_id = 'GSO'  # Replace with your BigQuery dataset ID if different
+    table_id = 'JiraChangelog'  # Replace with your desired BigQuery table ID if different
 
     # Ensure GOOGLE_APPLICATION_CREDENTIALS environment variable is set,
     # or the script is running in an environment with appropriate service account permissions.

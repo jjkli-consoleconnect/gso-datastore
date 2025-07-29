@@ -203,6 +203,7 @@ def generate_rows(issues, jira_base_url, username, api_token):
     # Pass the base URL to the batch fetch function
     comments_batch = fetch_comments_batch(jira_base_url, issue_keys, username, api_token)
 
+    utc_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
     for issue_key in issue_keys: # Iterate through the original issue keys list
         comments = comments_batch.get(issue_key)
         if comments is None:
@@ -235,6 +236,8 @@ def generate_rows(issues, jira_base_url, username, api_token):
                     "Body": comment.get('body'),
                     "Visibility_Type": visibility_info.get('type'),
                     "Visibility_Value": visibility_info.get('value'),
+                    "SyncTime": utc_now,
+                    "InsertedAt": utc_now,
                 }
             except Exception as e:
                 logging.exception(f"Error processing comment {comment.get('id')} for issue {issue_key}: {e}")
@@ -252,9 +255,11 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
         bigquery.SchemaField("Author_Display_Name", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("Created", "TIMESTAMP", mode="NULLABLE"),
         bigquery.SchemaField("Updated", "TIMESTAMP", mode="NULLABLE"),
-        bigquery.SchemaField("Body", "STRING", mode="NULLABLE"), # Jira comment body can be large
+        bigquery.SchemaField("Body", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("Visibility_Type", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("Visibility_Value", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("InsertedAt", "TIMESTAMP", mode="NULLABLE"),
     ]
     
     # Ensure STRING fields that might hold large text are handled
@@ -407,18 +412,19 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
             -- Comparing stringified timestamps or using checksums/hashes is more robust
             -- For simplicity, let's check key fields that are likely to change
             UPDATE SET
-                T.Issue_Key = S.Issue_Key, -- Should not change for an existing comment ID
+                T.Issue_Key = S.Issue_Key,
                 T.Author_Account_ID = S.Author_Account_ID,
                 T.Author_Display_Name = S.Author_Display_Name,
-                -- Use COALESCE or IS DISTINCT FROM for NULL handling in comparison
                 T.Created = S.Created,
                 T.Updated = S.Updated,
                 T.Body = S.Body,
                 T.Visibility_Type = S.Visibility_Type,
-                T.Visibility_Value = S.Visibility_Value
+                T.Visibility_Value = S.Visibility_Value,
+                T.SyncTime = S.SyncTime,
+                T.InsertedAt = S.InsertedAt
         WHEN NOT MATCHED THEN
-            INSERT (Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body, Visibility_Type, Visibility_Value)
-            VALUES (S.Issue_Key, S.Comment_ID, S.Author_Account_ID, S.Author_Display_Name, S.Created, S.Updated, S.Body, S.Visibility_Type, S.Visibility_Value)
+            INSERT (Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body, Visibility_Type, Visibility_Value, SyncTime, InsertedAt)
+            VALUES (S.Issue_Key, S.Comment_ID, S.Author_Account_ID, S.Author_Display_Name, S.Created, S.Updated, S.Body, S.Visibility_Type, S.Visibility_Value, S.SyncTime, S.InsertedAt)
     """
     # Note on MERGE WHEN MATCHED condition: BigQuery's MERGE requires a WHEN MATCHED clause even if no updates are intended.
     # The provided query updates all fields. If you only want to update if changes occurred,
@@ -461,7 +467,7 @@ def main():
     # Changed to the new Jira Cloud base URL
     jira_url = 'https://consoleconnect.atlassian.net'
     # Changed to the direct JQL query provided
-    jql_query = 'project = "CCAS" AND updated >= endOfDay(-3) order by updated ASC'
+    jql_query = 'project = "GS&O Tool Automation" OR project = "Google Contact Center AI Solution" OR project = "GS&O Knowledge Consolidation"'
     # -----------------------
 
     # Assuming username and API token key in config remain the same
@@ -477,8 +483,8 @@ def main():
         return
 
 
-    dataset_id = 'JIRAProjects' # Assuming this remains the same
-    table_id = 'CCAS_comments' # Assuming this remains the same
+    dataset_id = 'GSO' # Assuming this remains the same
+    table_id = 'JiraComments' # Assuming this remains the same
 
     try:
         client = bigquery.Client()
