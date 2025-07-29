@@ -1,0 +1,8 @@
+{
+  "name": "jira-comments-sync",
+  "version": "1.0.0",
+  "main": "node.js",
+  "dependencies": {
+    "@google-cloud/bigquery": "^7.0.0"
+  }
+}
