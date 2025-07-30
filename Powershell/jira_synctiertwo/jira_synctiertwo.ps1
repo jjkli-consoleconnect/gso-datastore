@@ -3,7 +3,7 @@
 # Logs Docker job status and handles retries
 # --------------------------------------
 
-$logFilePath = "G:\My Drive\Scripts\jira_synctiertwo\jira_synctiertwo.log"
+$logFilePath = "G:\My Drive\Scripts\PowerShell\jira_synctiertwo\jira_synctiertwo.log"
 
 function Write-Log {
     param ([string]$message)
@@ -19,7 +19,7 @@ Write-Log "========================================="
 
 $startTime = Get-Date
 
-Set-Location "G:\My Drive\Scripts\jira_syncall"
+Set-Location "G:\My Drive\Scripts\Powershell\jira_syncall"
 
 $dockerPath = "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
 $dockerImages = @("jira_tiertwo", "jira_projecttracking")
@@ -31,7 +31,7 @@ function Invoke-DockerImage {
     Write-Log "Running Docker image: $imageName"
 
     try {
-        & "$dockerPath" run -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials.json" $imageName 2>&1
+        & "$dockerPath" run --rm -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials.json" $imageName 2>&1
 
         if ($LASTEXITCODE -eq 0) {
             Write-Log "$imageName ran successfully."

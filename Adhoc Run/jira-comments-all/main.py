@@ -245,11 +245,7 @@ def generate_rows(issues, jira_base_url, username, api_token):
 
 # Pass the base URL and the new JQL query
 def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
-    # Use the staging table for inserts and merge
-    staging_project = 'pccw-internal-virt-agent-uat'
-    staging_dataset = 'Staging'
-    staging_table = 'JiraComments'
-
+    temp_table_id = 'JiraComments_temp'
     schema = [
         bigquery.SchemaField("Issue_Key", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("Comment_ID", "STRING", mode="REQUIRED"),
@@ -264,19 +260,18 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
         bigquery.SchemaField("InsertedAt", "TIMESTAMP", mode="NULLABLE"),
     ]
 
-    # Ensure staging table exists
-    if not table_exists(client, staging_dataset, staging_table):
-        if not create_or_replace_temp_table(client, staging_dataset, staging_table, schema):
-            logging.error("Setup failed: Could not create staging table.")
-            return False
-        if not wait_for_table(client, staging_dataset, staging_table):
-            logging.error("Setup failed: Staging table not available.")
-            return False
+    # Create or replace temp table in GSO dataset
+    if not create_or_replace_temp_table(client, dataset_id, temp_table_id, schema):
+        logging.error("Setup failed: Could not create temp table.")
+        return False
+    if not wait_for_table(client, dataset_id, temp_table_id):
+        logging.error("Setup failed: Temp table not available.")
+        return False
 
     # --- Jira Search and Data Extraction ---
     total_issues = float('inf')
     start_at = 0
-    max_results = 50 # Max results for JQL search, can be up to 100 in Jira Cloud
+    max_results = 100 # Max results for JQL search, can be up to 100 in Jira Cloud
     issues_processed = 0
     # Batch size for inserting rows into BigQuery - keep it reasonable
     batch_size = 1000 
@@ -330,12 +325,12 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
                     time.sleep(10)
                 else:
                     logging.error("Failed to search issues after multiple attempts.")
-                    delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table on failure
+                    delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
                     return False # Give up after retries
 
         if response is None: # If loop finished without a successful response
              logging.error("Jira search failed after multiple retries.")
-             delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table
+             delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table
              return False
 
         # --- Process Search Results ---
@@ -358,18 +353,18 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
             for row in generate_rows(issues, jira_base_url, username, api_token):
                 rows_to_insert.append(row)
                 if len(rows_to_insert) >= batch_size:
-                    if not insert_rows_with_retry(client, staging_dataset, staging_table, rows_to_insert, schema):
+                    if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
                         logging.error(f"Failed to insert batch of {len(rows_to_insert)} rows into temp table. Stopping processing.")
-                        delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table on failure
+                        delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
                         return False
                     total_rows_inserted_to_temp += len(rows_to_insert)
                     rows_to_insert = []
 
             # Insert any remaining rows in the last batch
             if rows_to_insert:
-                if not insert_rows_with_retry(client, staging_dataset, staging_table, rows_to_insert, schema):
+                if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
                     logging.error(f"Failed to insert remaining {len(rows_to_insert)} rows into temp table. Stopping processing.")
-                    delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table on failure
+                    delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
                     return False
                 total_rows_inserted_to_temp += len(rows_to_insert)
 
@@ -383,22 +378,27 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
 
         except json.JSONDecodeError as e:
             logging.error(f"Error decoding JSON response for search issues: {e}. Response text: {response.text if response else 'N/A'}")
-            delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table on failure
+            delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
             return False
         except Exception as e:
             logging.exception(f"An unexpected error occurred during issue processing: {e}")
-            delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table on failure
+            delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
             return False
 
 
-    logging.info(f"Finished fetching and inserting data into temporary table '{staging_table}'. Total rows inserted: {total_rows_inserted_to_temp}")
+    logging.info(f"Finished fetching and inserting data into temporary table '{temp_table_id}'. Total rows inserted: {total_rows_inserted_to_temp}")
 
     # --- Merge Data into Final Table ---
-    logging.info(f"Starting merge operation from '{staging_project}.{staging_dataset}.{staging_table}' to '{dataset_id}.{table_id}'...")
+    logging.info(f"Starting merge operation from '{dataset_id}.{temp_table_id}' to '{dataset_id}.{table_id}'...")
     merge_query = f"""
         MERGE `{dataset_id}.{table_id}` T
-        USING `{staging_project}.{staging_dataset}.{staging_table}` S
-        ON T.Comment_ID = S.Comment_ID
+        USING (
+            SELECT DISTINCT
+                Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body,
+                Visibility_Type, Visibility_Value, SyncTime, InsertedAt
+            FROM `{dataset_id}.{temp_table_id}`
+        ) S
+        ON T.Comment_ID = S.Comment_ID AND T.Updated = S.Updated
         WHEN MATCHED THEN
             UPDATE SET
                 T.Issue_Key = S.Issue_Key,
@@ -425,7 +425,27 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
         return False
 
     logging.info(f"Sync process completed for JQL: {jql_query}")
+
+    # Drop temp table after merge
+    delete_temp_table(client, dataset_id, temp_table_id)
+
     return True
+
+def wait_for_streaming_buffer_empty(client, project, dataset, table, max_wait=300, poll_interval=10):
+    table_ref = f"{project}.{dataset}.{table}"
+    waited = 0
+    while waited < max_wait:
+        table_obj = client.get_table(table_ref)
+        if not hasattr(table_obj, 'streaming_buffer'):
+            return True  # No streaming buffer, safe to proceed
+        buffer = table_obj.streaming_buffer
+        if not buffer or buffer.estimated_rows == 0:
+            return True
+        logging.info(f"Waiting for streaming buffer to empty... ({buffer.estimated_rows} rows remaining)")
+        time.sleep(poll_interval)
+        waited += poll_interval
+    logging.warning("Streaming buffer not empty after waiting. Proceeding anyway.")
+    return False
 
 def main():
     config = load_config()
@@ -437,7 +457,7 @@ def main():
     # Changed to the new Jira Cloud base URL
     jira_url = 'https://consoleconnect.atlassian.net'
     # Changed to the direct JQL query provided
-    jql_query = 'project = "GS&O Tool Automation" OR project = "Google Contact Center AI Solution" OR project = "GS&O Knowledge Consolidation"'
+    jql_query = 'project = "GS&O Tool Automation" OR project = "Google Contact Center AI Solution" OR project = "GS&O Knowledge Consolidation" OR project = "GS&O Data Analytics" AND updated >= endOfDay(-7)'
     # -----------------------
 
     # Assuming username and API token key in config remain the same

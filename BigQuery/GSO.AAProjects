@@ -1,0 +1,44 @@
+SELECT
+  -- JiraTicket fields
+  jt.T AS Ticket_T,
+  jt.Project AS Ticket_Project,
+  jt.Key AS Ticket_Key,
+  jt.Summary AS Ticket_Summary,
+  jt.Status AS Ticket_Status,
+  jt.Created AS Ticket_Created,
+  jt.Updated AS Ticket_Updated,
+  jt.Resolved AS Ticket_Resolved,
+  jt.Reporter AS Ticket_Reporter,
+  jt.Assignee AS Ticket_Assignee,
+  jt.Component AS Ticket_Component,
+  jt.SyncTime AS Ticket_SyncTime,
+
+  -- JiraChangelog fields
+  jc.Issue_Key AS Changelog_Issue_Key,
+  jc.History_ID AS Changelog_History_ID,
+  jc.Transition_Timestamp AS Changelog_Transition_Timestamp,
+  jc.Transitioned_From AS Changelog_Transitioned_From,
+  jc.Transitioned_To AS Changelog_Transitioned_To,
+  jc.Transitioned_By_Display_Name AS Changelog_Transitioned_By_Display_Name,
+  jc.SyncTime AS Changelog_SyncTime,
+
+  -- JiraComments fields
+  jcm.Issue_Key AS Comment_Issue_Key,
+  jcm.Comment_ID AS Comment_ID,
+  jcm.Author_Display_Name AS Comment_Author_Display_Name,
+  jcm.Created AS Comment_Created,
+  jcm.Updated AS Comment_Updated,
+  jcm.Body AS Comment_Body,
+  jcm.SyncTime AS Comment_SyncTime,
+  jcm.InsertedAt AS Comment_InsertedAt
+
+FROM
+  `pccw-internal-virt-agent-uat.GSO.JiraTicket` jt
+LEFT JOIN
+  `pccw-internal-virt-agent-uat.GSO.JiraChangelog` jc
+ON
+  jt.Key = jc.Issue_Key
+LEFT JOIN
+  `pccw-internal-virt-agent-uat.GSO.JiraComments` jcm
+ON
+  jt.Key = jcm.Issue_Key

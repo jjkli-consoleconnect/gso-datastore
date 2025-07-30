@@ -29,7 +29,7 @@ function Invoke-DockerImage {
 
     Write-Log "Starting Docker image $imageName."
     try {
-        $output = & "$dockerPath" run -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials.json" $imageName 2>&1
+        $output = & "$dockerPath" run --rm -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials.json" $imageName 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Log "Docker image $imageName ran successfully."
             # Extract and log additional details from the output
