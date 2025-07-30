@@ -266,19 +266,36 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         logging.info(f"Processed details for {len(issues)} issues. Total issues processed so far: {issues_processed} out of {total_issues}")
         time.sleep(1) # Reduced sleep, rely more on retry backoff for rate limits. Original was 2s.
 
-    # Insert into final table from temp table
-    insert_query = f"""
-        INSERT INTO `{client.project}.{dataset_id}.{table_id}` (Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To, Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime)
-        SELECT Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To, Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime
-        FROM `{client.project}.{dataset_id}.{temp_table_id}`
+    # Merge temp table into final table (upsert logic)
+    merge_query = f"""
+        MERGE `{client.project}.{dataset_id}.{table_id}` T
+        USING (
+            SELECT DISTINCT
+                Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To,
+                Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime
+            FROM `{client.project}.{dataset_id}.{temp_table_id}`
+        ) S
+        ON T.History_ID = S.History_ID AND T.Transition_Timestamp = S.Transition_Timestamp
+        WHEN MATCHED THEN
+            UPDATE SET
+                T.Issue_Key = S.Issue_Key,
+                T.Transitioned_From = S.Transitioned_From,
+                T.Transitioned_To = S.Transitioned_To,
+                T.Transitioned_By_Account_ID = S.Transitioned_By_Account_ID,
+                T.Transitioned_By_Display_Name = S.Transitioned_By_Display_Name,
+                T.SyncTime = S.SyncTime
+        WHEN NOT MATCHED THEN
+            INSERT (Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To, Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime)
+            VALUES (S.Issue_Key, S.History_ID, S.Transition_Timestamp, S.Transitioned_From, S.Transitioned_To, S.Transitioned_By_Account_ID, S.Transitioned_By_Display_Name, S.SyncTime)
     """
-    logging.info(f"Executing INSERT query into {client.project}.{dataset_id}.{table_id}")
+
+    logging.info(f"Executing MERGE query into {client.project}.{dataset_id}.{table_id}")
     try:
-        query_job = client.query(insert_query)
+        query_job = client.query(merge_query)
         query_job.result()
-        logging.info(f"Insert query executed successfully. {query_job.num_dml_affected_rows} rows inserted.")
+        logging.info("Merge query executed successfully.")
     except Exception as e:
-        logging.exception(f"Error running insert query: {e}")
+        logging.exception(f"Error running merge query: {e}")
         return False
     finally:
         delete_temp_table(client, dataset_id, temp_table_id)
