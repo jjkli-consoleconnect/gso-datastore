@@ -245,8 +245,10 @@ def generate_rows(issues, jira_base_url, username, api_token):
 
 # Pass the base URL and the new JQL query
 def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
-    # Create a unique temporary table name
-    temp_table_id = f"{table_id}_temp_{int(time.time())}"
+    # Use the staging table for inserts and merge
+    staging_project = 'pccw-internal-virt-agent-uat'
+    staging_dataset = 'Staging'
+    staging_table = 'JiraComments'
 
     schema = [
         bigquery.SchemaField("Issue_Key", "STRING", mode="REQUIRED"),
@@ -261,23 +263,15 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
         bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="REQUIRED"),
         bigquery.SchemaField("InsertedAt", "TIMESTAMP", mode="NULLABLE"),
     ]
-    
-    # Ensure STRING fields that might hold large text are handled
-    # BigQuery STRING max size is 2MB. If bodies are larger, consider BYTES or checking size.
-    # For typical comments, STRING is fine.
 
-    logging.info(f"Syncing comments using JQL: {jql_query}")
-
-    # --- Temporary Table Creation ---
-    if not create_or_replace_temp_table(client, dataset_id, temp_table_id, schema):
-        logging.error("Setup failed: Could not create or replace temporary table.")
-        return False
-
-    if not wait_for_table(client, dataset_id, temp_table_id):
-        logging.error("Setup failed: Temporary table not available.")
-        # Attempt to clean up the potentially failed table creation
-        delete_temp_table(client, dataset_id, temp_table_id) 
-        return False
+    # Ensure staging table exists
+    if not table_exists(client, staging_dataset, staging_table):
+        if not create_or_replace_temp_table(client, staging_dataset, staging_table, schema):
+            logging.error("Setup failed: Could not create staging table.")
+            return False
+        if not wait_for_table(client, staging_dataset, staging_table):
+            logging.error("Setup failed: Staging table not available.")
+            return False
 
     # --- Jira Search and Data Extraction ---
     total_issues = float('inf')
@@ -336,12 +330,12 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
                     time.sleep(10)
                 else:
                     logging.error("Failed to search issues after multiple attempts.")
-                    delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
+                    delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table on failure
                     return False # Give up after retries
 
         if response is None: # If loop finished without a successful response
              logging.error("Jira search failed after multiple retries.")
-             delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table
+             delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table
              return False
 
         # --- Process Search Results ---
@@ -364,18 +358,18 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
             for row in generate_rows(issues, jira_base_url, username, api_token):
                 rows_to_insert.append(row)
                 if len(rows_to_insert) >= batch_size:
-                    if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
+                    if not insert_rows_with_retry(client, staging_dataset, staging_table, rows_to_insert, schema):
                         logging.error(f"Failed to insert batch of {len(rows_to_insert)} rows into temp table. Stopping processing.")
-                        delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
+                        delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table on failure
                         return False
                     total_rows_inserted_to_temp += len(rows_to_insert)
                     rows_to_insert = []
 
             # Insert any remaining rows in the last batch
             if rows_to_insert:
-                if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
+                if not insert_rows_with_retry(client, staging_dataset, staging_table, rows_to_insert, schema):
                     logging.error(f"Failed to insert remaining {len(rows_to_insert)} rows into temp table. Stopping processing.")
-                    delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
+                    delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table on failure
                     return False
                 total_rows_inserted_to_temp += len(rows_to_insert)
 
@@ -389,28 +383,23 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
 
         except json.JSONDecodeError as e:
             logging.error(f"Error decoding JSON response for search issues: {e}. Response text: {response.text if response else 'N/A'}")
-            delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
+            delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table on failure
             return False
         except Exception as e:
             logging.exception(f"An unexpected error occurred during issue processing: {e}")
-            delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
+            delete_temp_table(client, staging_dataset, staging_table) # Clean up temp table on failure
             return False
 
 
-    logging.info(f"Finished fetching and inserting data into temporary table '{temp_table_id}'. Total rows inserted: {total_rows_inserted_to_temp}")
+    logging.info(f"Finished fetching and inserting data into temporary table '{staging_table}'. Total rows inserted: {total_rows_inserted_to_temp}")
 
     # --- Merge Data into Final Table ---
-    logging.info(f"Starting merge operation from '{temp_table_id}' to '{table_id}'...")
+    logging.info(f"Starting merge operation from '{staging_project}.{staging_dataset}.{staging_table}' to '{dataset_id}.{table_id}'...")
     merge_query = f"""
         MERGE `{dataset_id}.{table_id}` T
-        USING `{dataset_id}.{temp_table_id}` S
+        USING `{staging_project}.{staging_dataset}.{staging_table}` S
         ON T.Comment_ID = S.Comment_ID
         WHEN MATCHED THEN
-            -- Only update if relevant fields have changed
-            -- Note: Check for changes in all fields except the join key if you want a full sync
-            -- Comparing timestamps directly might be an issue if precision differs
-            -- Comparing stringified timestamps or using checksums/hashes is more robust
-            -- For simplicity, let's check key fields that are likely to change
             UPDATE SET
                 T.Issue_Key = S.Issue_Key,
                 T.Author_Account_ID = S.Author_Account_ID,
@@ -426,33 +415,14 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
             INSERT (Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body, Visibility_Type, Visibility_Value, SyncTime, InsertedAt)
             VALUES (S.Issue_Key, S.Comment_ID, S.Author_Account_ID, S.Author_Display_Name, S.Created, S.Updated, S.Body, S.Visibility_Type, S.Visibility_Value, S.SyncTime, S.InsertedAt)
     """
-    # Note on MERGE WHEN MATCHED condition: BigQuery's MERGE requires a WHEN MATCHED clause even if no updates are intended.
-    # The provided query updates all fields. If you only want to update if changes occurred,
-    # you'd need a more complex `WHEN MATCHED AND (...)` condition comparing old and new values.
-    # The current query effectively overwrites the existing row with the new data from the temp table.
 
     try:
-        # Run the merge query
         query_job = client.query(merge_query)
-        query_job.result() # Wait for the query to complete
+        query_job.result()
         logging.info("Data merged successfully into final table.")
     except Exception as e:
         logging.exception(f"Error running merge query: {e}")
-        delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
         return False
-    finally:
-         # --- Temporary Table Deletion ---
-         # Ensure temp table is deleted even if merge fails, unless debugging is needed
-         # You might want to keep it for debugging failed merges
-         if not DEBUG: # Only delete if not in DEBUG mode
-             if not delete_temp_table(client, dataset_id, temp_table_id):
-                 logging.error("Failed to delete temporary table after merge.")
-                 # Return True here? The merge succeeded, but cleanup failed.
-                 # Decided to return False as part of the overall process failed.
-                 return False
-         else:
-             logging.info(f"DEBUG mode is ON. Temporary table '{temp_table_id}' is kept for inspection.")
-
 
     logging.info(f"Sync process completed for JQL: {jql_query}")
     return True

@@ -11,6 +11,13 @@ function fixTimestamp(value) {
   return new Date(formatted).toISOString();
 }
 
+// Helper to remove control characters from strings
+function sanitizeString(str) {
+  if (typeof str !== 'string') return str;
+  // Remove all control characters except newline and tab
+  return str.replace(/[\x00-\x09\x0B-\x1F\x7F]/g, '');
+}
+
 // Cloud Function entry point
 exports.jiraCommentWebhook = async (req, res) => {
   console.log('📬 Comment webhook triggered');
@@ -27,7 +34,7 @@ exports.jiraCommentWebhook = async (req, res) => {
       Author_Display_Name: data.Author_Display_Name,
       Created: fixTimestamp(data.Created),
       Updated: fixTimestamp(data.Updated),
-      Body: data.Body,
+      Body: sanitizeString(data.Body),
       Visibility_Type: data.Visibility_Type || null,
       Visibility_Value: data.Visibility_Value || null,
       SyncTime: new Date().toISOString()
