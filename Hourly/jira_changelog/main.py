@@ -7,6 +7,8 @@ import time
 import os # This import is present but os module is not used. Can be removed if not needed later.
 from concurrent.futures import ThreadPoolExecutor
 import random
+from bq_logger import log_to_bigquery
+import uuid
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -350,46 +352,59 @@ def main():
         logging.error("Failed to load configuration. Exiting.")
         return
 
-    jira_base_url = 'https://consoleconnect.atlassian.net' # Base URL for Jira Cloud
+    jira_base_url = 'https://consoleconnect.atlassian.net'
     jql_query = (
-    '(project = "GS&O Data Analytics" OR '
-    'project = "GS&O Tool Automation" OR '
-    'project = "GS&O Knowledge Consolidation" OR '
-    'project = "Google Contact Center AI Solution" OR '
-    'project = TAC OR '
-    'project = "Console Application Support" OR '
-    'project = "VOICE - CE" OR '
-    'project = "IOT CE" OR '
-    'project = "Console Connect Provisioning" OR '
-    'project = "Global Service Delivery Team" '
-    ') AND updated >= "2025-07-01" AND updated < "2026-01-01"'
+        '(project = "GS&O Data Analytics" OR '
+        'project = "GS&O Tool Automation" OR '
+        'project = "GS&O Knowledge Consolidation" OR '
+        'project = "Google Contact Center AI Solution" OR '
+        'project = TAC OR '
+        'project = "Console Application Support" OR '
+        'project = "VOICE - CE" OR '
+        'project = "IOT CE" OR '
+        'project = "Console Connect Provisioning" OR '
+        'project = "Global Service Delivery Team" '
+        ') AND updated >= "2025-07-01" AND updated < "2026-01-01"'
     )
 
     username = 'jjkli@consoleconnect.com'
     logging.info(f"Using Jira username: {username}")
-
 
     api_token = config.get('jira_api_token')
     if not api_token:
         logging.error("Jira API token not found in config.json. Exiting.")
         return
 
-    dataset_id = 'GSO'  # Replace with your BigQuery dataset ID if different
-    table_id = 'JiraChangelog'  # Replace with your desired BigQuery table ID if different
+    dataset_id = 'GSO'
+    table_id = 'JiraChangelog'
+    log_table_id = 'PipelineLogs'
+    pipeline_name = "jira_changelog"
+    run_id = str(uuid.uuid4())
 
-    # Ensure GOOGLE_APPLICATION_CREDENTIALS environment variable is set,
-    # or the script is running in an environment with appropriate service account permissions.
     try:
         client = bigquery.Client()
         logging.info(f"Successfully connected to BigQuery project: {client.project}")
     except Exception as e:
         logging.error(f"Failed to initialize BigQuery client: {e}")
+        log_to_bigquery(None, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Failed to initialize BigQuery client: {e}", FunctionName="main")
         return
 
-    if sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
-        logging.info("Successfully synced transitions history to BigQuery.")
-    else:
-        logging.error("Failed to sync transition history to BigQuery.")
+    # Log pipeline start
+    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", FunctionName="main")
+
+    try:
+        if sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
+            logging.info("Successfully synced transitions history to BigQuery.")
+            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced transitions history to BigQuery", FunctionName="main")
+        else:
+            logging.error("Failed to sync transition history to BigQuery.")
+            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync transition history to BigQuery", FunctionName="main")
+    except Exception as e:
+        logging.exception(f"Pipeline run failed: {e}")
+        log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Pipeline run failed: {e}", FunctionName="main", Details=str(e))
+
+    # Log pipeline end
+    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", FunctionName="main")
 
 if __name__ == "__main__":
     main()

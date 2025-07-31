@@ -175,6 +175,18 @@ function processDriveFiles() {
     console.log("All matching pending files processed successfully. No warning email sent.");
   }
   console.log("Data pipeline run complete.");
+
+  logToBigQuery(
+    "GSO",
+    "PipelineLogs",
+    scriptName,
+    Utilities.getUuid(),
+    "INFO",
+    "Data pipeline run complete.",
+    "processDriveFiles",
+    null,
+    null
+  );
 }
 
 /**

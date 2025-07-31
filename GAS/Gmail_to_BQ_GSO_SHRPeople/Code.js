@@ -90,6 +90,18 @@ function searchForEmailAndAttachments() {
     BigQuery.Jobs.insert(job, projectId, Utilities.newBlob(processedCsvContent));
     console.log("CSV data updated in BigQuery table successfully!");
 
+    logToBigQuery(
+      datasetId,           // 'GSO'
+      'PipelineLogs',      // Your log table name
+      'Gmail_to_BQ_GSO_SHRPeople', // pipelineName
+      Utilities.getUuid(), // runId (or any unique string)
+      "INFO",              // logLevel
+      "CSV data updated in BigQuery table successfully!", // message
+      "searchForEmailAndAttachments", // FunctionName
+      null,                // BatchID
+      null                 // Details
+    );
+
     deleteCsvFile(fileName, folderId);
 
     // Label Handling
@@ -178,6 +190,18 @@ function processAttachment(attachment) {
       subject: 'Error in Automated Script',
       body: 'An error occurred while processing the attachment: \n\n' + error.message + '\n\n' + error.stack
     });
+
+    logToBigQuery(
+      datasetId,
+      'PipelineLogs',
+      'Gmail_to_BQ_GSO_SHRPeople',
+      Utilities.getUuid(),
+      "ERROR",
+      "Error processing attachment: " + error.message,
+      "processAttachment",
+      null,
+      error.stack
+    );
   }
 }
 
@@ -190,4 +214,41 @@ function deleteCsvFile(fileName, folderId) {
   } else {
     console.log("Amended CSV file not found.");
   }
+}
+
+function logToBigQuery(datasetId, tableId, pipelineName, runId, logLevel, message, FunctionName, BatchID, Details) {
+  var projectId = 'pccw-internal-virt-agent-uat'; // Use your actual project ID
+  var accessToken = ScriptApp.getOAuthToken();
+  var url = 'https://bigquery.googleapis.com/bigquery/v2/projects/' + projectId +
+            '/datasets/' + datasetId + '/tables/' + tableId + '/insertAll';
+
+  var row = {
+    json: {
+      Timestamp: new Date().toISOString(),
+      PipelineName: pipelineName,
+      RunID: runId,
+      LogLevel: logLevel,
+      Message: message,
+      FunctionName: FunctionName,
+      BatchID: BatchID,
+      Details: Details
+    }
+  };
+
+  var payload = {
+    rows: [row]
+  };
+
+  var options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      Authorization: 'Bearer ' + accessToken
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  var response = UrlFetchApp.fetch(url, options);
+  Logger.log("BigQuery log response: " + response.getContentText());
 }

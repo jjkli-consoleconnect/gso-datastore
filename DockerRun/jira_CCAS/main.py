@@ -5,6 +5,8 @@ import logging
 from datetime import datetime
 import time
 import base64
+from shared.bq_logger import log_to_bigquery
+import uuid
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -118,34 +120,39 @@ def fetch_and_sync_jira_data():
         return
 
     jira_url = 'https://consoleconnect.atlassian.net/rest/api/latest/search'
-    
     username = 'jjkli@consoleconnect.com'
     api_token = config.get('jira_api_token')
 
-    if not api_token:
-        logging.error("Jira API token is effectively missing or invalid after checks. Exiting.")
-        return
-    
-    auth_string = f"{username}:{api_token}"
-    auth_bytes = auth_string.encode('utf-8')
-    base64_bytes = base64.b64encode(auth_bytes)
-    base64_auth_val_only = base64_bytes.decode('utf-8')
-    final_auth_header_value = f"Basic {base64_auth_val_only}"
+    dataset_id = 'JIRAProjects'
+    table_id = 'CCAS'
+    log_table_id = 'PipelineLogs'
+    pipeline_name = "jira_ccas"
+    run_id = str(uuid.uuid4())
 
-    actual_jql_from_filter = 'project = "Console Application Support" AND updated >= endOfDay(-8) ORDER BY updated DESC'
-
-    start_at = 0
-    max_results = 100 
-    CHUNK_SIZE = 1000
-    fields_to_request = ("issuetype,priority,summary,status,created,updated,resolutiondate,"
-                         "reporter,assignee,creator,components,labels,resolution,"
-                         "customfield_10000,customfield_10001,customfield_10002,customfield_10003,"
-                         "project,customfield_10501,customfield_20325,customfield_20324,"
-                         "customfield_15700,customfield_11216,customfield_11217,customfield_19601,"
-                         "customfield_10300,customfield_18100,customfield_18000,"
-                         "customfield_13313,issuelinks,customfield_13681,customfield_17935,"
-                         "customfield_17903,customfield_16605,customfield_12204")
+    # Log pipeline start
     try:
+        client = bigquery.Client()
+    except Exception as e:
+        logging.error(f"Failed to initialize BigQuery client: {e}")
+        log_to_bigquery(None, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Failed to initialize BigQuery client: {e}", function_name="fetch_and_sync_jira_data")
+        return
+
+    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", function_name="fetch_and_sync_jira_data")
+
+    try:
+        actual_jql_from_filter = 'project = "Console Application Support" AND updated >= endOfDay(-8) ORDER BY updated DESC'
+
+        start_at = 0
+        max_results = 100 
+        CHUNK_SIZE = 1000
+        fields_to_request = ("issuetype,priority,summary,status,created,updated,resolutiondate,"
+                            "reporter,assignee,creator,components,labels,resolution,"
+                            "customfield_10000,customfield_10001,customfield_10002,customfield_10003,"
+                            "project,customfield_10501,customfield_20325,customfield_20324,"
+                            "customfield_15700,customfield_11216,customfield_11217,customfield_19601,"
+                            "customfield_10300,customfield_18100,customfield_18000,"
+                            "customfield_13313,issuelinks,customfield_13681,customfield_17935,"
+                            "customfield_17903,customfield_16605,customfield_12204")
         client = bigquery.Client()
         dataset_id = 'JIRAProjects'
         table_id = 'CCAS'
@@ -193,6 +200,8 @@ def fetch_and_sync_jira_data():
 
         while True:
             logging.info(f"Fetching data from Jira using JQL, startAt: {start_at}, maxResults: {max_results}")
+            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", f"Fetching data from Jira, startAt: {start_at}", function_name="fetch_and_sync_jira_data")
+
             try:
                 request_headers = {
                     "Authorization": final_auth_header_value,
@@ -395,6 +404,7 @@ def fetch_and_sync_jira_data():
             merge_job = client.query(merge_query)
             merge_job.result() 
             logging.info(f"Data merged successfully into {dataset_id}.{table_id}.")
+            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", f"Data merged successfully into {dataset_id}.{table_id}", function_name="fetch_and_sync_jira_data")
             if hasattr(merge_job, 'num_dml_affected_rows') and merge_job.num_dml_affected_rows is not None:
                 logging.info(f"Number of rows affected by MERGE: {merge_job.num_dml_affected_rows}")
             else: 
@@ -418,11 +428,15 @@ def fetch_and_sync_jira_data():
         delete_temp_table(client, dataset_id, temp_table_id)
 
     except Exception as e:
-        logging.exception(f"An unexpected error occurred in fetch_and_sync_jira_data: {e}") 
+        logging.exception(f"An unexpected error occurred in fetch_and_sync_jira_data: {e}")
+        log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Exception: {e}", function_name="fetch_and_sync_jira_data", details=str(e))
         if 'client' in locals() and 'dataset_id' in locals() and 'temp_table_id' in locals():
             if table_exists(client, dataset_id, temp_table_id):
                 logging.info("Attempting to clean up temporary table due to error in main function.")
                 delete_temp_table(client, dataset_id, temp_table_id)
+
+    # Log pipeline end
+    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", function_name="fetch_and_sync_jira_data")
 
 if __name__ == '__main__':
     fetch_and_sync_jira_data()

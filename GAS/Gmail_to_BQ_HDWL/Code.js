@@ -216,6 +216,18 @@ function searchForEmailAndAttachments() {
     console.log("All matching pending emails processed successfully. No warning email sent.");
   }
   console.log("Data pipeline run complete.");
+
+  logToBigQuery(
+    "GSO",
+    "PipelineLogs",
+    scriptName,
+    Utilities.getUuid(),
+    "INFO",
+    "Data pipeline run complete.",
+    "searchForEmailAndAttachments",
+    null,
+    null
+  );
 }
 
 function processAttachmentByType(attachment, message) {
@@ -345,6 +357,17 @@ function loadJsonToBigQueryGeneric(jsonFileId, config) {
       subject: `Error in ${scriptName}: BigQuery Staging Load Failed for ${config.name}`,
       body: `An error occurred while loading JSON into BigQuery staging table ${config.stagingDatasetId}.${config.stagingTableId}: \n\n${error.message}\n\nStack trace:\n${error.stack}`
     });
+    logToBigQuery(
+      "GSO",
+      "PipelineLogs",
+      scriptName,
+      Utilities.getUuid(),
+      "ERROR",
+      "Error loading data: " + error.message,
+      "loadJsonToBigQueryGeneric",
+      null,
+      error.stack
+    );
     throw error; 
   } finally {
     try { if (jsonFileId) DriveApp.getFileById(jsonFileId).setTrashed(true); }
@@ -415,6 +438,59 @@ function waitForJobCompletion(job) {
   }
 }
 
+function logToBigQuery(datasetId, tableId, pipelineName, runId, logLevel, message, FunctionName, BatchID, Details) {
+  var projectId = 'pccw-internal-virt-agent-uat';
+  var accessToken = ScriptApp.getOAuthToken();
+  var url = 'https://bigquery.googleapis.com/bigquery/v2/projects/' + projectId +
+            '/datasets/' + datasetId + '/tables/' + tableId + '/insertAll';
+
+  var row = {
+    json: {
+      Timestamp: new Date().toISOString(),
+      PipelineName: pipelineName,
+      RunID: runId,
+      LogLevel: logLevel,
+      Message: message,
+      FunctionName: FunctionName,
+      BatchID: BatchID,
+      Details: Details
+    }
+  };
+
+  var payload = {
+    rows: [row]
+  };
+
+  var options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      Authorization: 'Bearer ' + accessToken
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  Logger.log("BigQuery log payload: " + JSON.stringify(payload));
+
+  var response = UrlFetchApp.fetch(url, options);
+  Logger.log("BigQuery log response: " + response.getContentText());
+}
+
+
+
 function main() {
   searchForEmailAndAttachments();
+
+  logToBigQuery(
+    "GSO",
+    "PipelineLogs",
+    scriptName,
+    Utilities.getUuid(),
+    "INFO",
+    "Data pipeline run complete.",
+    "searchForEmailAndAttachments",
+    null,
+    null
+  );
 }

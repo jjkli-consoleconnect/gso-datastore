@@ -6,12 +6,16 @@ from datetime import datetime
 import time
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from bq_logger import log_to_bigquery
+import uuid
 
 # Define DEBUG flag before logging setup
 DEBUG = False
 
 # Setup logging (reduce verbosity unless DEBUG=True)
 logging.basicConfig(level=logging.INFO if not DEBUG else logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+logging.info("Script startup test log")
 
 def load_config():
     try:
@@ -494,59 +498,90 @@ def load_checkpoint():
     except (FileNotFoundError, json.JSONDecodeError):
         return 0
 
+def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, message, function_name=None, batch_id=None, details=None):
+    log_entry = {
+        "Timestamp": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+        "PipelineName": pipeline_name,
+        "RunID": run_id,
+        "LogLevel": level,
+        "Message": message,
+        "FunctionName": function_name,
+        "BatchID": batch_id,
+        "Details": details
+    }
+    table_ref = client.dataset(dataset_id).table(table_id)
+    errors = client.insert_rows_json(table_ref, [log_entry])
+    if errors:
+        logging.error(f"Failed to log to BigQuery: {errors}")
+    else:
+        logging.info("Log entry successfully written to BigQuery.")
+
 def main():
     config = load_config()
+    logging.info(f"Config loaded: {config}")
+    logging.info(f"Config loaded: keys = %s", list(config.keys()))
     if config is None:
+        logging.error("Config is None, exiting early.")
         return
 
-    # --- UPDATED VALUES ---
-    # Changed to the new Jira Cloud base URL
     jira_url = 'https://consoleconnect.atlassian.net'
-    # Changed to the direct JQL query provided
     jql_query = (
-    '(project = "GS&O Data Analytics" OR '
-    'project = "GS&O Tool Automation" OR '
-    'project = "GS&O Knowledge Consolidation" OR '
-    'project = "Google Contact Center AI Solution" OR '
-    'project = TAC OR '
-    'project = "Console Application Support" OR '
-    'project = "VOICE - CE" OR '
-    'project = "IOT CE" OR '
-    'project = "Console Connect Provisioning" OR '
-    'project = "Global Service Delivery Team" '
-    ')AND updated >= "2025-07-01" AND updated < "2026-01-01"'
+        '(project = "GS&O Data Analytics" OR '
+        'project = "GS&O Tool Automation" OR '
+        'project = "GS&O Knowledge Consolidation" OR '
+        'project = "Google Contact Center AI Solution" OR '
+        'project = TAC OR '
+        'project = "Console Application Support" OR '
+        'project = "VOICE - CE" OR '
+        'project = "IOT CE" OR '
+        'project = "Console Connect Provisioning" OR '
+        'project = "Global Service Delivery Team" '
+        ') AND updated >= -3h'
     )
-    # -----------------------
 
-    # Assuming username and API token key in config remain the same
-    username = "jjkli@consoleconnect.com" # Get username from config
+    username = "jjkli@consoleconnect.com"
     api_token = config.get('jira_api_token')
 
-    # Validate config values
-    if not username:
-        logging.error("Jira username is not configured in config.json.")
-        return
-    if not api_token:
-        logging.error("Jira API token is not configured in config.json.")
-        return
-
-
-    dataset_id = 'GSO' # Assuming this remains the same
-    table_id = 'JiraComments' # Assuming this remains the same
+    dataset_id = 'GSO'
+    table_id = 'JiraComments'
+    log_table_id = 'PipelineLogs'
+    pipeline_name = "jira_comments"
+    run_id = str(uuid.uuid4())
 
     try:
         client = bigquery.Client()
     except Exception as e:
-         logging.exception(f"Failed to initialize BigQuery client: {e}. Ensure GCP credentials are set up correctly.")
-         return
+        logging.exception(f"Failed to initialize BigQuery client: {e}. Ensure GCP credentials are set up correctly.")
+        return
 
+    # Log pipeline start
+    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", function_name="main")
 
-    # Pass the new jira_url and jql_query to the sync function
-    if sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client):
-        logging.info("Successfully synced comments to BigQuery.")
-    else:
-        logging.error("Failed to sync comments to BigQuery.")
+    try:
+        if sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client):
+            logging.info("Successfully synced comments to BigQuery.")
+            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced comments to BigQuery", function_name="main")
+        else:
+            logging.error("Failed to sync comments to BigQuery.")
+            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync comments to BigQuery", function_name="main")
+    except Exception as e:
+        logging.exception(f"Pipeline run failed: {e}")
+        log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Pipeline run failed: {e}", function_name="main", details=str(e))
 
+    # Log pipeline end
+    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", function_name="main")
+    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Batch processed", function_name="main", batch_id="your_batch_id")
+    logToBigQuery(
+      "GSO",
+      "PipelineLogs",
+      scriptName,
+      Utilities.getUuid(),
+      "INFO",
+      "Data pipeline run complete.",
+      "searchForEmailAndAttachments",
+      null,
+      null
+    );
 
 if __name__ == "__main__":
     main()

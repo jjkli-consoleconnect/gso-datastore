@@ -4,8 +4,10 @@ from google.cloud import bigquery
 import logging
 from datetime import datetime
 import time
+import uuid
 from google.api_core.exceptions import Conflict, NotFound, GoogleAPIError
 import re
+from bq_logger import log_to_bigquery
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.Formatter.converter = time.localtime
@@ -120,7 +122,7 @@ def fetch_and_sync_jira_data():
         'project = "IOT CE" OR '
         'project = "Console Connect Provisioning" OR '
         'project = "Global Service Delivery Team"'
-        ') AND updated >= -48h'
+        ') AND updated >= -3h'
     )
     
     username = 'jjkli@consoleconnect.com' 
@@ -167,8 +169,15 @@ def fetch_and_sync_jira_data():
         rows_to_insert = []
         total_issues_fetched = 0
         
+        run_id = str(uuid.uuid4())
+        pipeline_name = "jira_tickets"
+
+        # Log pipeline start
+        log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Pipeline started")
+
         while True:
             logging.info(f"Fetching data from Jira, startAt: {start_at}")
+            log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", f"Fetching data from Jira, startAt: {start_at}")
             
             # 2. Jira API Request: Add SR_REF_JIRA_ID to the fields_to_request
             fields_to_request = f'issuetype,summary,status,created,updated,resolutiondate,assignee,customfield_10647,issuelinks,{SR_REF_JIRA_ID}'
@@ -335,7 +344,7 @@ def fetch_and_sync_jira_data():
             temp_table_row_count = -1 
 
         if temp_table_row_count > 0:
-            logging.info(f"Proceeding with MERGE operation as temp table has {temp_table_row_count} rows.")
+            log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", f"Proceeding with MERGE operation, temp table rows: {temp_table_row_count}")
             # 4. BigQuery MERGE Statement: Include the new SR_Ref column
             merge_query = f"""
                 MERGE `{project_id}.{dataset_id}.{table_id}` T
@@ -376,7 +385,7 @@ def fetch_and_sync_jira_data():
             except Exception as e:
                 logging.exception(f"Error during MERGE operation: {e}")
         elif temp_table_row_count == 0:
-            logging.info("Skipping MERGE operation as temporary table is empty.")
+            log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Skipping MERGE operation as temporary table is empty.")
         else:
             logging.warning("Skipping MERGE operation due to an error in verifying temp table count.")
 
@@ -388,6 +397,10 @@ def fetch_and_sync_jira_data():
         logging.error(f"BigQuery resource not found (e.g., dataset or table): {e}")
     except Exception as e:
         logging.exception(f"An unexpected error occurred in fetch_and_sync_jira_data: {e}")
+        log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "ERROR", f"Exception: {e}", function_name="fetch_and_sync_jira_data", details=str(e))
+
+    # Log pipeline end
+    log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Pipeline finished")
 
 def ensure_temp_table_exists(client, dataset_id, temp_table_id, bq_schema):
     table_ref = client.dataset(dataset_id).table(temp_table_id)
