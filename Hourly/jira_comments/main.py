@@ -260,7 +260,6 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
         bigquery.SchemaField("InsertedAt", "TIMESTAMP", mode="NULLABLE"),
     ]
 
-    # Create or replace temp table in GSO dataset
     if not create_or_replace_temp_table(client, dataset_id, temp_table_id, schema):
         logging.error("Setup failed: Could not create temp table.")
         return False
@@ -330,7 +329,41 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
 
         if response is None: # If loop finished without a successful response
              logging.error("Jira search failed after multiple retries.")
-             delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table
+             # Merge temp table into final table before exit
+             logging.info(f"Starting merge operation from '{dataset_id}.{temp_table_id}' to '{dataset_id}.{table_id}'...")
+             merge_query = f"""
+                 MERGE `{dataset_id}.{table_id}` T
+                 USING (
+                     SELECT DISTINCT
+                         Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body,
+                         Visibility_Type, Visibility_Value, SyncTime, InsertedAt
+                     FROM `{dataset_id}.{temp_table_id}`
+                 ) S
+                 ON T.Comment_ID = S.Comment_ID AND T.Updated = S.Updated
+                 WHEN MATCHED THEN
+                     UPDATE SET
+                         T.Issue_Key = S.Issue_Key,
+                         T.Author_Account_ID = S.Author_Account_ID,
+                         T.Author_Display_Name = S.Author_Display_Name,
+                         T.Created = S.Created,
+                         T.Updated = S.Updated,
+                         T.Body = S.Body,
+                         T.Visibility_Type = S.Visibility_Type,
+                         T.Visibility_Value = S.Visibility_Value,
+                         T.SyncTime = S.SyncTime,
+                         T.InsertedAt = S.InsertedAt
+                 WHEN NOT MATCHED THEN
+                     INSERT (Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body, Visibility_Type, Visibility_Value, SyncTime, InsertedAt)
+                     VALUES (S.Issue_Key, S.Comment_ID, S.Author_Account_ID, S.Author_Display_Name, S.Created, S.Updated, S.Body, S.Visibility_Type, S.Visibility_Value, S.SyncTime, S.InsertedAt)
+             """
+             try:
+                 query_job = client.query(merge_query)
+                 query_job.result()
+                 logging.info("Data merged successfully into final table.")
+             except Exception as e:
+                 logging.exception(f"Error running merge query: {e}")
+             delete_temp_table(client, dataset_id, temp_table_id)
+             save_checkpoint(start_at)
              return False
 
         # --- Process Search Results ---
@@ -447,6 +480,20 @@ def wait_for_streaming_buffer_empty(client, project, dataset, table, max_wait=30
     logging.warning("Streaming buffer not empty after waiting. Proceeding anyway.")
     return False
 
+CHECKPOINT_FILE = "jira_comments_checkpoint.json"
+
+def save_checkpoint(start_at):
+    with open(CHECKPOINT_FILE, "w") as f:
+        json.dump({"start_at": start_at}, f)
+
+def load_checkpoint():
+    try:
+        with open(CHECKPOINT_FILE) as f:
+            data = json.load(f)
+            return data.get("start_at", 0)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 0
+
 def main():
     config = load_config()
     if config is None:
@@ -457,7 +504,7 @@ def main():
     jira_url = 'https://consoleconnect.atlassian.net'
     # Changed to the direct JQL query provided
     jql_query = (
-    'project = "GS&O Data Analytics" OR '
+    '(project = "GS&O Data Analytics" OR '
     'project = "GS&O Tool Automation" OR '
     'project = "GS&O Knowledge Consolidation" OR '
     'project = "Google Contact Center AI Solution" OR '
@@ -467,7 +514,7 @@ def main():
     'project = "IOT CE" OR '
     'project = "Console Connect Provisioning" OR '
     'project = "Global Service Delivery Team" '
-    'AND updated >= "2025-06-01" AND updated < "2026-01-01"'
+    ')AND updated >= "2025-07-01" AND updated < "2026-01-01"'
     )
     # -----------------------
 

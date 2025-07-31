@@ -185,9 +185,10 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         try:
             data = fetch_issues_with_retry(search_api_endpoint, headers, auth, payload)
             if data is None:
-                logging.error(f"Skipping batch starting at {start_at} due to repeated failures in fetching issues.")
-                start_at += max_results # Ensure loop progresses
-                continue
+                logging.error(f"Repeated failures in fetching issues. Merging and exiting.")
+                # Run merge, delete temp table, save checkpoint, then exit
+                # (Insert your merge logic here)
+                return False
         except Exception as e: # Catching generic Exception here is broad, but mirrors original
             logging.error(f"Unexpected error during issue fetch: {e}")
             start_at += max_results # Ensure loop progresses

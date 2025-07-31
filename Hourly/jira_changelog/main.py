@@ -144,6 +144,53 @@ def fetch_issues_with_retry(jira_search_url, headers, auth, payload, retries=5, 
     logging.error(f"Failed to fetch issues from {jira_search_url} after multiple retries.")
     return None
 
+CHECKPOINT_FILE = "jira_checkpoint.json"
+
+def save_checkpoint(start_at):
+    with open(CHECKPOINT_FILE, "w") as f:
+        json.dump({"start_at": start_at}, f)
+
+def load_checkpoint():
+    try:
+        with open(CHECKPOINT_FILE) as f:
+            data = json.load(f)
+            return data.get("start_at", 0)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 0
+
+def run_merge_query(client, dataset_id, table_id, temp_table_id):
+    merge_query = f"""
+        MERGE `{client.project}.{dataset_id}.{table_id}` T
+        USING (
+            SELECT DISTINCT
+                Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To,
+                Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime
+            FROM `{client.project}.{dataset_id}.{temp_table_id}`
+        ) S
+        ON T.History_ID = S.History_ID AND T.Transition_Timestamp = S.Transition_Timestamp
+        WHEN MATCHED THEN
+            UPDATE SET
+                T.Issue_Key = S.Issue_Key,
+                T.Transitioned_From = S.Transitioned_From,
+                T.Transitioned_To = S.Transitioned_To,
+                T.Transitioned_By_Account_ID = S.Transitioned_By_Account_ID,
+                T.Transitioned_By_Display_Name = S.Transitioned_By_Display_Name,
+                T.SyncTime = S.SyncTime
+        WHEN NOT MATCHED THEN
+            INSERT (Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To, Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime)
+            VALUES (S.Issue_Key, S.History_ID, S.Transition_Timestamp, S.Transitioned_From, S.Transitioned_To, S.Transitioned_By_Account_ID, S.Transitioned_By_Display_Name, S.SyncTime)
+    """
+
+    logging.info(f"Executing MERGE query into {client.project}.{dataset_id}.{table_id}")
+    try:
+        query_job = client.query(merge_query)
+        query_job.result()
+        logging.info("Merge query executed successfully.")
+    except Exception as e:
+        logging.exception(f"Error running merge query: {e}")
+        return False
+    return True
+
 def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
     temp_table_id = f"{table_id}_temp"
 
@@ -167,7 +214,7 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         return False
 
     total_issues = float('inf')
-    start_at = 0
+    start_at = load_checkpoint()
     max_results = 100
     issues_processed = 0
     batch_size = 1000 # BQ insert batch size
@@ -176,6 +223,8 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
     # Jira Cloud typically uses /rest/api/2/ or /rest/api/3/. /rest/api/latest/ resolves to one of these.
     # Using /rest/api/2/ as it was in the original script and is widely compatible.
     search_api_endpoint = f"{jira_base_url}/rest/api/2/search"
+
+    rows_inserted = False
 
     while start_at < total_issues:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
@@ -186,9 +235,12 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         try:
             data = fetch_issues_with_retry(search_api_endpoint, headers, auth, payload)
             if data is None:
-                logging.error(f"Skipping batch starting at {start_at} due to repeated failures in fetching issues.")
-                start_at += max_results # Ensure loop progresses
-                continue
+                logging.error(f"Repeated failures in fetching issues. Merging and exiting.")
+                if rows_inserted:
+                    run_merge_query(client, dataset_id, table_id, temp_table_id)
+                delete_temp_table(client, dataset_id, temp_table_id)
+                save_checkpoint(start_at)
+                return False
         except Exception as e: # Catching generic Exception here is broad, but mirrors original
             logging.error(f"Unexpected error during issue fetch: {e}")
             start_at += max_results # Ensure loop progresses
@@ -246,16 +298,22 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
 
             # Insert rows in batches to BigQuery temp table
             if len(rows_to_insert) >= batch_size:
-                if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert):
+                if insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert):
+                    rows_inserted = True
+                else:
                     logging.error(f"Failed to insert batch of {len(rows_to_insert)} rows into temp table. Stopping processing.")
-                    # Clean up temp table before exiting might be good here, or handle upstream.
+                    if rows_inserted:
+                        # Merge whatever is in temp table before exit
+                        run_merge_query(client, dataset_id, table_id, temp_table_id)
                     delete_temp_table(client, dataset_id, temp_table_id)
                     return False
                 rows_to_insert = []
 
         # Insert any remaining rows after processing all issues on the page
         if rows_to_insert:
-            if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert):
+            if insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert):
+                rows_inserted = True
+            else:
                 logging.error(f"Failed to insert final batch of {len(rows_to_insert)} rows into temp table. Stopping processing.")
                 delete_temp_table(client, dataset_id, temp_table_id)
                 return False
@@ -265,40 +323,12 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         issues_processed += len(issues)
         logging.info(f"Processed details for {len(issues)} issues. Total issues processed so far: {issues_processed} out of {total_issues}")
         time.sleep(1) # Reduced sleep, rely more on retry backoff for rate limits. Original was 2s.
+        save_checkpoint(start_at)
 
     # Merge temp table into final table (upsert logic)
-    merge_query = f"""
-        MERGE `{client.project}.{dataset_id}.{table_id}` T
-        USING (
-            SELECT DISTINCT
-                Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To,
-                Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime
-            FROM `{client.project}.{dataset_id}.{temp_table_id}`
-        ) S
-        ON T.History_ID = S.History_ID AND T.Transition_Timestamp = S.Transition_Timestamp
-        WHEN MATCHED THEN
-            UPDATE SET
-                T.Issue_Key = S.Issue_Key,
-                T.Transitioned_From = S.Transitioned_From,
-                T.Transitioned_To = S.Transitioned_To,
-                T.Transitioned_By_Account_ID = S.Transitioned_By_Account_ID,
-                T.Transitioned_By_Display_Name = S.Transitioned_By_Display_Name,
-                T.SyncTime = S.SyncTime
-        WHEN NOT MATCHED THEN
-            INSERT (Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To, Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime)
-            VALUES (S.Issue_Key, S.History_ID, S.Transition_Timestamp, S.Transitioned_From, S.Transitioned_To, S.Transitioned_By_Account_ID, S.Transitioned_By_Display_Name, S.SyncTime)
-    """
-
-    logging.info(f"Executing MERGE query into {client.project}.{dataset_id}.{table_id}")
-    try:
-        query_job = client.query(merge_query)
-        query_job.result()
-        logging.info("Merge query executed successfully.")
-    except Exception as e:
-        logging.exception(f"Error running merge query: {e}")
-        return False
-    finally:
-        delete_temp_table(client, dataset_id, temp_table_id)
+    if rows_inserted:
+        run_merge_query(client, dataset_id, table_id, temp_table_id)
+    delete_temp_table(client, dataset_id, temp_table_id)
 
     return True
 
@@ -322,7 +352,7 @@ def main():
 
     jira_base_url = 'https://consoleconnect.atlassian.net' # Base URL for Jira Cloud
     jql_query = (
-    'project = "GS&O Data Analytics" OR '
+    '(project = "GS&O Data Analytics" OR '
     'project = "GS&O Tool Automation" OR '
     'project = "GS&O Knowledge Consolidation" OR '
     'project = "Google Contact Center AI Solution" OR '
@@ -332,7 +362,7 @@ def main():
     'project = "IOT CE" OR '
     'project = "Console Connect Provisioning" OR '
     'project = "Global Service Delivery Team" '
-    'AND updated >= "2025-06-01" AND updated < "2026-01-01"'
+    ') AND updated >= "2025-07-01" AND updated < "2026-01-01"'
     )
 
     username = 'jjkli@consoleconnect.com'

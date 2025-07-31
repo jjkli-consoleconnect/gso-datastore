@@ -22,7 +22,7 @@ $startTime = Get-Date
 Set-Location "G:\My Drive\Scripts\Powershell\jira_syncall"
 
 $dockerPath = "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
-$dockerImages = @("jira_tiertwo", "jira_projecttracking")
+$dockerImages = @("jira_tickets", "jira_comments","jira_changelog")
 $failedImages = @()
 
 function Invoke-DockerImage {

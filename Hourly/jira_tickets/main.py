@@ -109,6 +109,7 @@ def fetch_and_sync_jira_data():
     jira_url = 'https://consoleconnect.atlassian.net/rest/api/latest/search'
     
     jql_query = (
+        '('
         'project = "GS&O Data Analytics" OR '
         'project = "GS&O Tool Automation" OR '
         'project = "GS&O Knowledge Consolidation" OR '
@@ -118,9 +119,8 @@ def fetch_and_sync_jira_data():
         'project = "VOICE - CE" OR '
         'project = "IOT CE" OR '
         'project = "Console Connect Provisioning" OR '
-        'project = "Global Service Delivery Team" '
-        'AND created >= "2025-01-01" AND created < "2026-01-01"'
-
+        'project = "Global Service Delivery Team"'
+        ') AND updated >= -48h'
     )
     
     username = 'jjkli@consoleconnect.com' 
