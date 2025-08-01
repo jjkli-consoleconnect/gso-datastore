@@ -146,7 +146,7 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="REPEATED"),
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),  # <--- ADDED SyncTime
+            # SyncTime removed from schema, handled by BigQuery default
         ]
         create_temp_table(client, dataset_id, temp_table_id, bq_schema)
         time.sleep(2)  # Wait 2 seconds for table propagation
@@ -211,8 +211,6 @@ def fetch_and_sync_jira_data():
                         sr_ref_value = get_field_value(fields.get(SR_REF_JIRA_ID))
                         sr_ref_value = transform_sr_ref(sr_ref_value)  # <--- Apply transformation
 
-                        sync_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')  # Set SyncTime to current UTC time
-
                         row = {
                             'T': issuetype_name,
                             'Key': issue['key'],
@@ -225,7 +223,7 @@ def fetch_and_sync_jira_data():
                             'RemedyTicketNumber': extract_incident_numbers(remedy_ticket_number),
                             'Links': issue_keys,
                             SR_REF_BQ_NAME: sr_ref_value,
-                            'SyncTime': sync_time,  # <--- ADDED SyncTime
+                            # SyncTime removed, handled by BigQuery default
                         }
                         
                         required_fields = ['T', 'Key', 'Summary', 'Status', 'Created', 'Updated']
@@ -336,10 +334,10 @@ def fetch_and_sync_jira_data():
                         T.RemedyTicketNumber = S.RemedyTicketNumber,
                         T.Links = S.Links,
                         T.{SR_REF_BQ_NAME} = S.{SR_REF_BQ_NAME},
-                        T.SyncTime = S.SyncTime -- <--- ADDED SyncTime
+                        T.SyncTime = CURRENT_TIMESTAMP() -- Set by BigQuery
                 WHEN NOT MATCHED THEN
-                    INSERT (T, Key, Summary, Status, Created, Updated, Resolved, Assignee, RemedyTicketNumber, Links, {SR_REF_BQ_NAME}, SyncTime) -- <--- ADDED SyncTime
-                    VALUES (S.T, S.Key, S.Summary, S.Status, S.Created, S.Updated, S.Resolved, S.Assignee, S.RemedyTicketNumber, S.Links, S.{SR_REF_BQ_NAME}, S.SyncTime) -- <--- ADDED SyncTime
+                    INSERT (T, Key, Summary, Status, Created, Updated, Resolved, Assignee, RemedyTicketNumber, Links, {SR_REF_BQ_NAME}, SyncTime)
+                    VALUES (S.T, S.Key, S.Summary, S.Status, S.Created, S.Updated, S.Resolved, S.Assignee, S.RemedyTicketNumber, S.Links, S.{SR_REF_BQ_NAME}, CURRENT_TIMESTAMP())
             """
             logging.info(f"Executing merge query...")
             try:

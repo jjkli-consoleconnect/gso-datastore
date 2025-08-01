@@ -1,5 +1,5 @@
 # --------------------------------------
-# PowerShell Script: jira_synctiertwo.ps1
+# PowerShell Script: jira_sync_hr.ps1
 # Logs Docker job status and handles retries
 # --------------------------------------
 
@@ -22,7 +22,7 @@ $startTime = Get-Date
 Set-Location "G:\My Drive\Scripts\Powershell\jira_syncall"
 
 $dockerPath = "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
-$dockerImages = @("jira_tickets", "jira_comments","jira_changelog")
+$dockerImages = @("jira_tickets", "jira_comments", "jira_changelog")
 $failedImages = @()
 
 function Invoke-DockerImage {
@@ -30,12 +30,16 @@ function Invoke-DockerImage {
 
     Write-Log "Running Docker image: $imageName"
 
+    # Host path for persistent volume (adjust if your folder structure changes)
+
     try {
-        & "$dockerPath" run --rm -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials.json" $imageName 2>&1
+        & "$dockerPath" run --rm `
+            -v "G:\My Drive\Scripts\Hourly\${imageName}:/app" `
+            -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials.json" `
+            $imageName 2>&1
 
         if ($LASTEXITCODE -eq 0) {
             Write-Log "$imageName ran successfully."
-            
         } else {
             Write-Log "❌ ERROR: $imageName exited with code $LASTEXITCODE."
             $script:failedImages += $imageName

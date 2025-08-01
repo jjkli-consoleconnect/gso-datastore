@@ -4,7 +4,7 @@ from google.cloud import bigquery
 import logging
 from datetime import datetime
 import time
-import os # This import is present but os module is not used. Can be removed if not needed later.
+import os
 from concurrent.futures import ThreadPoolExecutor
 import random
 from bq_logger import log_to_bigquery
@@ -146,11 +146,16 @@ def fetch_issues_with_retry(jira_search_url, headers, auth, payload, retries=5, 
     logging.error(f"Failed to fetch issues from {jira_search_url} after multiple retries.")
     return None
 
-CHECKPOINT_FILE = "jira_checkpoint.json"
+CHECKPOINT_FILE = os.path.abspath("jira_checkpoint.json")
+logging.info(f"Expect checkpoint at: {CHECKPOINT_FILE}")
 
 def save_checkpoint(start_at):
-    with open(CHECKPOINT_FILE, "w") as f:
-        json.dump({"start_at": start_at}, f)
+    try:
+        with open(CHECKPOINT_FILE, "w") as f:
+            json.dump({"start_at": start_at}, f)
+        logging.info(f"Checkpoint saved at offset {start_at}")
+    except Exception as e:
+        logging.error(f"Failed to save checkpoint: {e}")
 
 def load_checkpoint():
     try:
@@ -241,7 +246,7 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
                 if rows_inserted:
                     run_merge_query(client, dataset_id, table_id, temp_table_id)
                 delete_temp_table(client, dataset_id, temp_table_id)
-                save_checkpoint(start_at)
+                save_checkpoint(start_at)  # <-- Ensure checkpoint is saved here!
                 return False
         except Exception as e: # Catching generic Exception here is broad, but mirrors original
             logging.error(f"Unexpected error during issue fetch: {e}")
@@ -324,6 +329,8 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         start_at += max_results
         issues_processed += len(issues)
         logging.info(f"Processed details for {len(issues)} issues. Total issues processed so far: {issues_processed} out of {total_issues}")
+        remaining_issues = total_issues - issues_processed
+        logging.info(f"Remaining issues to process: {remaining_issues}")
         time.sleep(1) # Reduced sleep, rely more on retry backoff for rate limits. Original was 2s.
         save_checkpoint(start_at)
 
@@ -380,7 +387,7 @@ def main():
     log_table_id = 'PipelineLogs'
     pipeline_name = "jira_changelog"
     run_id = str(uuid.uuid4())
-
+ 
     try:
         client = bigquery.Client()
         logging.info(f"Successfully connected to BigQuery project: {client.project}")
@@ -405,6 +412,7 @@ def main():
 
     # Log pipeline end
     log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", FunctionName="main")
+
 
 if __name__ == "__main__":
     main()
