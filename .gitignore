@@ -1,7 +1,6 @@
 # Ignore only specific directories
 /Backup/
 /.tmp.driveupload/
-/bigquery-automation/
 *.clasp.json
 *.gsheet
 *.log
@@ -9,4 +8,3 @@
 
 # Ensure .gitignore itself is tracked
 !.gitignore
-jira_syncall/jira_sync.log
