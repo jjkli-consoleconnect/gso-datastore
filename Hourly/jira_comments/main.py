@@ -335,43 +335,58 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
                     return False # Give up after retries
 
         if response is None: # If loop finished without a successful response
-             logging.error("Jira search failed after multiple retries.")
-             # Merge temp table into final table before exit
-             logging.info(f"Starting merge operation from '{dataset_id}.{temp_table_id}' to '{dataset_id}.{table_id}'...")
-             merge_query = f"""
-                 MERGE `{dataset_id}.{table_id}` T
-                 USING (
-                     SELECT DISTINCT
-                         Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body,
-                         Visibility_Type, Visibility_Value, SyncTime, InsertedAt
-                     FROM `{dataset_id}.{temp_table_id}`
-                 ) S
-                 ON T.Comment_ID = S.Comment_ID AND T.Updated = S.Updated
-                 WHEN MATCHED THEN
-                     UPDATE SET
-                         T.Issue_Key = S.Issue_Key,
-                         T.Author_Account_ID = S.Author_Account_ID,
-                         T.Author_Display_Name = S.Author_Display_Name,
-                         T.Created = S.Created,
-                         T.Updated = S.Updated,
-                         T.Body = S.Body,
-                         T.Visibility_Type = S.Visibility_Type,
-                         T.Visibility_Value = S.Visibility_Value,
-                         T.SyncTime = S.SyncTime,
-                         T.InsertedAt = S.InsertedAt
-                 WHEN NOT MATCHED THEN
-                     INSERT (Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body, Visibility_Type, Visibility_Value, SyncTime, InsertedAt)
-                     VALUES (S.Issue_Key, S.Comment_ID, S.Author_Account_ID, S.Author_Display_Name, S.Created, S.Updated, S.Body, S.Visibility_Type, S.Visibility_Value, S.SyncTime, S.InsertedAt)
-             """
-             try:
-                 query_job = client.query(merge_query)
-                 query_job.result()
-                 logging.info("Data merged successfully into final table.")
-             except Exception as e:
-                 logging.exception(f"Error running merge query: {e}")
-             delete_temp_table(client, dataset_id, temp_table_id)
-             save_checkpoint(start_at)
-             return False
+            logging.error("Jira search failed after multiple retries.")
+            # Merge temp table into final table before exit
+            logging.info(f"Starting merge operation from '{dataset_id}.{temp_table_id}' to '{dataset_id}.{table_id}'...")
+            merge_query = f"""
+                MERGE `{dataset_id}.{table_id}` T
+                USING (
+                    SELECT DISTINCT
+                        Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body,
+                        Visibility_Type, Visibility_Value, SyncTime, InsertedAt
+                    FROM `{dataset_id}.{temp_table_id}`
+                ) S
+                ON T.Comment_ID = S.Comment_ID AND T.Updated = S.Updated
+                WHEN MATCHED THEN
+                    UPDATE SET
+                        T.Issue_Key = S.Issue_Key,
+                        T.Author_Account_ID = S.Author_Account_ID,
+                        T.Author_Display_Name = S.Author_Display_Name,
+                        T.Created = S.Created,
+                        T.Updated = S.Updated,
+                        T.Body = S.Body,
+                        T.Visibility_Type = S.Visibility_Type,
+                        T.Visibility_Value = S.Visibility_Value,
+                        T.SyncTime = S.SyncTime,
+                        T.InsertedAt = S.InsertedAt
+                WHEN NOT MATCHED THEN
+                    INSERT (Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body, Visibility_Type, Visibility_Value, SyncTime, InsertedAt)
+                    VALUES (S.Issue_Key, S.Comment_ID, S.Author_Account_ID, S.Author_Display_Name, S.Created, S.Updated, S.Body, S.Visibility_Type, S.Visibility_Value, S.SyncTime, S.InsertedAt)
+            """
+            try:
+                query_job = client.query(merge_query)
+                query_job.result()
+                logging.info("Data merged successfully into final table.")
+            except Exception as e:
+                logging.exception(f"Error running merge query: {e}")
+            delete_temp_table(client, dataset_id, temp_table_id)
+            # Mark window as failed for consistency with changelog script
+            progress_table = f"{table_id}_progress"
+            # Use window_start and window_end from the main function scope
+            global window_start, window_end
+            try:
+                fail_query = f"""
+                    UPDATE `{dataset_id}.{progress_table}`
+                    SET Status='failed', LastRun=CURRENT_TIMESTAMP()
+                    WHERE CAST(WindowStart AS STRING) = CAST(TIMESTAMP('{window_start}') AS STRING)
+                      AND CAST(WindowEnd AS STRING) = CAST(TIMESTAMP('{window_end}') AS STRING)
+                      AND Status != 'complete'
+                """
+                client.query(fail_query).result()
+                logging.info(f"Marked window {window_start} to {window_end} as failed.")
+            except Exception as e:
+                logging.warning(f"Could not mark window as failed: {e}")
+            return False
 
         # --- Process Search Results ---
         try:
