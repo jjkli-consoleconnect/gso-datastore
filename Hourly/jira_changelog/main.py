@@ -288,8 +288,9 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
     # Find the latest transition timestamp in Jira (for upper bound)
     now = datetime.utcnow()
 
-    # Find the earliest incomplete/in_progress window and determine what to process next
-    progress_query = f"SELECT WindowStart, WindowEnd, Status FROM `{client.project}.{dataset_id}.{progress_table}` WHERE Status != 'complete' ORDER BY WindowStart ASC LIMIT 1"
+
+    # Find the earliest window with status not 'complete'
+    progress_query = f"SELECT WindowStart, WindowEnd FROM `{client.project}.{dataset_id}.{progress_table}` WHERE Status != 'complete' ORDER BY WindowStart ASC LIMIT 1"
     window_start = None
     window_end = None
     try:
@@ -301,12 +302,25 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
     except Exception as e:
         logging.warning(f"Could not query progress table: {e}")
 
-    if window_start:
-        # Reprocess the earliest incomplete/in_progress window
+    if window_start and window_end:
+        # There is an incomplete window, process it
         window_end_candidate = window_end
     else:
-        # No incomplete windows, advance to next window
-        window_start = min_ts
+        # All windows complete or no windows, advance to next window
+        # Find the latest window
+        latest_query = f"SELECT WindowEnd FROM `{client.project}.{dataset_id}.{progress_table}` ORDER BY WindowEnd DESC LIMIT 1"
+        latest_end = None
+        try:
+            result = client.query(latest_query).result()
+            for row in result:
+                latest_end = row.WindowEnd
+                break
+        except Exception as e:
+            logging.warning(f"Could not query for latest window: {e}")
+        if latest_end:
+            window_start = latest_end
+        else:
+            window_start = min_ts
         window_end_candidate = window_start + timedelta(days=window_days)
 
     # Ensure both window_end_candidate and now are offset-naive for comparison
@@ -462,9 +476,22 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         run_merge_query(client, dataset_id, table_id, temp_table_id)
     delete_temp_table(client, dataset_id, temp_table_id)
 
-    # Mark window as complete
+    # Mark only the exact matching window as complete in the progress table
     try:
-        client.query(f"UPDATE `{client.project}.{dataset_id}.{progress_table}` SET Status='complete', LastRun=CURRENT_TIMESTAMP() WHERE WindowStart=TIMESTAMP('{window_start}') AND WindowEnd=TIMESTAMP('{window_end}')").result()
+        # Use CAST to ensure timestamp match
+        update_query = f"""
+            UPDATE `{client.project}.{dataset_id}.{progress_table}`
+            SET Status='complete', LastRun=CURRENT_TIMESTAMP()
+            WHERE CAST(WindowStart AS STRING) = CAST(TIMESTAMP('{window_start}') AS STRING)
+              AND CAST(WindowEnd AS STRING) = CAST(TIMESTAMP('{window_end}') AS STRING)
+              AND Status != 'complete'
+        """
+        result = client.query(update_query).result()
+        updated_count = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else None
+        if updated_count and updated_count > 0:
+            logging.info(f"Marked window {window_start} to {window_end} as complete.")
+        else:
+            logging.warning(f"No window was marked as complete. Check timestamp precision and progress table.")
     except Exception as e:
         logging.warning(f"Could not mark window as complete in progress table: {e}")
 

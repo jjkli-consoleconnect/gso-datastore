@@ -588,8 +588,9 @@ def main():
     if not table_exists(client, dataset_id, progress_table):
         create_or_replace_temp_table(client, dataset_id, progress_table, progress_schema)
 
-    # Find the earliest incomplete/in_progress window and determine what to process next
-    progress_query = f"SELECT WindowStart, WindowEnd, Status FROM `{dataset_id}.{progress_table}` WHERE Status != 'complete' ORDER BY WindowStart ASC LIMIT 1"
+
+    # Find the earliest window with status not 'complete'
+    progress_query = f"SELECT WindowStart, WindowEnd FROM `{dataset_id}.{progress_table}` WHERE Status != 'complete' ORDER BY WindowStart ASC LIMIT 1"
     window_start = None
     window_end = None
     try:
@@ -601,12 +602,25 @@ def main():
     except Exception as e:
         logging.warning(f"Could not query progress table: {e}")
 
-    if window_start:
-        # Reprocess the earliest incomplete/in_progress window
+    if window_start and window_end:
+        # There is an incomplete window, process it
         window_end_candidate = window_end
     else:
-        # No incomplete windows, advance to next window
-        window_start = min_ts
+        # All windows complete or no windows, advance to next window
+        # Find the latest window
+        latest_query = f"SELECT WindowEnd FROM `{dataset_id}.{progress_table}` ORDER BY WindowEnd DESC LIMIT 1"
+        latest_end = None
+        try:
+            result = client.query(latest_query).result()
+            for row in result:
+                latest_end = row.WindowEnd
+                break
+        except Exception as e:
+            logging.warning(f"Could not query for latest window: {e}")
+        if latest_end:
+            window_start = latest_end
+        else:
+            window_start = min_ts
         window_end_candidate = window_start + timedelta(days=window_days)
 
     # Ensure both window_end_candidate and now are offset-naive for comparison
@@ -677,10 +691,23 @@ def main():
         if sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client):
             logging.info("Successfully synced comments to BigQuery.")
             log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced comments to BigQuery", function_name="main")
-            # Mark the current window as complete in the progress table
+            # Mark only the exact matching window as complete in the progress table
             try:
-                client.query(f"UPDATE `{dataset_id}.{progress_table}` SET Status='complete', LastRun=CURRENT_TIMESTAMP() WHERE WindowStart=TIMESTAMP('{window_start}') AND WindowEnd=TIMESTAMP('{window_end}')").result()
-                logging.info(f"Marked window {window_start} to {window_end} as complete.")
+                # Use CAST to ensure timestamp match
+                update_query = f"""
+                    UPDATE `{dataset_id}.{progress_table}`
+                    SET Status='complete', LastRun=CURRENT_TIMESTAMP()
+                    WHERE CAST(WindowStart AS STRING) = CAST(TIMESTAMP('{window_start}') AS STRING)
+                      AND CAST(WindowEnd AS STRING) = CAST(TIMESTAMP('{window_end}') AS STRING)
+                      AND Status != 'complete'
+                """
+                result = client.query(update_query).result()
+                # Check if any row was updated
+                updated_count = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else None
+                if updated_count and updated_count > 0:
+                    logging.info(f"Marked window {window_start} to {window_end} as complete.")
+                else:
+                    logging.warning(f"No window was marked as complete. Check timestamp precision and progress table.")
             except Exception as e:
                 logging.warning(f"Could not mark window as complete: {e}")
         else:
