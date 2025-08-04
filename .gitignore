@@ -2,10 +2,9 @@
 /Backup/
 /.tmp.driveupload/
 /bigquery-automation/
-/jira_syncall/jira_synctiertwo.log
-/jira_synctiertwo/jira_synctiertwo.log
 *.clasp.json
 *.gsheet
+*.log
 
 
 # Ensure .gitignore itself is tracked
