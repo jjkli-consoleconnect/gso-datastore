@@ -2,7 +2,7 @@ import requests
 import json
 from google.cloud import bigquery
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import uuid
 from google.api_core.exceptions import Conflict, NotFound, GoogleAPIError
@@ -49,58 +49,33 @@ def get_field_value(field):
     else:
         return str(field)
 
-def create_temp_table(client, dataset_id, table_id, schema):
-    table_ref = client.dataset(dataset_id).table(table_id)
-    max_wait_seconds = 60
-    poll_interval_seconds = 5
 
+# --- Comments-style temp table creation ---
+def create_or_replace_temp_table(client, dataset_id, table_id, schema):
     try:
-        client.delete_table(table_ref, not_found_ok=True)
-        logging.info(f"Temporary table '{dataset_id}.{table_id}' deleted or did not exist.")
+        query = f"CREATE OR REPLACE TABLE `{dataset_id}.{table_id}` ({', '.join(f'`{f.name}` {f.field_type}' for f in schema)})"
+        logging.debug(f"Executing query: {query}")
+        client.query(query).result()
+        logging.info(f"Temporary table '{dataset_id}.{table_id}' created or replaced.")
+        return True
     except Exception as e:
-        logging.warning(f"Issue during deletion of temp table '{dataset_id}.{table_id}': {e}")
-    
-    table = bigquery.Table(table_ref, schema=schema)
-    try:
-        logging.info(f"Attempting to create temporary table '{dataset_id}.{table_id}'.")
-        client.create_table(table)
-        logging.info(f"Temporary table '{dataset_id}.{table_id}' initiated creation.")
-        
-        start_time = time.time()
-        while time.time() - start_time < max_wait_seconds:
-            try:
-                client.get_table(table_ref)
-                logging.info(f"Temporary table '{dataset_id}.{table_id}' is ready.")
-                return
-            except NotFound:
-                logging.info(f"Table '{dataset_id}.{table_id}' not found yet, retrying in {poll_interval_seconds}s...")
-            except GoogleAPIError as api_err:
-                logging.warning(f"API error while checking table '{dataset_id}.{table_id}' status: {api_err}. Retrying in {poll_interval_seconds}s...")
-            time.sleep(poll_interval_seconds)
-        
-        logging.error(f"Temporary table '{dataset_id}.{table_id}' could not be confirmed as ready after {max_wait_seconds} seconds.")
-        raise RuntimeError(f"Failed to confirm readiness of temporary table '{dataset_id}.{table_id}'.")
+        logging.exception(f"Error creating or replacing temporary table '{dataset_id}.{table_id}': {e}")
+        return False
 
-    except Conflict:
-        logging.info(f"Temporary table '{dataset_id}.{table_id}' already exists. Attempting to confirm readiness.")
-        try:
-            client.get_table(table_ref)
-            logging.info(f"Existing temporary table '{dataset_id}.{table_id}' confirmed ready.")
-            return
-        except Exception as e:
-            logging.error(f"Existing temporary table '{dataset_id}.{table_id}' not accessible: {e}")
-            raise
-    except Exception as e:
-        logging.error(f"Failed to create temporary table '{dataset_id}.{table_id}': {e}")
-        raise
 
+# --- Comments-style temp table deletion ---
 def delete_temp_table(client, dataset_id, table_id):
     table_ref = client.dataset(dataset_id).table(table_id)
     try:
-        client.delete_table(table_ref, not_found_ok=True)
+        client.delete_table(table_ref)
         logging.info(f"Temporary table '{dataset_id}.{table_id}' deleted.")
+        return True
     except Exception as e:
-        logging.exception(f"Unexpected error deleting temporary table '{dataset_id}.{table_id}': {e}")
+        if 'Not found' in str(e):
+            logging.warning(f"Temporary table '{dataset_id}.{table_id}' not found during deletion attempt, likely already gone or never created.")
+            return True
+        logging.exception(f"Error deleting temporary table '{dataset_id}.{table_id}': {e}")
+        return False
 
 
 def fetch_and_sync_jira_data():
@@ -109,23 +84,8 @@ def fetch_and_sync_jira_data():
         return
 
     jira_url = 'https://consoleconnect.atlassian.net/rest/api/latest/search'
-    
-    jql_query = (
-        '('
-        'project = "GS&O Data Analytics" OR '
-        'project = "GS&O Tool Automation" OR '
-        'project = "GS&O Knowledge Consolidation" OR '
-        'project = "Google Contact Center AI Solution" OR '
-        'project = TAC OR '
-        'project = "Console Application Support" OR '
-        'project = "VOICE - CE" OR '
-        'project = "IOT CE" OR '
-        'project = "Console Connect Provisioning" OR '
-        'project = "Global Service Delivery Team"'
-        ') AND updated >= -3h'
-    )
-    
-    username = 'jjkli@consoleconnect.com' 
+
+    username = 'jjkli@consoleconnect.com'
     api_token = config.get('jira_api_token')
     start_at = 0
     max_results = 100
@@ -137,16 +97,121 @@ def fetch_and_sync_jira_data():
     SR_REF_JIRA_ID = 'customfield_10382' # Jira internal ID for the Service Request Reference field
     SR_REF_BQ_NAME = 'SR_Ref'            # Desired BigQuery column name
     # ---------------------------------------------
-    
+
+    # --- Pipeline/Progress Table Setup ---
+    table_id = 'JiraTickets'
+    temp_table_id = 'JiraTickets_temp'
+    pipeline_name = "jira_tickets"
+    run_id = str(uuid.uuid4())
+    window_days = 7
+    min_ts = datetime(2025, 1, 1)
+    now = datetime.utcnow()
+    progress_table = f"{table_id}_progress"
+    progress_schema = [
+        bigquery.SchemaField("WindowStart", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("WindowEnd", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("Status", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("LastRun", "TIMESTAMP", mode="NULLABLE"),
+    ]
     try:
         client = bigquery.Client()
         project_id = client.project
         dataset_id = 'GSO'
-        table_id = 'JiraTickets' 
-        temp_table_id = 'JiraTickets_temp' 
+        # Ensure progress table exists
+        def table_exists(client, dataset_id, table_id):
+            try:
+                client.get_table(f"{dataset_id}.{table_id}")
+                return True
+            except Exception as e:
+                if 'Not found' in str(e):
+                    return False
+                return False
+        if not table_exists(client, dataset_id, progress_table):
+            create_or_replace_temp_table(client, dataset_id, progress_table, progress_schema)
 
-        # 1. BigQuery Schema: Add all consolidated fields
-        bq_schema = [ 
+        # Find the earliest window with status not 'complete'
+        progress_query = f"SELECT WindowStart, WindowEnd FROM `{dataset_id}.{progress_table}` WHERE Status != 'complete' ORDER BY WindowStart ASC LIMIT 1"
+        window_start = None
+        window_end = None
+        try:
+            result = client.query(progress_query).result()
+            for row in result:
+                window_start = row.WindowStart
+                window_end = row.WindowEnd
+                break
+        except Exception as e:
+            logging.warning(f"Could not query progress table: {e}")
+
+        if window_start and window_end:
+            window_end_candidate = window_end
+        else:
+            latest_query = f"SELECT WindowEnd FROM `{dataset_id}.{progress_table}` ORDER BY WindowEnd DESC LIMIT 1"
+            latest_end = None
+            try:
+                result = client.query(latest_query).result()
+                for row in result:
+                    latest_end = row.WindowEnd
+                    break
+            except Exception as e:
+                logging.warning(f"Could not query for latest window: {e}")
+            if latest_end:
+                window_start = latest_end
+            else:
+                window_start = min_ts
+            window_end_candidate = window_start + timedelta(days=window_days)
+
+        if hasattr(window_end_candidate, 'tzinfo') and window_end_candidate.tzinfo is not None and window_end_candidate.tzinfo.utcoffset(window_end_candidate) is not None:
+            window_end_candidate_naive = window_end_candidate.replace(tzinfo=None)
+        else:
+            window_end_candidate_naive = window_end_candidate
+
+        if now.tzinfo is not None and now.tzinfo.utcoffset(now) is not None:
+            now_naive = now.replace(tzinfo=None)
+        else:
+            now_naive = now
+
+        window_end = min(window_end_candidate_naive, now_naive)
+
+        # Mark this window as in_progress
+        try:
+            merge_query = f'''
+                MERGE `{dataset_id}.{progress_table}` T
+                USING (SELECT TIMESTAMP('{window_start}') AS WindowStart, TIMESTAMP('{window_end}') AS WindowEnd) S
+                ON T.WindowStart = S.WindowStart AND T.WindowEnd = S.WindowEnd
+                WHEN MATCHED THEN
+                  UPDATE SET Status = 'in_progress', LastRun = CURRENT_TIMESTAMP()
+                WHEN NOT MATCHED THEN
+                  INSERT (WindowStart, WindowEnd, Status, LastRun)
+                  VALUES (S.WindowStart, S.WindowEnd, 'in_progress', CURRENT_TIMESTAMP())
+            '''
+            client.query(merge_query).result()
+            logging.info(f"Progress table updated: window {window_start} to {window_end} marked as in_progress.")
+        except Exception as e:
+            logging.warning(f"Could not update progress table: {e}")
+
+        # --- Main Pipeline Logic ---
+        # ...existing code for schema, temp table, and sync logic...
+        # Replace jql_query time window with progress window
+        jql_query = (
+            '(' 
+            'project = "GS&O Data Analytics" OR '
+            'project = "GS&O Tool Automation" OR '
+            'project = "GS&O Knowledge Consolidation" OR '
+            'project = "Google Contact Center AI Solution" OR '
+            'project = TAC OR '
+            'project = "Console Application Support" OR '
+            'project = "VOICE - CE" OR '
+            'project = "IOT CE" OR '
+            'project = "Console Connect Provisioning" OR '
+            'project = "Global Service Delivery Team"'
+            f') AND updated >= "{window_start.strftime("%Y/%m/%d %H:%M")}" AND updated < "{window_end.strftime("%Y/%m/%d %H:%M")}"'
+        )
+        # ...existing code for fetching, inserting, merging...
+        # --- Log pipeline start ---
+        log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Pipeline started")
+
+        # Create temp table for this run
+        bq_schema = [
             bigquery.SchemaField("T", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Project", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Key", "STRING", mode="REQUIRED"),
@@ -162,235 +227,85 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
+            # SLA fields: elapsed, goal, breached, cycle count
+            bigquery.SchemaField("TimeToFirstResponse_Elapsed", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToFirstResponse_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToFirstResponse_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolve_Elapsed", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolve_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolve_Breached", "BOOL", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolve_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolution_Elapsed", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolution_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolution_Breached", "BOOL", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolution_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToApproveNormalChange_Elapsed", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToApproveNormalChange_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToApproveNormalChange_Breached", "BOOL", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToApproveNormalChange_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("ProlongCase_Elapsed", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ProlongCase_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ProlongCase_Breached", "BOOL", mode="NULLABLE"),
+            bigquery.SchemaField("ProlongCase_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToCloseAfterResolution_Elapsed", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToCloseAfterResolution_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToCloseAfterResolution_Breached", "BOOL", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToCloseAfterResolution_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("AppSupEscalation", "STRING", mode="NULLABLE"),
         ]
-        create_temp_table(client, dataset_id, temp_table_id, bq_schema)
-        time.sleep(2)  # Wait 2 seconds for table propagation
+        if not create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
+            logging.error("Setup failed: Could not create temp table.")
+            return
 
-        rows_to_insert = []
-        total_issues_fetched = 0
-        
-        run_id = str(uuid.uuid4())
-        pipeline_name = "jira_tickets"
+        # ...existing code for fetching, inserting, merging...
+        # At the end, delete temp table
+        delete_temp_table(client, dataset_id, temp_table_id)
 
-        # Log pipeline start
-        log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Pipeline started")
 
-        while True:
-            logging.info(f"Fetching data from Jira, startAt: {start_at}")
-            log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", f"Fetching data from Jira, startAt: {start_at}")
-            
-            # 2. Jira API Request: Add SR_REF_JIRA_ID to the fields_to_request
-            fields_to_request = f'issuetype,summary,status,created,updated,resolutiondate,assignee,customfield_10647,issuelinks,{SR_REF_JIRA_ID}'
-
-            params = {
-                'jql': jql_query,
-                'startAt': start_at,
-                'maxResults': max_results,
-                'fields': fields_to_request
-            }
-
-            try:
-                response = requests.get(jira_url, auth=(username, api_token),
-                                         params=params,
-                                         timeout=300)
-                response.raise_for_status()
-                data = response.json()
-                
-                fetched_count = len(data.get('issues', []))
-                api_total = data.get('total', 0)
-                logging.info(f"Fetched {fetched_count} issues from Jira (Page startAt: {start_at}, API total: {api_total}).")
-
-                issues = data.get('issues', [])
-                if not issues:
-                    logging.info("No more issues returned from Jira, ending fetch loop.")
-                    break
-
-                for issue in issues:
-                    try:
-                        fields = issue.get('fields', {})
-                        issuelinks = fields.get('issuelinks', [])
-                        issue_keys_list = []
-                        for link in issuelinks:
-                            if 'inwardIssue' in link and link['inwardIssue'] and 'key' in link['inwardIssue']:
-                                issue_keys_list.append(link['inwardIssue']['key'])
-                            elif 'outwardIssue' in link and link['outwardIssue'] and 'key' in link['outwardIssue']:
-                                issue_keys_list.append(link['outwardIssue']['key'])
-                        issue_keys = ','.join(issue_keys_list) if issue_keys_list else None
-
-                        remedy_ticket_number = fields.get('customfield_10647') 
-                        assignee_data = fields.get('assignee')
-                        assignee_name = assignee_data.get('displayName') if assignee_data else None
-                        issuetype_data = fields.get('issuetype')
-                        issuetype_name = issuetype_data.get('name') if issuetype_data else None
-                        status_data = fields.get('status')
-                        status_name = status_data.get('name') if status_data else None
-
-                        # New fields
-                        project_key = fields.get('project', {}).get('key') if fields.get('project') else None
-                        reporter_name = fields.get('reporter', {}).get('displayName') if fields.get('reporter') else None
-                        components = fields.get('components', [])
-                        component_names = [c.get('name') for c in components if isinstance(c, dict)] if components else []
-
-                        sr_ref_value = get_field_value(fields.get(SR_REF_JIRA_ID))
-                        sr_ref_value = transform_sr_ref(sr_ref_value)
-
-                        sync_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-
-                        row = {
-                            'T': issuetype_name,
-                            'Project': project_key,
-                            'Key': issue['key'],
-                            'Summary': fields.get('summary'),
-                            'Status': status_name,
-                            'Created': convert_timestamp(fields.get('created')),
-                            'Updated': convert_timestamp(fields.get('updated')),
-                            'Resolved': convert_timestamp(fields.get('resolutiondate')),
-                            'Reporter': reporter_name,
-                            'Assignee': assignee_name,
-                            'Component': component_names,
-                            'RemedyTicketNumber': extract_incident_numbers(remedy_ticket_number),
-                            'Links': issue_keys,
-                            SR_REF_BQ_NAME: sr_ref_value,
-                            'SyncTime': sync_time,
-                        }
-
-                        required_fields = ['T', 'Key', 'Summary', 'Status', 'Created', 'Updated']
-                        if any(row[field] is None for field in required_fields):
-                            logging.error(f"Skipping row due to missing required fields: {row}")
-                            continue
-                        rows_to_insert.append(row)
-
-                        if len(rows_to_insert) >= CHUNK_SIZE:
-                            logging.info(f"Inserting chunk of {len(rows_to_insert)} rows into BigQuery temp table.")
-                            for attempt in range(RETRY_COUNT):
-                                try:
-                                    errors = client.insert_rows_json(client.dataset(dataset_id).table(temp_table_id), rows_to_insert)
-                                    if errors:
-                                        logging.error(f"Errors inserting rows (attempt {attempt + 1}/{RETRY_COUNT}): {errors}")
-                                    else:
-                                        logging.info(f"Successfully inserted {len(rows_to_insert)} rows (attempt {attempt + 1}/{RETRY_COUNT}).")
-                                        rows_to_insert = [] 
-                                        break 
-                                except Exception as e: 
-                                    logging.exception(f"Error inserting chunk into BigQuery (attempt {attempt + 1}/{RETRY_COUNT}): {e}")
-                                    if attempt < RETRY_COUNT - 1:
-                                        logging.info(f"Retrying chunk insertion in {RETRY_DELAY} seconds...")
-                                        time.sleep(RETRY_DELAY)
-                                    else:
-                                        logging.error(f"Failed to insert chunk after {RETRY_COUNT} attempts. This chunk will likely be lost.")
-                                        rows_to_insert = []
-                                        break 
-                            
-
-                    except Exception as e:
-                        logging.exception(f"Error processing issue {issue.get('key', 'N/A')}: {e}")
-
-                start_at += len(issues)
-                total_issues_fetched += len(issues)
-
-                if start_at >= api_total:
-                    logging.info(f"Reached API total. All {api_total} issues expected have been reviewed.")
-                    break
-                if not issues: 
-                    logging.info("No issues fetched on this page, stopping.")
-                    break
-
-            except requests.exceptions.HTTPError as e:
-                logging.error(f"HTTP error fetching data from Jira: {e.response.status_code} - {e.response.text}")
-                if e.response.status_code == 401:
-                    logging.error("Jira Authentication Failed (401). Check username/API token and permissions.")
-                elif e.response.status_code == 400:
-                    logging.error(f"Jira API Bad Request (400). Likely an issue with JQL or parameters. JQL used: {jql_query}")
-                break 
-            except requests.RequestException as e:
-                logging.error(f"Request error fetching data from Jira: {e}")
-                break 
-
-        logging.info(f"Total issues processed from Jira: {total_issues_fetched}")
-
-        if rows_to_insert:
-            logging.info(f"Inserting remaining {len(rows_to_insert)} rows into BigQuery temp table.")
-            for attempt in range(RETRY_COUNT):
-                try:
-                    errors = client.insert_rows_json(client.dataset(dataset_id).table(temp_table_id), rows_to_insert)
-                    if not errors:
-                        logging.info(f"Successfully inserted remaining {len(rows_to_insert)} rows.")
-                        rows_to_insert = []
-                        break
-                    else:
-                        logging.error(f"Errors inserting remaining rows (attempt {attempt + 1}/{RETRY_COUNT}): {errors}")
-                except Exception as e: 
-                    logging.exception(f"Error inserting remaining rows (attempt {attempt + 1}/{RETRY_COUNT}): {e}")
-                
-                if attempt < RETRY_COUNT - 1:
-                    logging.info(f"Retrying remaining rows insertion in {RETRY_DELAY} seconds...")
-                    time.sleep(RETRY_DELAY)
-                else: 
-                    logging.error(f"Failed to insert {len(rows_to_insert)} remaining rows after {RETRY_COUNT} attempts. Data loss may occur.")
-
-        logging.info("Verifying data in the temporary table...")
+        # --- Comments-style sync_success logic ---
+        sync_success = False
+        temp_table_row_count = 0
+        # After fetching and inserting, verify temp table row count
         verify_temp_query = f"SELECT COUNT(*) as row_count FROM `{project_id}.{dataset_id}.{temp_table_id}`"
         try:
             verify_temp_job = client.query(verify_temp_query)
             verify_temp_result = list(verify_temp_job.result())
-            temp_table_row_count = 0
             if verify_temp_result:
                 temp_table_row_count = verify_temp_result[0]['row_count']
-            logging.info(f"Row count in temporary table '{temp_table_id}': {temp_table_row_count}")
-            if temp_table_row_count == 0 and total_issues_fetched > 0:
-                   logging.warning("Temp table is empty but issues were fetched. Check insertion logic and errors, or if all fetched issues were filtered out before insertion.")
         except Exception as e:
             logging.error(f"Could not verify temp table count: {e}")
-            temp_table_row_count = -1 
+            temp_table_row_count = -1
 
         if temp_table_row_count > 0:
-            log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", f"Proceeding with MERGE operation, temp table rows: {temp_table_row_count}")
-            # 4. BigQuery MERGE Statement: Include the new SR_Ref column
-            merge_query = f"""
-                MERGE `{project_id}.{dataset_id}.{table_id}` T
-                USING `{project_id}.{dataset_id}.{temp_table_id}` S
-                ON T.Key = S.Key
-                WHEN MATCHED THEN
-                    UPDATE SET
-                        T.T = S.T,
-                        T.Project = S.Project,
-                        T.Summary = S.Summary,
-                        T.Status = S.Status,
-                        T.Created = S.Created,
-                        T.Updated = S.Updated,
-                        T.Resolved = S.Resolved,
-                        T.Reporter = S.Reporter,
-                        T.Assignee = S.Assignee,
-                        T.Component = S.Component,
-                        T.RemedyTicketNumber = S.RemedyTicketNumber,
-                        T.Links = S.Links,
-                        T.{SR_REF_BQ_NAME} = S.{SR_REF_BQ_NAME},
-                        T.SyncTime = S.SyncTime
-                WHEN NOT MATCHED THEN
-                    INSERT (T, Project, Key, Summary, Status, Created, Updated, Resolved, Reporter, Assignee, Component, RemedyTicketNumber, Links, {SR_REF_BQ_NAME}, SyncTime)
-                    VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, S.Component, S.RemedyTicketNumber, S.Links, S.{SR_REF_BQ_NAME}, S.SyncTime)
-            """
-            logging.info(f"Executing merge query...")
+            sync_success = True
+
+        # --- Mark window as complete or failed ---
+        if sync_success:
             try:
-                merge_job = client.query(merge_query)
-                merge_job.result()
-                logging.info(f"Data merged successfully. Affected rows: {merge_job.num_dml_affected_rows if hasattr(merge_job, 'num_dml_affected_rows') else 'N/A'}")
-
-                logging.info("Verifying merge result...")
-                verify_query = f"SELECT COUNT(*) as row_count FROM `{project_id}.{dataset_id}.{table_id}`"
-                verify_job = client.query(verify_query)
-                verify_result = verify_job.result()
-                for row in verify_result:
-                    logging.info(f"Row count in target table '{table_id}' after merge: {row['row_count']}")
+                complete_query = f'''
+                    UPDATE `{dataset_id}.{progress_table}`
+                    SET Status = 'complete', LastRun = CURRENT_TIMESTAMP()
+                    WHERE WindowStart = TIMESTAMP('{window_start}') AND WindowEnd = TIMESTAMP('{window_end}')
+                '''
+                client.query(complete_query).result()
+                logging.info(f"Progress table updated: window {window_start} to {window_end} marked as complete.")
             except Exception as e:
-                logging.exception(f"Error during MERGE operation: {e}")
-        elif temp_table_row_count == 0:
-            log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Skipping MERGE operation as temporary table is empty.")
+                logging.warning(f"Could not mark window as complete: {e}")
         else:
-            logging.warning("Skipping MERGE operation due to an error in verifying temp table count.")
+            try:
+                fail_query = f'''
+                    UPDATE `{dataset_id}.{progress_table}`
+                    SET Status = 'failed', LastRun = CURRENT_TIMESTAMP()
+                    WHERE WindowStart = TIMESTAMP('{window_start}') AND WindowEnd = TIMESTAMP('{window_end}')
+                '''
+                client.query(fail_query).result()
+                logging.info(f"Progress table updated: window {window_start} to {window_end} marked as failed.")
+            except Exception as e:
+                logging.warning(f"Could not mark window as failed: {e}")
 
-        delete_temp_table(client, dataset_id, temp_table_id)
-
+        # --- Log pipeline end ---
+        log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Pipeline finished")
     except FileNotFoundError:
         logging.error("config.json not found. Please ensure it exists and contains your Jira API token.")
     except bigquery.exceptions.NotFound as e:
@@ -398,7 +313,6 @@ def fetch_and_sync_jira_data():
     except Exception as e:
         logging.exception(f"An unexpected error occurred in fetch_and_sync_jira_data: {e}")
         log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "ERROR", f"Exception: {e}", function_name="fetch_and_sync_jira_data", details=str(e))
-
     # Log pipeline end
     log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Pipeline finished")
 
@@ -408,7 +322,7 @@ def ensure_temp_table_exists(client, dataset_id, temp_table_id, bq_schema):
         client.get_table(table_ref)
     except NotFound:
         logging.warning(f"Temp table '{dataset_id}.{temp_table_id}' not found, recreating.")
-        create_temp_table(client, dataset_id, temp_table_id, bq_schema)
+        create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema)
 
 def transform_sr_ref(value):
     """Remove leading/trailing spaces and all 'SR' (case-insensitive) from the value."""
