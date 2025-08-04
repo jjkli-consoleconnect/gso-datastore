@@ -5,7 +5,7 @@
 *.clasp.json
 *.gsheet
 *.log
-
+*.jsonl
 
 # Ensure .gitignore itself is tracked
 !.gitignore
