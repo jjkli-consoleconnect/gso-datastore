@@ -2,7 +2,7 @@ import requests
 import json
 from google.cloud import bigquery
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,9 +12,12 @@ import uuid
 # Define DEBUG flag before logging setup
 DEBUG = False
 
+
+# --- Logging Buffer for BigQuery Logs ---
+LOG_BUFFER = []
+
 # Setup logging (reduce verbosity unless DEBUG=True)
 logging.basicConfig(level=logging.INFO if not DEBUG else logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
 logging.info("Script startup test log")
 
 def load_config():
@@ -486,18 +489,11 @@ def wait_for_streaming_buffer_empty(client, project, dataset, table, max_wait=30
 
 CHECKPOINT_FILE = "jira_comments_checkpoint.json"
 
-def save_checkpoint(start_at):
-    with open(CHECKPOINT_FILE, "w") as f:
-        json.dump({"start_at": start_at}, f)
 
-def load_checkpoint():
-    try:
-        with open(CHECKPOINT_FILE) as f:
-            data = json.load(f)
-            return data.get("start_at", 0)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return 0
 
+
+
+# Buffer log entries for batch BigQuery logging
 def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, message, function_name=None, batch_id=None, details=None):
     log_entry = {
         "Timestamp": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
@@ -509,22 +505,136 @@ def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, 
         "BatchID": batch_id,
         "Details": details
     }
-    table_ref = client.dataset(dataset_id).table(table_id)
-    errors = client.insert_rows_json(table_ref, [log_entry])
-    if errors:
-        logging.error(f"Failed to log to BigQuery: {errors}")
-    else:
-        logging.info("Log entry successfully written to BigQuery.")
+    LOG_BUFFER.append(log_entry)
+
+# At the end of the pipeline, flush all logs to BigQuery in a batch
+def flush_logs_to_bigquery(client, dataset_id, table_id):
+    if not LOG_BUFFER:
+        return
+    temp_log_table = "PipelineLogs_temp"
+    log_schema = [
+        bigquery.SchemaField("Timestamp", "TIMESTAMP", mode="NULLABLE"),
+        bigquery.SchemaField("PipelineName", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("RunID", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("LogLevel", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("Message", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("FunctionName", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("BatchID", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("Details", "STRING", mode="NULLABLE"),
+    ]
+    if not create_or_replace_temp_table(client, dataset_id, temp_log_table, log_schema):
+        logging.error("Setup failed: Could not create temp logs table.")
+        return
+    if not wait_for_table(client, dataset_id, temp_log_table, retries=20, delay=2):
+        logging.error("Setup failed: Temp logs table not available.")
+        return
+    if not insert_rows_with_retry(client, dataset_id, temp_log_table, LOG_BUFFER, log_schema, retries=20, delay=2):
+        logging.error("Failed to insert log entries into temp logs table after retries.")
+        return
+    merge_query = f"""
+        MERGE `{client.project}.{dataset_id}.PipelineLogs` T
+        USING (
+            SELECT DISTINCT * FROM `{client.project}.{dataset_id}.{temp_log_table}`
+        ) S
+        ON T.Timestamp = S.Timestamp AND T.RunID = S.RunID
+        WHEN MATCHED THEN
+            UPDATE SET
+                T.PipelineName = S.PipelineName,
+                T.LogLevel = S.LogLevel,
+                T.Message = S.Message,
+                T.FunctionName = S.FunctionName,
+                T.BatchID = S.BatchID,
+                T.Details = S.Details
+        WHEN NOT MATCHED THEN
+            INSERT (PipelineName, RunID, LogLevel, Message, FunctionName, BatchID, Details)
+            VALUES (S.PipelineName, S.RunID, S.LogLevel, S.Message, S.FunctionName, S.BatchID, S.Details)
+    """
+    client.query(merge_query).result()
+    client.delete_table(f"{dataset_id}.{temp_log_table}")
+    logging.info("All log entries successfully merged into BigQuery logs table.")
 
 def main():
     config = load_config()
-    logging.info(f"Config loaded: {config}")
-    logging.info(f"Config loaded: keys = %s", list(config.keys()))
+    logging.info("Config loaded.")
     if config is None:
         logging.error("Config is None, exiting early.")
         return
 
+    # Define dataset and table names first, before using them
+    dataset_id = 'GSO'
+    table_id = 'JiraComments'
+    log_table_id = 'PipelineLogs'
+    pipeline_name = "jira_comments"
+    run_id = str(uuid.uuid4())
+
     jira_url = 'https://consoleconnect.atlassian.net'
+    # --- Automated Time Partitioning for Comments (2025 only) ---
+    window_days = 7
+    min_ts = datetime(2025, 1, 1)
+    now = datetime.utcnow()
+    progress_table = f"{table_id}_progress"
+    progress_schema = [
+        bigquery.SchemaField("WindowStart", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("WindowEnd", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("Status", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("LastRun", "TIMESTAMP", mode="NULLABLE"),
+    ]
+    # Client must be initialized before table_exists
+    try:
+        client = bigquery.Client()
+    except Exception as e:
+        logging.exception(f"Failed to initialize BigQuery client: {e}. Ensure GCP credentials are set up correctly.")
+        return
+    if not table_exists(client, dataset_id, progress_table):
+        create_or_replace_temp_table(client, dataset_id, progress_table, progress_schema)
+
+    # Find the latest processed window and advance to the next window
+    progress_query = f"SELECT WindowStart, WindowEnd FROM `{dataset_id}.{progress_table}` ORDER BY WindowStart DESC LIMIT 1"
+    window_start = None
+    window_end = None
+    try:
+        result = client.query(progress_query).result()
+        for row in result:
+            window_start = row.WindowStart
+            window_end = row.WindowEnd
+            break
+    except Exception as e:
+        logging.warning(f"Could not query progress table: {e}")
+
+    # Ensure all datetime objects are offset-naive for arithmetic and comparison
+    if not window_start:
+        window_start = min_ts
+        window_end_candidate = window_start + timedelta(days=window_days)
+    else:
+        window_start = window_end
+        window_end_candidate = window_start + timedelta(days=window_days)
+
+    # Make 'now' offset-naive if it is offset-aware
+    if now.tzinfo is not None and now.tzinfo.utcoffset(now) is not None:
+        now_naive = now.replace(tzinfo=None)
+    else:
+        now_naive = now
+
+    window_end = min(window_end_candidate, now_naive)
+
+    # Mark this window as in_progress
+    try:
+        merge_query = f'''
+            MERGE `{dataset_id}.{progress_table}` T
+            USING (SELECT TIMESTAMP('{window_start}') AS WindowStart, TIMESTAMP('{window_end}') AS WindowEnd) S
+            ON T.WindowStart = S.WindowStart AND T.WindowEnd = S.WindowEnd
+            WHEN MATCHED THEN
+              UPDATE SET Status = 'in_progress', LastRun = CURRENT_TIMESTAMP()
+            WHEN NOT MATCHED THEN
+              INSERT (WindowStart, WindowEnd, Status, LastRun)
+              VALUES (S.WindowStart, S.WindowEnd, 'in_progress', CURRENT_TIMESTAMP())
+        '''
+        client.query(merge_query).result()
+        logging.info(f"Progress table updated: window {window_start} to {window_end} marked as in_progress.")
+    except Exception as e:
+        logging.warning(f"Could not update progress table: {e}")
+
+    # Build JQL for this window
     jql_query = (
         '(project = "GS&O Data Analytics" OR '
         'project = "GS&O Tool Automation" OR '
@@ -536,7 +646,7 @@ def main():
         'project = "IOT CE" OR '
         'project = "Console Connect Provisioning" OR '
         'project = "Global Service Delivery Team" '
-        ') AND updated >= -3h'
+        f') AND updated >= "{window_start.strftime("%Y/%m/%d %H:%M")}" AND updated < "{window_end.strftime("%Y/%m/%d %H:%M")}"'
     )
 
     username = "jjkli@consoleconnect.com"
@@ -554,6 +664,7 @@ def main():
         logging.exception(f"Failed to initialize BigQuery client: {e}. Ensure GCP credentials are set up correctly.")
         return
 
+
     # Log pipeline start
     log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", function_name="main")
 
@@ -565,23 +676,15 @@ def main():
             logging.error("Failed to sync comments to BigQuery.")
             log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync comments to BigQuery", function_name="main")
     except Exception as e:
-        logging.exception(f"Pipeline run failed: {e}")
+        logging.exception(f"Pipeline run fail ed: {e}")
         log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Pipeline run failed: {e}", function_name="main", details=str(e))
 
     # Log pipeline end
     log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", function_name="main")
     log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Batch processed", function_name="main", batch_id="your_batch_id")
-    logToBigQuery(
-      "GSO",
-      "PipelineLogs",
-      scriptName,
-      Utilities.getUuid(),
-      "INFO",
-      "Data pipeline run complete.",
-      "searchForEmailAndAttachments",
-      null,
-      null
-    );
+
+    # At the end, flush all logs to BigQuery in a batch
+    flush_logs_to_bigquery(client, dataset_id, log_table_id)
 
 if __name__ == "__main__":
     main()

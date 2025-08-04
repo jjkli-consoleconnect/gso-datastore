@@ -110,7 +110,7 @@ def fetch_and_sync_jira_data():
     
     jql_query = (
         '(project = "Console Application Support" OR project = TAC OR project = "Global Service Delivery Team" OR project = "Console Connect Provisioning" OR project = "VOICE - CE")' 
-        'AND updated >= endOfDay(-2)'
+        'AND updated >= endOfDay(-3)'
     )
     
     username = 'jjkli@consoleconnect.com' 

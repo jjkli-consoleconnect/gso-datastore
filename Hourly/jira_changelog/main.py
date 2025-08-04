@@ -2,13 +2,15 @@ import requests
 import json
 from google.cloud import bigquery
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import os
 from concurrent.futures import ThreadPoolExecutor
 import random
-from bq_logger import log_to_bigquery
 import uuid
+
+# --- Logging Buffer for BigQuery Logs ---
+LOG_BUFFER = []
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -146,24 +148,7 @@ def fetch_issues_with_retry(jira_search_url, headers, auth, payload, retries=5, 
     logging.error(f"Failed to fetch issues from {jira_search_url} after multiple retries.")
     return None
 
-CHECKPOINT_FILE = os.path.abspath("jira_checkpoint.json")
-logging.info(f"Expect checkpoint at: {CHECKPOINT_FILE}")
 
-def save_checkpoint(start_at):
-    try:
-        with open(CHECKPOINT_FILE, "w") as f:
-            json.dump({"start_at": start_at}, f)
-        logging.info(f"Checkpoint saved at offset {start_at}")
-    except Exception as e:
-        logging.error(f"Failed to save checkpoint: {e}")
-
-def load_checkpoint():
-    try:
-        with open(CHECKPOINT_FILE) as f:
-            data = json.load(f)
-            return data.get("start_at", 0)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return 0
 
 def run_merge_query(client, dataset_id, table_id, temp_table_id):
     merge_query = f"""
@@ -198,6 +183,64 @@ def run_merge_query(client, dataset_id, table_id, temp_table_id):
         return False
     return True
 
+# --- BigQuery Logging Mechanism ---
+def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, message, FunctionName=None, BatchID=None, Details=None):
+    log_entry = {
+        # 'Timestamp' intentionally omitted; BigQuery will use its default value
+        "PipelineName": pipeline_name,
+        "RunID": run_id,
+        "LogLevel": level,
+        "Message": message,
+        "FunctionName": FunctionName,
+        "BatchID": BatchID,
+        "Details": Details
+    }
+    LOG_BUFFER.append(log_entry)
+
+def flush_logs_to_bigquery(client, dataset_id, table_id):
+    if not LOG_BUFFER:
+        return
+    temp_log_table = "PipelineLogs_temp"
+    log_schema = [
+        # 'Timestamp' intentionally omitted; BigQuery will use its default value
+        bigquery.SchemaField("PipelineName", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("RunID", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("LogLevel", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("Message", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("FunctionName", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("BatchID", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("Details", "STRING", mode="NULLABLE"),
+    ]
+    if not create_or_replace_temp_table(client, dataset_id, temp_log_table, log_schema):
+        logging.error("Setup failed: Could not create temp logs table.")
+        return
+    if not wait_for_table(client, dataset_id, temp_log_table, retries=20, delay=2):
+        logging.error("Setup failed: Temp logs table not available.")
+        return
+    if not insert_rows_with_retry(client, dataset_id, temp_log_table, LOG_BUFFER, retries=20, delay=2):
+        logging.error("Failed to insert log entries into temp logs table after retries.")
+        return
+    merge_query = f"""
+        MERGE `{client.project}.{dataset_id}.PipelineLogs` T
+        USING (
+            SELECT DISTINCT * FROM `{client.project}.{dataset_id}.{temp_log_table}`
+        ) S
+        ON T.RunID = S.RunID AND T.Message = S.Message
+        WHEN MATCHED THEN
+            UPDATE SET
+                T.PipelineName = S.PipelineName,
+                T.LogLevel = S.LogLevel,
+                T.FunctionName = S.FunctionName,
+                T.BatchID = S.BatchID,
+                T.Details = S.Details
+        WHEN NOT MATCHED THEN
+            INSERT (PipelineName, RunID, LogLevel, Message, FunctionName, BatchID, Details)
+            VALUES (S.PipelineName, S.RunID, S.LogLevel, S.Message, S.FunctionName, S.BatchID, S.Details)
+    """
+    client.query(merge_query).result()
+    client.delete_table(f"{dataset_id}.{temp_log_table}")
+    logging.info("All log entries successfully merged into BigQuery logs table.")
+
 def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
     temp_table_id = f"{table_id}_temp"
 
@@ -220,25 +263,89 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         logging.error(f"Temporary table '{temp_table_id}' is not available.")
         return False
 
+    # --- Automated Time Partitioning Logic ---
+    # Use a BigQuery table to track progress of time windows processed
+    progress_table = f"{table_id}_progress"
+    progress_schema = [
+        bigquery.SchemaField("WindowStart", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("WindowEnd", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("Status", "STRING", mode="REQUIRED"),  # e.g. 'complete', 'in_progress', 'failed'
+        bigquery.SchemaField("LastRun", "TIMESTAMP", mode="NULLABLE"),
+    ]
+    # Ensure progress table exists, but do NOT recreate or replace it
+    if not table_exists(client, dataset_id, progress_table):
+        try:
+            client.create_table(bigquery.Table(f"{client.project}.{dataset_id}.{progress_table}", schema=progress_schema))
+            logging.info(f"Progress table '{client.project}.{dataset_id}.{progress_table}' created.")
+        except Exception as e:
+            logging.error(f"Error creating progress table: {e}")
+
+    # Define window size (e.g., 7 days for full history, or 1 day for incremental)
+    window_days = 7
+    # Restrict to only process data from 2025 onwards
+    min_ts = datetime(2025, 1, 1)
+
+    # Find the latest transition timestamp in Jira (for upper bound)
+    now = datetime.utcnow()
+
+    # Find the latest window processed (complete or failed)
+    latest_query = f"SELECT MAX(WindowEnd) AS LastWindowEnd FROM `{client.project}.{dataset_id}.{progress_table}`"
+    last_window_end = None
+    try:
+        result = client.query(latest_query).result()
+        for row in result:
+            last_window_end = row.LastWindowEnd
+            break
+    except Exception as e:
+        logging.warning(f"Could not query latest window from progress table: {e}")
+
+    if last_window_end:
+        # Advance to next window
+        window_start = last_window_end.replace(tzinfo=None)
+        window_end = min(window_start + timedelta(days=window_days), now)
+        # If the next window is in the future, stop processing
+        if window_start >= now:
+            logging.info("All windows up to current time have been processed.")
+            return True
+    else:
+        # No previous windows, start from min_ts
+        window_start = min_ts
+        window_end = min(window_start + timedelta(days=window_days), now)
+
+    # Mark this window as in_progress using BigQuery-compatible MERGE
+    try:
+        merge_query = f'''
+            MERGE `{client.project}.{dataset_id}.{progress_table}` T
+            USING (SELECT TIMESTAMP('{window_start}') AS WindowStart, TIMESTAMP('{window_end}') AS WindowEnd) S
+            ON T.WindowStart = S.WindowStart AND T.WindowEnd = S.WindowEnd
+            WHEN MATCHED THEN
+              UPDATE SET Status = 'in_progress', LastRun = CURRENT_TIMESTAMP()
+            WHEN NOT MATCHED THEN
+              INSERT (WindowStart, WindowEnd, Status, LastRun)
+              VALUES (S.WindowStart, S.WindowEnd, 'in_progress', CURRENT_TIMESTAMP())
+        '''
+        client.query(merge_query).result()
+        logging.info(f"Progress table updated: window {window_start} to {window_end} marked as in_progress.")
+    except Exception as e:
+        logging.warning(f"Could not update progress table: {e}")
+
+    # Build JQL for this window
+    window_jql = f"({jql_query}) AND status CHANGED DURING (\"{window_start.strftime('%Y/%m/%d %H:%M')}\", \"{window_end.strftime('%Y/%m/%d %H:%M')}\")"
+
     total_issues = float('inf')
-    start_at = load_checkpoint()
+    start_at = 0
     max_results = 100
     issues_processed = 0
-    batch_size = 1000 # BQ insert batch size
-
-    # Construct the full search URL once
-    # Jira Cloud typically uses /rest/api/2/ or /rest/api/3/. /rest/api/latest/ resolves to one of these.
-    # Using /rest/api/2/ as it was in the original script and is widely compatible.
+    batch_size = 1000
     search_api_endpoint = f"{jira_base_url}/rest/api/2/search"
-
     rows_inserted = False
 
     while start_at < total_issues:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        auth = (username, api_token) # For Jira Cloud, username is typically the email address
-        payload = json.dumps({"jql": jql_query, "startAt": start_at, "maxResults": max_results, "fields": ["key"]}) # Only fetch 'key' initially
+        auth = (username, api_token)
+        payload = json.dumps({"jql": window_jql, "startAt": start_at, "maxResults": max_results, "fields": ["key"]})
 
-        logging.info(f"Fetching issues from Jira: {search_api_endpoint} with JQL starting at {start_at}, maxResults {max_results}")
+        logging.info(f"Fetching issues from Jira: {search_api_endpoint} with JQL window {window_start} to {window_end}, startAt {start_at}, maxResults {max_results}")
         try:
             data = fetch_issues_with_retry(search_api_endpoint, headers, auth, payload)
             if data is None:
@@ -246,22 +353,24 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
                 if rows_inserted:
                     run_merge_query(client, dataset_id, table_id, temp_table_id)
                 delete_temp_table(client, dataset_id, temp_table_id)
-                save_checkpoint(start_at)  # <-- Ensure checkpoint is saved here!
+                # Mark window as failed
+                client.query(f"UPDATE `{client.project}.{dataset_id}.{progress_table}` SET Status='failed', LastRun=CURRENT_TIMESTAMP() WHERE WindowStart=TIMESTAMP('{window_start}') AND WindowEnd=TIMESTAMP('{window_end}')").result()
                 return False
-        except Exception as e: # Catching generic Exception here is broad, but mirrors original
+        except Exception as e:
             logging.error(f"Unexpected error during issue fetch: {e}")
-            start_at += max_results # Ensure loop progresses
+            start_at += max_results
             continue
 
         issues = data.get('issues', [])
-        total_issues = data.get('total', 0) # Update total_issues from the first successful response
+        total_issues = data.get('total', 0)
 
         if not issues:
-            if start_at == 0: # No issues found at all
-                logging.info(f"No issues found for JQL: {jql_query}")
+            if start_at == 0:
+                logging.info(f"No issues found for JQL window: {window_jql}")
             else:
                 logging.info(f"No more issues found on page starting at {start_at}.")
-            break # Exit loop if no issues are returned
+            break
+
 
         logging.info(f"Fetched {len(issues)} issues. Total according to Jira: {total_issues}. Current offset: {start_at}")
 
@@ -313,6 +422,8 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
                         # Merge whatever is in temp table before exit
                         run_merge_query(client, dataset_id, table_id, temp_table_id)
                     delete_temp_table(client, dataset_id, temp_table_id)
+                    # Mark window as failed
+                    client.query(f"UPDATE `{client.project}.{dataset_id}.{progress_table}` SET Status='failed', LastRun=CURRENT_TIMESTAMP() WHERE WindowStart=TIMESTAMP('{window_start}') AND WindowEnd=TIMESTAMP('{window_end}')").result()
                     return False
                 rows_to_insert = []
 
@@ -323,6 +434,8 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
             else:
                 logging.error(f"Failed to insert final batch of {len(rows_to_insert)} rows into temp table. Stopping processing.")
                 delete_temp_table(client, dataset_id, temp_table_id)
+                # Mark window as failed
+                client.query(f"UPDATE `{client.project}.{dataset_id}.{progress_table}` SET Status='failed', LastRun=CURRENT_TIMESTAMP() WHERE WindowStart=TIMESTAMP('{window_start}') AND WindowEnd=TIMESTAMP('{window_end}')").result()
                 return False
             rows_to_insert = [] # Clear it after successful insert
 
@@ -331,13 +444,19 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         logging.info(f"Processed details for {len(issues)} issues. Total issues processed so far: {issues_processed} out of {total_issues}")
         remaining_issues = total_issues - issues_processed
         logging.info(f"Remaining issues to process: {remaining_issues}")
-        time.sleep(1) # Reduced sleep, rely more on retry backoff for rate limits. Original was 2s.
-        save_checkpoint(start_at)
+        time.sleep(1)
+
 
     # Merge temp table into final table (upsert logic)
     if rows_inserted:
         run_merge_query(client, dataset_id, table_id, temp_table_id)
     delete_temp_table(client, dataset_id, temp_table_id)
+
+    # Mark window as complete
+    try:
+        client.query(f"UPDATE `{client.project}.{dataset_id}.{progress_table}` SET Status='complete', LastRun=CURRENT_TIMESTAMP() WHERE WindowStart=TIMESTAMP('{window_start}') AND WindowEnd=TIMESTAMP('{window_end}')").result()
+    except Exception as e:
+        logging.warning(f"Could not mark window as complete in progress table: {e}")
 
     return True
 
@@ -371,7 +490,7 @@ def main():
         'project = "IOT CE" OR '
         'project = "Console Connect Provisioning" OR '
         'project = "Global Service Delivery Team" '
-        ') AND updated >= "2025-07-01" AND updated < "2026-01-01"'
+        ')'
     )
 
     username = 'jjkli@consoleconnect.com'
@@ -387,7 +506,7 @@ def main():
     log_table_id = 'PipelineLogs'
     pipeline_name = "jira_changelog"
     run_id = str(uuid.uuid4())
- 
+
     try:
         client = bigquery.Client()
         logging.info(f"Successfully connected to BigQuery project: {client.project}")
@@ -413,6 +532,8 @@ def main():
     # Log pipeline end
     log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", FunctionName="main")
 
+    # At the end, flush all logs to BigQuery in a batch
+    flush_logs_to_bigquery(client, dataset_id, log_table_id)
 
 if __name__ == "__main__":
     main()

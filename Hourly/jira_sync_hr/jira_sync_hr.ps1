@@ -3,52 +3,75 @@
 # Logs Docker job status and handles retries
 # --------------------------------------
 
-$logFilePath = "G:\My Drive\Scripts\PowerShell\jira_synctiertwo\jira_synctiertwo.log"
 
+
+# Use JSONL log file for BigQuery-friendly logging
+$logFilePath = "G:\My Drive\Scripts\Hourly\jira_sync_hr\jira_sync_hr.jsonl"
+
+
+
+# Consistent logging mechanism (adopted from working script)
+$global:RunID = $env:COMPUTERNAME + "-" + [guid]::NewGuid().ToString()
 function Write-Log {
-    param ([string]$message)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $logMessage = "$timestamp - $message"
-    Write-Output $logMessage
-    Add-Content -Path $logFilePath -Value $logMessage
+    param (
+        [string]$message,
+        [string]$logLevel = "INFO",
+        [string]$functionName = $null,
+        [string]$batchID = $null,
+        [string]$details = $null
+    )
+    # Leave Timestamp blank so BigQuery uses its default value
+    $pipelineName = "jira_sync_hr"
+    $logObject = [PSCustomObject]@{
+        Timestamp     = $null
+        PipelineName  = $pipelineName
+        RunID         = $global:RunID
+        LogLevel      = $logLevel
+        Message       = $message
+        FunctionName  = $functionName
+        BatchID       = $batchID
+        Details       = $details
+    }
+    $jsonLine = $logObject | ConvertTo-Json -Compress
+    Write-Output $jsonLine
+    Add-Content -Path $logFilePath -Value $jsonLine
 }
 
-Write-Log "========================================="
-Write-Log "SCRIPT EXECUTION STARTED"
-Write-Log "========================================="
+
 
 $startTime = Get-Date
 
-Set-Location "G:\My Drive\Scripts\Powershell\jira_syncall"
+Set-Location "G:\My Drive\Scripts\Hourly"
 
 $dockerPath = "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
 $dockerImages = @("jira_tickets", "jira_comments", "jira_changelog")
 $failedImages = @()
 
+
 function Invoke-DockerImage {
-    param ([string]$imageName)
+    param (
+        [string]$imageName
+    )
 
-    Write-Log "Running Docker image: $imageName"
-
-    # Host path for persistent volume (adjust if your folder structure changes)
-
+    Write-Log "Running Docker image: $imageName" "INFO" "Invoke-DockerImage"
+    # Print the actual Docker command for debugging
+    $dockerCmd = '$dockerPath run --rm -v "G:\My Drive\Scripts\Hourly\' + $imageName + ':/app" -e GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json ' + $imageName
+    Write-Output "CMD: $dockerCmd"
     try {
-        & "$dockerPath" run --rm `
-            -v "G:\My Drive\Scripts\Hourly\${imageName}:/app" `
-            -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials.json" `
-            $imageName 2>&1
+        & "$dockerPath" run --rm -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials.json" $imageName
 
         if ($LASTEXITCODE -eq 0) {
-            Write-Log "$imageName ran successfully."
+            Write-Log "$imageName ran successfully." "INFO" "Invoke-DockerImage"
         } else {
-            Write-Log "❌ ERROR: $imageName exited with code $LASTEXITCODE."
+            Write-Log "❌ ERROR: $imageName exited with code $LASTEXITCODE." "ERROR" "Invoke-DockerImage" $null $LASTEXITCODE
             $script:failedImages += $imageName
         }
     } catch {
-        Write-Log "❌ EXCEPTION: $imageName failed with error: $_"
+        Write-Log "❌ EXCEPTION: $imageName failed with error: $_" "ERROR" "Invoke-DockerImage" $null $_
         $script:failedImages += $imageName
     }
 }
+
 
 function Invoke-DockerImages {
     param ([string[]]$images)
@@ -57,27 +80,27 @@ function Invoke-DockerImages {
     }
 }
 
-Write-Log "Executing image(s): $($dockerImages -join ', ')"
-Invoke-DockerImages -images $dockerImages
-
-if ($failedImages.Count -gt 0) {
-    Write-Log "Retrying failed image(s): $($failedImages -join ', ')"
-    Invoke-DockerImages -images $failedImages
+Write-Log "Executing image(s): $($dockerImages -join ', ')" "INFO" "main"
+foreach ($image in $dockerImages) {
+    Invoke-DockerImage -imageName $image
 }
 
 if ($failedImages.Count -gt 0) {
-    Write-Log "SCRIPT COMPLETED WITH FAILURES:"
+    Write-Log "Retrying failed image(s): $($failedImages -join ', ')" "WARN" "main"
+    foreach ($image in $failedImages) {
+        Invoke-DockerImage -imageName $image
+    }
+}
+
+if ($failedImages.Count -gt 0) {
+    Write-Log "SCRIPT COMPLETED WITH FAILURES:" "ERROR" "main"
     foreach ($img in $failedImages) {
-        Write-Log "  ❌ $img"
+        Write-Log "  ❌ $img" "ERROR" "main"
     }
 } else {
-    Write-Log "SCRIPT COMPLETED SUCCESSFULLY ✅"
+    Write-Log "SCRIPT COMPLETED SUCCESSFULLY ✅" "INFO" "main"
 }
 
 $endTime = Get-Date
 $duration = $endTime - $startTime
-Write-Log "Total runtime: $($duration.TotalSeconds) seconds"
-
-Write-Log "========================================="
-Write-Log "SCRIPT EXECUTION ENDED"
-Write-Log "=========================================`n"
+Write-Log "Total runtime: $($duration.TotalSeconds) seconds" "INFO" "main"

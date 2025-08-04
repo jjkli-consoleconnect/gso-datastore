@@ -3,77 +3,90 @@
 # Logs Docker job status and handles retries
 # --------------------------------------
 
-$logFilePath = "G:\My Drive\Scripts\PowerShell\jira_synctiertwo\jira_synctiertwo.log"
+$logFilePath = "G:\My Drive\Scripts\Powershell\jira_synctiertwo\jira_synctiertwo.jsonl"
 
 function Write-Log {
-    param ([string]$message)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $logMessage = "$timestamp - $message"
-    Write-Output $logMessage
-    Add-Content -Path $logFilePath -Value $logMessage
+    param (
+        [string]$message,
+        [string]$logLevel = "INFO",
+        [string]$functionName = $null,
+        [string]$batchID = $null,
+        [string]$details = $null
+    )
+    # Leave Timestamp blank so BigQuery uses its default value
+    $pipelineName = "jira_synctiertwo"
+    $runID = $env:COMPUTERNAME + "-" + [guid]::NewGuid().ToString()
+    $logObject = [PSCustomObject]@{
+        Timestamp     = $null
+        PipelineName  = $pipelineName
+        RunID         = $runID
+        LogLevel      = $logLevel
+        Message       = $message
+        FunctionName  = $functionName
+        BatchID       = $batchID
+        Details       = $details
+    }
+    $jsonLine = $logObject | ConvertTo-Json -Compress
+    Write-Output $jsonLine
+    Add-Content -Path $logFilePath -Value $jsonLine
 }
 
-Write-Log "========================================="
-Write-Log "SCRIPT EXECUTION STARTED"
-Write-Log "========================================="
+
+
 
 $startTime = Get-Date
 
-Set-Location "G:\My Drive\Scripts\Powershell\jira_syncall"
+
 
 $dockerPath = "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
 $dockerImages = @("jira_tiertwo", "jira_projecttracking")
 $failedImages = @()
 
 function Invoke-DockerImage {
-    param ([string]$imageName)
+    param (
+        [string]$imageName
+    )
 
-    Write-Log "Running Docker image: $imageName"
-
+    Write-Log "Running Docker image: $imageName" "INFO" "Invoke-DockerImage"
     try {
         & "$dockerPath" run --rm -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials.json" $imageName 2>&1
 
         if ($LASTEXITCODE -eq 0) {
-            Write-Log "$imageName ran successfully."
-            
+            Write-Log "$imageName ran successfully." "INFO" "Invoke-DockerImage"
         } else {
-            Write-Log "❌ ERROR: $imageName exited with code $LASTEXITCODE."
+            Write-Log "❌ ERROR: $imageName exited with code $LASTEXITCODE." "ERROR" "Invoke-DockerImage" $null $LASTEXITCODE
             $script:failedImages += $imageName
         }
     } catch {
-        Write-Log "❌ EXCEPTION: $imageName failed with error: $_"
+        Write-Log "❌ EXCEPTION: $imageName failed with error: $_" "ERROR" "Invoke-DockerImage" $null $_
         $script:failedImages += $imageName
     }
 }
 
-function Invoke-DockerImages {
-    param ([string[]]$images)
-    foreach ($image in $images) {
+
+Set-Location "G:\My Drive\Scripts\DockerRun"
+Write-Log "Executing images: $($dockerImages -join ', ')" "INFO" "main"
+foreach ($image in $dockerImages) {
+    Invoke-DockerImage -imageName $image
+}
+
+if ($failedImages.Count -gt 0) {
+    Write-Log "Retrying failed image(s): $($failedImages -join ', ')" "WARN" "main"
+    foreach ($image in $failedImages) {
         Invoke-DockerImage -imageName $image
     }
 }
 
-Write-Log "Executing image(s): $($dockerImages -join ', ')"
-Invoke-DockerImages -images $dockerImages
-
 if ($failedImages.Count -gt 0) {
-    Write-Log "Retrying failed image(s): $($failedImages -join ', ')"
-    Invoke-DockerImages -images $failedImages
-}
-
-if ($failedImages.Count -gt 0) {
-    Write-Log "SCRIPT COMPLETED WITH FAILURES:"
+    Write-Log "SCRIPT COMPLETED WITH FAILURES:" "ERROR" "main"
     foreach ($img in $failedImages) {
-        Write-Log "  ❌ $img"
+        Write-Log "  ❌ $img" "ERROR" "main"
     }
 } else {
-    Write-Log "SCRIPT COMPLETED SUCCESSFULLY ✅"
+    Write-Log "SCRIPT COMPLETED SUCCESSFULLY ✅" "INFO" "main"
 }
 
 $endTime = Get-Date
 $duration = $endTime - $startTime
-Write-Log "Total runtime: $($duration.TotalSeconds) seconds"
+Write-Log "Total runtime: $($duration.TotalSeconds) seconds" "INFO" "main"
 
-Write-Log "========================================="
-Write-Log "SCRIPT EXECUTION ENDED"
-Write-Log "=========================================`n"

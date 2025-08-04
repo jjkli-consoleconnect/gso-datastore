@@ -125,7 +125,7 @@ def fetch_and_sync_jira_data():
         'project = "GS&O Data Analytics" OR '
         'project = "GS&O Knowledge Consolidation" OR '
         'project = "GS&O Tool Automation" '
-        ') AND updated >= endOfDay(-1) ORDER BY updated DESC'
+        ') AND updated >= endOfDay(-3) '
     )
 
     username = 'jjkli@consoleconnect.com'
