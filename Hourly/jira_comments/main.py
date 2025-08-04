@@ -588,8 +588,8 @@ def main():
     if not table_exists(client, dataset_id, progress_table):
         create_or_replace_temp_table(client, dataset_id, progress_table, progress_schema)
 
-    # Find the latest processed window and advance to the next window
-    progress_query = f"SELECT WindowStart, WindowEnd FROM `{dataset_id}.{progress_table}` ORDER BY WindowStart DESC LIMIT 1"
+    # Find the earliest incomplete/in_progress window and determine what to process next
+    progress_query = f"SELECT WindowStart, WindowEnd, Status FROM `{dataset_id}.{progress_table}` WHERE Status != 'complete' ORDER BY WindowStart ASC LIMIT 1"
     window_start = None
     window_end = None
     try:
@@ -601,21 +601,26 @@ def main():
     except Exception as e:
         logging.warning(f"Could not query progress table: {e}")
 
-    # Ensure all datetime objects are offset-naive for arithmetic and comparison
-    if not window_start:
+    if window_start:
+        # Reprocess the earliest incomplete/in_progress window
+        window_end_candidate = window_end
+    else:
+        # No incomplete windows, advance to next window
         window_start = min_ts
         window_end_candidate = window_start + timedelta(days=window_days)
-    else:
-        window_start = window_end
-        window_end_candidate = window_start + timedelta(days=window_days)
 
-    # Make 'now' offset-naive if it is offset-aware
+    # Ensure both window_end_candidate and now are offset-naive for comparison
+    if hasattr(window_end_candidate, 'tzinfo') and window_end_candidate.tzinfo is not None and window_end_candidate.tzinfo.utcoffset(window_end_candidate) is not None:
+        window_end_candidate_naive = window_end_candidate.replace(tzinfo=None)
+    else:
+        window_end_candidate_naive = window_end_candidate
+
     if now.tzinfo is not None and now.tzinfo.utcoffset(now) is not None:
         now_naive = now.replace(tzinfo=None)
     else:
         now_naive = now
 
-    window_end = min(window_end_candidate, now_naive)
+    window_end = min(window_end_candidate_naive, now_naive)
 
     # Mark this window as in_progress
     try:
@@ -672,6 +677,12 @@ def main():
         if sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client):
             logging.info("Successfully synced comments to BigQuery.")
             log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced comments to BigQuery", function_name="main")
+            # Mark the current window as complete in the progress table
+            try:
+                client.query(f"UPDATE `{dataset_id}.{progress_table}` SET Status='complete', LastRun=CURRENT_TIMESTAMP() WHERE WindowStart=TIMESTAMP('{window_start}') AND WindowEnd=TIMESTAMP('{window_end}')").result()
+                logging.info(f"Marked window {window_start} to {window_end} as complete.")
+            except Exception as e:
+                logging.warning(f"Could not mark window as complete: {e}")
         else:
             logging.error("Failed to sync comments to BigQuery.")
             log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync comments to BigQuery", function_name="main")

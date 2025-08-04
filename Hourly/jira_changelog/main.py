@@ -288,29 +288,39 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
     # Find the latest transition timestamp in Jira (for upper bound)
     now = datetime.utcnow()
 
-    # Find the latest window processed (complete or failed)
-    latest_query = f"SELECT MAX(WindowEnd) AS LastWindowEnd FROM `{client.project}.{dataset_id}.{progress_table}`"
-    last_window_end = None
+    # Find the earliest incomplete/in_progress window and determine what to process next
+    progress_query = f"SELECT WindowStart, WindowEnd, Status FROM `{client.project}.{dataset_id}.{progress_table}` WHERE Status != 'complete' ORDER BY WindowStart ASC LIMIT 1"
+    window_start = None
+    window_end = None
     try:
-        result = client.query(latest_query).result()
+        result = client.query(progress_query).result()
         for row in result:
-            last_window_end = row.LastWindowEnd
+            window_start = row.WindowStart
+            window_end = row.WindowEnd
             break
     except Exception as e:
-        logging.warning(f"Could not query latest window from progress table: {e}")
+        logging.warning(f"Could not query progress table: {e}")
 
-    if last_window_end:
-        # Advance to next window
-        window_start = last_window_end.replace(tzinfo=None)
-        window_end = min(window_start + timedelta(days=window_days), now)
-        # If the next window is in the future, stop processing
-        if window_start >= now:
-            logging.info("All windows up to current time have been processed.")
-            return True
+    if window_start:
+        # Reprocess the earliest incomplete/in_progress window
+        window_end_candidate = window_end
     else:
-        # No previous windows, start from min_ts
+        # No incomplete windows, advance to next window
         window_start = min_ts
-        window_end = min(window_start + timedelta(days=window_days), now)
+        window_end_candidate = window_start + timedelta(days=window_days)
+
+    # Ensure both window_end_candidate and now are offset-naive for comparison
+    if hasattr(window_end_candidate, 'tzinfo') and window_end_candidate.tzinfo is not None and window_end_candidate.tzinfo.utcoffset(window_end_candidate) is not None:
+        window_end_candidate_naive = window_end_candidate.replace(tzinfo=None)
+    else:
+        window_end_candidate_naive = window_end_candidate
+
+    if now.tzinfo is not None and now.tzinfo.utcoffset(now) is not None:
+        now_naive = now.replace(tzinfo=None)
+    else:
+        now_naive = now
+
+    window_end = min(window_end_candidate_naive, now_naive)
 
     # Mark this window as in_progress using BigQuery-compatible MERGE
     try:
