@@ -1,6 +1,3 @@
-
-
-
 SELECT
   t.T,
   REGEXP_EXTRACT(t.Key, r'^(\w+)-') AS Project,
@@ -18,9 +15,9 @@ SELECT
     WHEN LOWER(t.Links) LIKE '%none%' THEN NULL
     ELSE ARRAY_TO_STRING(
            ARRAY(
-             SELECT TRIM(t.Links)
+             SELECT TRIM(link)
              FROM UNNEST(SPLIT(t.Links, ',')) AS link
-             WHERE LOWER(TRIM(t.Links)) != 'none' AND TRIM(t.Links) != ''
+             WHERE LOWER(TRIM(link)) != 'none' AND TRIM(link) != ''
            ), ', '
          )
   END AS Links_Clean,
@@ -32,28 +29,7 @@ SELECT
             WHERE LOWER(TRIM(t.Links)) != 'none' AND TRIM(t.Links) != ''
         )
   END AS Links_Clean_Array,
-  CASE
-    WHEN LOWER(t.Links) LIKE '%none%' THEN NULL
-    ELSE ARRAY(
-            SELECT REGEXP_EXTRACT(link, r'^(\w+)-')
-            FROM UNNEST(
-              ARRAY(
-                SELECT TRIM(t.Links)
-                FROM UNNEST(SPLIT(t.Links, ',')) AS link
-                WHERE LOWER(TRIM(t.Links)) != 'none' AND TRIM(t.Links) != ''
-              )
-            ) AS link
-            WHERE REGEXP_EXTRACT(link, r'^(\w+)-') IS NOT NULL
-        )
-  END AS LinkedProject,
-  -- Cleaned LinkedProject for Sankey (no self-links)
-  CASE
-    WHEN REGEXP_EXTRACT(t.Key, r'^(\w+)-') IS NOT NULL
-      AND REGEXP_EXTRACT(TRIM(t.Links), r'^(\w+)-') IS NOT NULL
-      AND REGEXP_EXTRACT(t.Key, r'^(\w+)-') != REGEXP_EXTRACT(TRIM(t.Links), r'^(\w+)-')
-      THEN REGEXP_EXTRACT(TRIM(t.Links), r'^(\w+)-')
-    ELSE NULL
-  END AS LinkedProject_Clean,
+  -- ...existing code...
   t.SR_Ref,
   TIMESTAMP_DIFF(t.Resolved, t.Created, MINUTE) AS LeadTime_mins,
   TIMESTAMP_DIFF(t.Resolved, t.Created, HOUR) AS LeadTime_hrs,
@@ -112,7 +88,29 @@ SELECT
       ch.SyncTime
     FROM `pccw-internal-virt-agent-uat.GSO.JiraChangelog` ch
     WHERE ch.Issue_Key = t.Key
-  ) AS Changelogs
+  ) AS Changelogs,
+  -- Array of all project prefixes from links
+  ARRAY(
+    SELECT DISTINCT REGEXP_EXTRACT(TRIM(link), r'^(\w+)-')
+    FROM UNNEST(SPLIT(t.Links, ',')) AS link
+    WHERE
+      LOWER(TRIM(link)) != 'none'
+      AND TRIM(link) != ''
+      AND REGEXP_EXTRACT(TRIM(link), r'^(\w+)-') IS NOT NULL
+  ) AS LinkedProject,
+  -- Array of all project prefixes from links, excluding self-links
+  ARRAY(
+    SELECT DISTINCT proj
+    FROM (
+      SELECT REGEXP_EXTRACT(TRIM(link), r'^(\w+)-') AS proj
+      FROM UNNEST(SPLIT(t.Links, ',')) AS link
+      WHERE
+        LOWER(TRIM(link)) != 'none'
+        AND TRIM(link) != ''
+        AND REGEXP_EXTRACT(TRIM(link), r'^(\w+)-') IS NOT NULL
+    )
+    WHERE proj != REGEXP_EXTRACT(t.Key, r'^(\w+)-')
+  ) AS LinkedProject_Clean
 
 FROM
   `pccw-internal-virt-agent-uat.GSO.JiraTickets` t

@@ -91,6 +91,44 @@ def get_field_value(field):
         return str(field)
 
 
+# --- Custom function to extract and format Jira issue links ---
+def extract_issue_links(issuelinks):
+    """
+    Extracts a readable summary of issue links from the Jira 'issuelinks' field.
+    Returns a comma-separated string like:
+    'blocks: JIRA-123 [Done], is blocked by: JIRA-456 [To Do], relates to: JIRA-789 [In Progress]'
+    """
+    if not issuelinks or not isinstance(issuelinks, list):
+        return None
+    links = []
+    def get_status(issue):
+        if not issue:
+            return None
+        fields = issue.get('fields', {})
+        status = fields.get('status', {})
+        return status.get('name')
+    for link in issuelinks:
+        outward = link.get('outwardIssue')
+        inward = link.get('inwardIssue')
+        if outward:
+            key = outward.get('key')
+            status = get_status(outward)
+            if key:
+                if status:
+                    links.append(f"{key} [{status}]")
+                else:
+                    links.append(f"{key}")
+        if inward:
+            key = inward.get('key')
+            status = get_status(inward)
+            if key:
+                if status:
+                    links.append(f"{key} [{status}]")
+                else:
+                    links.append(f"{key}")
+    return ', '.join(links) if links else None
+
+
 # --- Comments-style temp table creation ---
 def create_or_replace_temp_table(client, dataset_id, table_id, schema):
     try:
@@ -172,14 +210,8 @@ def fetch_and_sync_jira_data():
             'project = "GS&O Data Analytics" OR '
             'project = "GS&O Tool Automation" OR '
             'project = "GS&O Knowledge Consolidation" OR '
-            'project = "Google Contact Center AI Solution" OR '
-            'project = TAC OR '
-            'project = "Console Application Support" OR '
-            'project = "VOICE - CE" OR '
-            'project = "IOT CE" OR '
-            'project = "Console Connect Provisioning" OR '
-            'project = "Global Service Delivery Team"'
-            ') AND updated >= -3h'
+            'project = "Google Contact Center AI Solution"'
+            ')'
         )
 
         # --- Log pipeline start ---
@@ -318,7 +350,7 @@ def fetch_and_sync_jira_data():
                     "Assignee": get_field_value(fields.get('assignee')),
                     "Component": [get_field_value(c) for c in fields.get('components', [])] if fields.get('components') else [],
                     "RemedyTicketNumber": [get_field_value(fields.get('remedyTicketNumber'))] if fields.get('remedyTicketNumber') else [],
-                    "Links": get_field_value(fields.get('issuelinks')),
+                    "Links": extract_issue_links(fields.get('issuelinks')),
                     SR_REF_BQ_NAME: get_field_value(fields.get(SR_REF_JIRA_ID)),
                     "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
                     # SLA fields
