@@ -423,6 +423,13 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
                 if not created_timestamp:
                     logging.warning(f"Skipping history entry {history_id} for issue {issue_key} due to invalid creation timestamp.")
                     continue
+                try:
+                    created_dt = datetime.strptime(created_timestamp, '%Y-%m-%d %H:%M:%S')
+                except Exception as e:
+                    logging.warning(f"Could not parse created_timestamp {created_timestamp} for history {history_id}: {e}")
+                    continue
+                if not (window_start <= created_dt < window_end):
+                    continue  # Skip transitions outside the window
                 for item in history_entry.get('items', []):
                     if item.get('fieldId') == 'status' or item.get('field') == 'status':
                         rows_to_insert.append({
@@ -456,14 +463,15 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
             if insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert):
                 rows_inserted = True
             else:
-                logging.error(f"Failed to insert final batch of {len(rows_to_insert)} rows into temp table. Stopping processing.")
+                logging.error(f"Failed to insert remaining rows into temp table. Stopping processing.")
+                if rows_inserted:
+                    # Merge whatever is in temp table before exit
+                    run_merge_query(client, dataset_id, table_id, temp_table_id)
                 delete_temp_table(client, dataset_id, temp_table_id)
                 # Mark window as failed
                 client.query(f"UPDATE `{client.project}.{dataset_id}.{progress_table}` SET Status='failed', LastRun=CURRENT_TIMESTAMP() WHERE WindowStart=TIMESTAMP('{window_start}') AND WindowEnd=TIMESTAMP('{window_end}')").result()
                 return False
-            rows_to_insert = [] # Clear it after successful insert
 
-        start_at += max_results
         issues_processed += len(issues)
         logging.info(f"Processed details for {len(issues)} issues. Total issues processed so far: {issues_processed} out of {total_issues}")
         remaining_issues = total_issues - issues_processed
