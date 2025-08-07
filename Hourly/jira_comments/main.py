@@ -200,7 +200,7 @@ def fetch_comments_batch(jira_base_url, issue_keys, username, api_token, max_res
 
     return results
 
-def generate_rows(issues, jira_base_url, username, api_token, window_start, window_end):
+def generate_rows(issues, jira_base_url, username, api_token):
     # Ensure issue_keys only contains valid keys
     issue_keys = [issue.get('key') for issue in issues if issue and issue.get('key')]
     if not issue_keys:
@@ -211,9 +211,7 @@ def generate_rows(issues, jira_base_url, username, api_token, window_start, wind
     comments_batch = fetch_comments_batch(jira_base_url, issue_keys, username, api_token)
 
     utc_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-    # Convert window_start and window_end to naive datetime for comparison
-    ws = window_start.replace(tzinfo=None) if hasattr(window_start, 'tzinfo') and window_start.tzinfo else window_start
-    we = window_end.replace(tzinfo=None) if hasattr(window_end, 'tzinfo') and window_end.tzinfo else window_end
+
     for issue_key in issue_keys:
         comments = comments_batch.get(issue_key)
         if comments is None:
@@ -225,46 +223,27 @@ def generate_rows(issues, jira_base_url, username, api_token, window_start, wind
                 comment_id = comment.get('id')
                 if not comment_id:
                     continue
-                # Parse comment updated timestamp
-                updated_raw = comment.get('updated')
-                updated_dt = None
-                if updated_raw:
-                    try:
-                        if updated_raw.endswith('Z'):
-                            updated_dt = datetime.strptime(updated_raw, '%Y-%m-%dT%H:%M:%S.%fZ')
-                        else:
-                            updated_dt = datetime.strptime(updated_raw, '%Y-%m-%dT%H:%M:%S.%f%z').replace(tzinfo=None)
-                    except Exception:
-                        try:
-                            if updated_raw.endswith('Z'):
-                                updated_dt = datetime.strptime(updated_raw, '%Y-%m-%dT%H:%M:%SZ')
-                            else:
-                                updated_dt = datetime.strptime(updated_raw[:19], '%Y-%m-%dT%H:%M:%S')
-                        except Exception:
-                            updated_dt = None
-                # Only yield comments updated within the window
-                if updated_dt and ws <= updated_dt < we:
-                    author_info = comment.get('author', {})
-                    visibility_info = comment.get('visibility', {})
-                    yield {
-                        "Issue_Key": issue_key,
-                        "Comment_ID": comment_id,
-                        "Author_Account_ID": author_info.get('accountId'),
-                        "Author_Display_Name": author_info.get('displayName'),
-                        "Created": convert_timestamp(comment.get('created')),
-                        "Updated": convert_timestamp(comment.get('updated')),
-                        "Body": comment.get('body'),
-                        "Visibility_Type": visibility_info.get('type'),
-                        "Visibility_Value": visibility_info.get('value'),
-                        "SyncTime": utc_now,
-                        "InsertedAt": utc_now,
-                    }
+                author_info = comment.get('author', {})
+                visibility_info = comment.get('visibility', {})
+                yield {
+                    "Issue_Key": issue_key,
+                    "Comment_ID": comment_id,
+                    "Author_Account_ID": author_info.get('accountId'),
+                    "Author_Display_Name": author_info.get('displayName'),
+                    "Created": convert_timestamp(comment.get('created')),
+                    "Updated": convert_timestamp(comment.get('updated')),
+                    "Body": comment.get('body'),
+                    "Visibility_Type": visibility_info.get('type'),
+                    "Visibility_Value": visibility_info.get('value'),
+                    "SyncTime": utc_now,
+                    "InsertedAt": utc_now,
+                }
             except Exception as e:
                 logging.exception(f"Error processing comment {comment.get('id')} for issue {issue_key}: {e}")
 
 
 # Pass the base URL and the new JQL query
-def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client, window_start, window_end):
+def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
     temp_table_id = 'JiraComments_temp'
     schema = [
         bigquery.SchemaField("Issue_Key", "STRING", mode="REQUIRED"),
@@ -383,21 +362,7 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
             except Exception as e:
                 logging.exception(f"Error running merge query: {e}")
             delete_temp_table(client, dataset_id, temp_table_id)
-            # Mark window as failed for consistency with changelog script
-            progress_table = f"{table_id}_progress"
-            # Use window_start and window_end from arguments
-            try:
-                fail_query = f"""
-                    UPDATE `{dataset_id}.{progress_table}`
-                    SET Status='failed', LastRun=CURRENT_TIMESTAMP()
-                    WHERE CAST(WindowStart AS STRING) = CAST(TIMESTAMP('{window_start}') AS STRING)
-                      AND CAST(WindowEnd AS STRING) = CAST(TIMESTAMP('{window_end}') AS STRING)
-                      AND Status != 'complete'
-                """
-                client.query(fail_query).result()
-                logging.info(f"Marked window {window_start} to {window_end} as failed.")
-            except Exception as e:
-                logging.warning(f"Could not mark window as failed: {e}")
+            # No window to mark as failed; skip progress table update
             return False
 
         # --- Process Search Results ---
@@ -416,8 +381,8 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
             logging.info(f"Fetched {len(issues)} issues (startAt: {start_at}) out of total {total_issues}")
 
             rows_to_insert = []
-            # Pass the base URL and window_start, window_end to generate_rows
-            for row in generate_rows(issues, jira_base_url, username, api_token, window_start, window_end):
+            # Pass the base URL to generate_rows (no window filtering)
+            for row in generate_rows(issues, jira_base_url, username, api_token):
                 rows_to_insert.append(row)
                 if len(rows_to_insert) >= batch_size:
                     if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
@@ -581,23 +546,20 @@ def flush_logs_to_bigquery(client, dataset_id, table_id):
     logging.info("All log entries successfully merged into BigQuery logs table.")
 
 def main():
-    config = load_config()
-    logging.info("Config loaded.")
-    if config is None:
-        logging.error("Config is None, exiting early.")
-        return
-    # Basic config
-    dataset_id = 'GSO'
-    table_id = 'JiraComments'
-    log_table_id = 'PipelineLogs'
-    pipeline_name = "jira_comments"
-    run_id = str(uuid.uuid4())
-    jira_url = 'https://consoleconnect.atlassian.net'
-    username = "jjkli@consoleconnect.com"
-    api_token = config.get('jira_api_token')
-
-    # JQL: edit as needed
-    jql_query = (
+    # Removed troubleshooting debugging logs
+    try:
+        config = load_config()
+        if config is None:
+            return
+        dataset_id = 'GSO'
+        table_id = 'JiraComments'
+        log_table_id = 'PipelineLogs'
+        pipeline_name = "jira_comments"
+        run_id = str(uuid.uuid4())
+        jira_url = 'https://consoleconnect.atlassian.net'
+        username = "jjkli@consoleconnect.com"
+        api_token = config.get('jira_api_token')
+        jql_query = (
             '('
             'project = "GS&O Data Analytics" OR '
             'project = "GS&O Tool Automation" OR '
@@ -608,34 +570,32 @@ def main():
             'project = "VOICE - CE" OR '
             'project = "IOT CE" OR '
             'project = "Console Connect Provisioning" OR '
-            'project = "Global Service Delivery Team"'
-            'project = "Transmission TX-CE" OR'
-            'project = "Mobility SMS - CE" OR'
+            'project = "Global Service Delivery Team" OR '
+            'project = "Transmission TX-CE" OR '
+            'project = "Mobility SMS - CE" OR '
             'project = "Managed Security Services"'
-            ') AND updated >= -3h'
+            ') AND updated >= -24h'
         )
-
-    try:
-        client = bigquery.Client()
+        try:
+            client = bigquery.Client()
+        except Exception as e:
+            logging.exception(f"Failed to initialize BigQuery client: {e}. Ensure GCP credentials are set up correctly.")
+            return
+        log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", function_name="main")
+        try:
+            if sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client):
+                logging.info("Successfully synced comments to BigQuery.")
+                log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced comments to BigQuery", function_name="main")
+            else:
+                logging.error("Failed to sync comments to BigQuery.")
+                log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync comments to BigQuery", function_name="main")
+        except Exception as e:
+            logging.exception(f"Pipeline run failed: {e}")
+            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Pipeline run failed: {e}", function_name="main", details=str(e))
+        log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", function_name="main")
+        flush_logs_to_bigquery(client, dataset_id, log_table_id)
     except Exception as e:
-        logging.exception(f"Failed to initialize BigQuery client: {e}. Ensure GCP credentials are set up correctly.")
-        return
+        logging.exception(f"Unhandled exception in main(): {e}")
 
-    # Log pipeline start
-    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", function_name="main")
-
-    try:
-        # No windowing: just sync all comments for issues returned by the JQL
-        if sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client, None, None):
-            logging.info("Successfully synced comments to BigQuery.")
-            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced comments to BigQuery", function_name="main")
-        else:
-            logging.error("Failed to sync comments to BigQuery.")
-            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync comments to BigQuery", function_name="main")
-    except Exception as e:
-        logging.exception(f"Pipeline run failed: {e}")
-        log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Pipeline run failed: {e}", function_name="main", details=str(e))
-
-    # Log pipeline end
-    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", function_name="main")
-    flush_logs_to_bigquery(client, dataset_id, log_table_id)
+if __name__ == "__main__":
+    main()
