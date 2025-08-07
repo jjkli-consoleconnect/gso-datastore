@@ -96,9 +96,8 @@ def insert_rows_with_retry(client, dataset_id, table_id, rows, retries=5, delay=
             logging.error(f"Errors occurred while inserting rows: {errors}")
         except Exception as e:
             logging.exception(f"Error inserting rows into BigQuery: {e}")
-        backoff = delay * (2 ** attempt) + random.uniform(0, 1)
-        logging.info(f"Retrying insert rows into table '{client.project}.{dataset_id}.{table_id}' after {backoff:.2f} seconds. Attempt {attempt + 1}/{retries}")
-        time.sleep(backoff)
+        logging.info(f"Retrying insert rows into table '{client.project}.{dataset_id}.{table_id}' after 5 seconds. Attempt {attempt + 1}/{retries}")
+        time.sleep(5)
     logging.error(f"Failed to insert rows into '{client.project}.{dataset_id}.{table_id}' after {retries} retries.")
     return False
 
@@ -200,9 +199,10 @@ def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, 
 def flush_logs_to_bigquery(client, dataset_id, table_id):
     if not LOG_BUFFER:
         return
-    temp_log_table = "PipelineLogs_temp"
+    # Use run_id from the first log entry (all logs in a run share the same run_id)
+    run_id = LOG_BUFFER[0]["RunID"] if LOG_BUFFER and "RunID" in LOG_BUFFER[0] else str(uuid.uuid4())
+    temp_log_table = f"PipelineLogs_temp_{run_id.replace('-', '')}"
     log_schema = [
-        # 'Timestamp' intentionally omitted; BigQuery will use its default value
         bigquery.SchemaField("PipelineName", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("RunID", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("LogLevel", "STRING", mode="NULLABLE"),
@@ -428,7 +428,11 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
                 except Exception as e:
                     logging.warning(f"Could not parse created_timestamp {created_timestamp} for history {history_id}: {e}")
                     continue
-                if not (window_start <= created_dt < window_end):
+                # Ensure all datetimes are offset-naive for comparison
+                ws = window_start.replace(tzinfo=None) if hasattr(window_start, 'tzinfo') and window_start.tzinfo is not None else window_start
+                we = window_end.replace(tzinfo=None) if hasattr(window_end, 'tzinfo') and window_end.tzinfo is not None else window_end
+                cd = created_dt.replace(tzinfo=None) if hasattr(created_dt, 'tzinfo') and created_dt.tzinfo is not None else created_dt
+                if not (ws <= cd < we):
                     continue  # Skip transitions outside the window
                 for item in history_entry.get('items', []):
                     if item.get('fieldId') == 'status' or item.get('field') == 'status':
@@ -484,20 +488,22 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         run_merge_query(client, dataset_id, table_id, temp_table_id)
     delete_temp_table(client, dataset_id, temp_table_id)
 
-    # Mark only the exact matching window as complete in the progress table
+    # Mark only the exact matching window as complete in the progress table (robust to microsecond differences)
     try:
-        # Use CAST to ensure timestamp match
+        # Round timestamps to the nearest second for comparison
+        window_start_rounded = window_start.replace(microsecond=0)
+        window_end_rounded = window_end.replace(microsecond=0)
         update_query = f"""
             UPDATE `{client.project}.{dataset_id}.{progress_table}`
             SET Status='complete', LastRun=CURRENT_TIMESTAMP()
-            WHERE CAST(WindowStart AS STRING) = CAST(TIMESTAMP('{window_start}') AS STRING)
-              AND CAST(WindowEnd AS STRING) = CAST(TIMESTAMP('{window_end}') AS STRING)
+            WHERE TIMESTAMP_TRUNC(WindowStart, SECOND) = TIMESTAMP('{window_start_rounded}')
+              AND TIMESTAMP_TRUNC(WindowEnd, SECOND) = TIMESTAMP('{window_end_rounded}')
               AND Status != 'complete'
         """
         result = client.query(update_query).result()
         updated_count = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else None
         if updated_count and updated_count > 0:
-            logging.info(f"Marked window {window_start} to {window_end} as complete.")
+            logging.info(f"Marked window {window_start_rounded} to {window_end_rounded} as complete.")
         else:
             logging.warning(f"No window was marked as complete. Check timestamp precision and progress table.")
     except Exception as e:

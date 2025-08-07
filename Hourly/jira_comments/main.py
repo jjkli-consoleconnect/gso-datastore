@@ -586,124 +586,34 @@ def main():
     if config is None:
         logging.error("Config is None, exiting early.")
         return
-
-    # Define dataset and table names first, before using them
+    # Basic config
     dataset_id = 'GSO'
     table_id = 'JiraComments'
     log_table_id = 'PipelineLogs'
     pipeline_name = "jira_comments"
     run_id = str(uuid.uuid4())
-
     jira_url = 'https://consoleconnect.atlassian.net'
-    # --- Automated Time Partitioning for Comments (2025 only) ---
-    window_days = 7
-    min_ts = datetime(2025, 1, 1)
-    now = datetime.utcnow()
-    progress_table = f"{table_id}_progress"
-    progress_schema = [
-        bigquery.SchemaField("WindowStart", "TIMESTAMP", mode="REQUIRED"),
-        bigquery.SchemaField("WindowEnd", "TIMESTAMP", mode="REQUIRED"),
-        bigquery.SchemaField("Status", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("LastRun", "TIMESTAMP", mode="NULLABLE"),
-    ]
-    # Client must be initialized before table_exists
-    try:
-        client = bigquery.Client()
-    except Exception as e:
-        logging.exception(f"Failed to initialize BigQuery client: {e}. Ensure GCP credentials are set up correctly.")
-        return
-    if not table_exists(client, dataset_id, progress_table):
-        create_or_replace_temp_table(client, dataset_id, progress_table, progress_schema)
-
-
-    # Find the earliest window with status not 'complete'
-    progress_query = f"SELECT WindowStart, WindowEnd FROM `{dataset_id}.{progress_table}` WHERE Status != 'complete' ORDER BY WindowStart ASC LIMIT 1"
-    window_start = None
-    window_end = None
-    try:
-        result = client.query(progress_query).result()
-        for row in result:
-            window_start = row.WindowStart
-            window_end = row.WindowEnd
-            break
-    except Exception as e:
-        logging.warning(f"Could not query progress table: {e}")
-
-    if window_start and window_end:
-        # There is an incomplete window, process it
-        window_end_candidate = window_end
-    else:
-        # All windows complete or no windows, advance to next window
-        # Find the latest window
-        latest_query = f"SELECT WindowEnd FROM `{dataset_id}.{progress_table}` ORDER BY WindowEnd DESC LIMIT 1"
-        latest_end = None
-        try:
-            result = client.query(latest_query).result()
-            for row in result:
-                latest_end = row.WindowEnd
-                break
-        except Exception as e:
-            logging.warning(f"Could not query for latest window: {e}")
-        if latest_end:
-            window_start = latest_end
-        else:
-            window_start = min_ts
-        window_end_candidate = window_start + timedelta(days=window_days)
-
-    # Ensure both window_end_candidate and now are offset-naive for comparison
-    if hasattr(window_end_candidate, 'tzinfo') and window_end_candidate.tzinfo is not None and window_end_candidate.tzinfo.utcoffset(window_end_candidate) is not None:
-        window_end_candidate_naive = window_end_candidate.replace(tzinfo=None)
-    else:
-        window_end_candidate_naive = window_end_candidate
-
-    if now.tzinfo is not None and now.tzinfo.utcoffset(now) is not None:
-        now_naive = now.replace(tzinfo=None)
-    else:
-        now_naive = now
-
-    window_end = min(window_end_candidate_naive, now_naive)
-
-    # Mark this window as in_progress
-    try:
-        merge_query = f'''
-            MERGE `{dataset_id}.{progress_table}` T
-            USING (SELECT TIMESTAMP('{window_start}') AS WindowStart, TIMESTAMP('{window_end}') AS WindowEnd) S
-            ON T.WindowStart = S.WindowStart AND T.WindowEnd = S.WindowEnd
-            WHEN MATCHED THEN
-              UPDATE SET Status = 'in_progress', LastRun = CURRENT_TIMESTAMP()
-            WHEN NOT MATCHED THEN
-              INSERT (WindowStart, WindowEnd, Status, LastRun)
-              VALUES (S.WindowStart, S.WindowEnd, 'in_progress', CURRENT_TIMESTAMP())
-        '''
-        client.query(merge_query).result()
-        logging.info(f"Progress table updated: window {window_start} to {window_end} marked as in_progress.")
-    except Exception as e:
-        logging.warning(f"Could not update progress table: {e}")
-
-    # Build JQL for this window
-    jql_query = (
-        '(project = "GS&O Data Analytics" OR '
-        'project = "GS&O Tool Automation" OR '
-        'project = "GS&O Knowledge Consolidation" OR '
-        'project = "Google Contact Center AI Solution" OR '
-        'project = TAC OR '
-        'project = "Console Application Support" OR '
-        'project = "VOICE - CE" OR '
-        'project = "IOT CE" OR '
-        'project = "Console Connect Provisioning" OR '
-        'project = "Global Service Delivery Team" '
-        f') AND updated >= "{window_start.strftime("%Y/%m/%d %H:%M")}" AND updated < "{window_end.strftime("%Y/%m/%d %H:%M")}"'
-    )
-
     username = "jjkli@consoleconnect.com"
     api_token = config.get('jira_api_token')
 
-    dataset_id = 'GSO'
-    table_id = 'JiraComments'
-    log_table_id = 'PipelineLogs'
-    pipeline_name = "jira_comments"
-    run_id = str(uuid.uuid4())
-
+    # JQL: edit as needed
+    jql_query = (
+            '('
+            'project = "GS&O Data Analytics" OR '
+            'project = "GS&O Tool Automation" OR '
+            'project = "GS&O Knowledge Consolidation" OR '
+            'project = "Google Contact Center AI Solution" OR '
+            'project = TAC OR '
+            'project = "Console Application Support" OR '
+            'project = "VOICE - CE" OR '
+            'project = "IOT CE" OR '
+            'project = "Console Connect Provisioning" OR '
+            'project = "Global Service Delivery Team"'
+            'project = "Transmission TX-CE" OR'
+            'project = "Mobility SMS - CE" OR'
+            'project = "Managed Security Services"'
+            ') AND updated >= -3h'
+        )
 
     try:
         client = bigquery.Client()
@@ -715,41 +625,17 @@ def main():
     log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", function_name="main")
 
     try:
-        if sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client, window_start, window_end):
+        # No windowing: just sync all comments for issues returned by the JQL
+        if sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client, None, None):
             logging.info("Successfully synced comments to BigQuery.")
             log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced comments to BigQuery", function_name="main")
-            # Mark only the exact matching window as complete in the progress table
-            try:
-                # Use CAST to ensure timestamp match
-                update_query = f"""
-                    UPDATE `{dataset_id}.{progress_table}`
-                    SET Status='complete', LastRun=CURRENT_TIMESTAMP()
-                    WHERE CAST(WindowStart AS STRING) = CAST(TIMESTAMP('{window_start}') AS STRING)
-                      AND CAST(WindowEnd AS STRING) = CAST(TIMESTAMP('{window_end}') AS STRING)
-                      AND Status != 'complete'
-                """
-                result = client.query(update_query).result()
-                # Check if any row was updated
-                updated_count = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else None
-                if updated_count and updated_count > 0:
-                    logging.info(f"Marked window {window_start} to {window_end} as complete.")
-                else:
-                    logging.warning(f"No window was marked as complete. Check timestamp precision and progress table.")
-            except Exception as e:
-                logging.warning(f"Could not mark window as complete: {e}")
         else:
             logging.error("Failed to sync comments to BigQuery.")
             log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync comments to BigQuery", function_name="main")
     except Exception as e:
-        logging.exception(f"Pipeline run fail ed: {e}")
+        logging.exception(f"Pipeline run failed: {e}")
         log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Pipeline run failed: {e}", function_name="main", details=str(e))
 
     # Log pipeline end
     log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", function_name="main")
-    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Batch processed", function_name="main", batch_id="your_batch_id")
-
-    # At the end, flush all logs to BigQuery in a batch
     flush_logs_to_bigquery(client, dataset_id, log_table_id)
-
-if __name__ == "__main__":
-    main()

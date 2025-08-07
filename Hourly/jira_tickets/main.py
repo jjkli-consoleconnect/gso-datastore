@@ -210,8 +210,21 @@ def fetch_and_sync_jira_data():
             'project = "GS&O Data Analytics" OR '
             'project = "GS&O Tool Automation" OR '
             'project = "GS&O Knowledge Consolidation" OR '
-            'project = "Google Contact Center AI Solution"'
-            ')'
+            'project = "Google Contact Center AI Solution" OR '
+            'project = TAC OR '
+            'project = CCAS OR '
+            'project = VOICECE OR '
+            'project = IOTCE OR '
+            'project = TXCE OR '
+            'project = SMSCE OR '
+            'project = MSS OR '
+            'project = "Console Application Support" OR '
+            'project = "Console Connect Provisioning" OR '
+            'project = "Global Service Delivery Team" OR '
+            'project = "Transmission TX-CE" OR '
+            'project = "Mobility SMS - CE" OR '
+            'project = "Managed Security Services"'
+            ') AND updated >= -24h'
         )
 
         # --- Log pipeline start ---

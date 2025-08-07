@@ -76,7 +76,7 @@ SELECT
   REGEXP_EXTRACT(Key, r'^([A-Z]+)') AS ProjectCode,
   CASE
     WHEN (
-      (STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'VOICECE') > 0) AND
+      (STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0 OR STRPOS(Key, 'MSS') > 0) AND
       (
         STRPOS(Links, 'AS3491') > 0 OR
         STRPOS(Links, 'CCONB') > 0 OR
@@ -87,7 +87,7 @@ SELECT
     ) THEN 'T3'
 
     WHEN (
-      (STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'VOICECE') > 0) AND
+      (STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0 OR STRPOS(Key, 'MSS') > 0) AND
       (
         Links IS NULL OR NOT (
           STRPOS(Links, 'AS3491') > 0 OR
@@ -112,6 +112,10 @@ SELECT
     WHEN STRPOS(Key, 'CCAS') > 0 THEN 'CCAS'
     WHEN STRPOS(Key, 'TAC') > 0 THEN 'TAC'
     WHEN STRPOS(Key, 'VOICECE') > 0 THEN 'VOICECE'
+    WHEN STRPOS(Key, 'IOTCE') > 0 THEN 'IOTCE'
+    WHEN STRPOS(Key, 'TXCE') > 0 THEN 'TXCE'
+    WHEN STRPOS(Key, 'SMSCE') > 0 THEN 'SMSCE'
+    WHEN STRPOS(Key, 'MSS') > 0 THEN 'MSS'
     ELSE NULL
   END AS SolvedByProject,
   CASE 
