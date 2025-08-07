@@ -64,6 +64,29 @@ def delete_temp_table(client, dataset_id, table_id):
     except Exception as e:
         logging.exception(f"Error deleting temporary table '{client.project}.{dataset_id}.{table_id}': {e}")
         return False
+    table_ref = client.dataset(dataset_id).table(table_id)
+    try:
+        client.delete_table(table_ref, not_found_ok=True)  # not_found_ok is supported in google-cloud-bigquery >= 1.25.0
+        logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' deleted (or did not exist).")
+        return True
+    except TypeError:
+        # For older google-cloud-bigquery versions, fallback to manual not found handling
+        try:
+            client.delete_table(table_ref)
+            logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' deleted.")
+            return True
+        except Exception as e:
+            if 'Not found' in str(e) or '404' in str(e):
+                logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' did not exist (already deleted).")
+                return True
+            logging.exception(f"Error deleting temporary table '{client.project}.{dataset_id}.{table_id}': {e}")
+            return False
+    except Exception as e:
+        if 'Not found' in str(e) or '404' in str(e):
+            logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' did not exist (already deleted).")
+            return True
+        logging.exception(f"Error deleting temporary table '{client.project}.{dataset_id}.{table_id}': {e}")
+        return False
 
 def table_exists(client, dataset_id, table_id):
     try:
@@ -243,6 +266,9 @@ def flush_logs_to_bigquery(client, dataset_id, table_id):
 
 def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
     temp_table_id = f"{table_id}_temp"
+    # Use a unique temp table name per run to avoid collisions
+    run_id = datetime.utcnow().strftime('%Y%m%d%H%M%S') + '_' + str(uuid.uuid4())[:8]
+    temp_table_id = f"{table_id}_temp_{run_id}"
 
     schema = [
         bigquery.SchemaField("Issue_Key", "STRING", mode="NULLABLE"),
@@ -281,7 +307,7 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
             logging.error(f"Error creating progress table: {e}")
 
     # Define window size (e.g., 7 days for full history, or 1 day for incremental)
-    window_days = 7
+    window_days = 2
     # Restrict to only process data from 2025 onwards
     min_ts = datetime(2025, 1, 1)
 
@@ -480,6 +506,7 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         logging.info(f"Processed details for {len(issues)} issues. Total issues processed so far: {issues_processed} out of {total_issues}")
         remaining_issues = total_issues - issues_processed
         logging.info(f"Remaining issues to process: {remaining_issues}")
+        start_at += max_results  # Advance to next page
         time.sleep(1)
 
 
