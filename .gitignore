@@ -9,3 +9,5 @@
 # Ensure .gitignore itself is tracked
 !.gitignore
 Powershell/jira_synctiertwo/jira_synctiertwo.jsonl
+Hourly/jira_sync_hr/jira_sync_hr.jsonl
+Powershell/jira_synctiertwo/jira_synctiertwo.jsonl
