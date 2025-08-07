@@ -307,7 +307,7 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
             logging.error(f"Error creating progress table: {e}")
 
     # Define window size (e.g., 7 days for full history, or 1 day for incremental)
-    window_days = 2
+    window_days = 1
     # Restrict to only process data from 2025 onwards
     min_ts = datetime(2025, 1, 1)
 
