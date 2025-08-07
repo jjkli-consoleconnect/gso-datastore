@@ -224,7 +224,7 @@ def fetch_and_sync_jira_data():
             'project = "Transmission TX-CE" OR '
             'project = "Mobility SMS - CE" OR '
             'project = "Managed Security Services"'
-            ') AND updated >= -24h'
+            ') AND updated >= -3h'
         )
 
         # --- Log pipeline start ---

@@ -574,7 +574,7 @@ def main():
             'project = "Transmission TX-CE" OR '
             'project = "Mobility SMS - CE" OR '
             'project = "Managed Security Services"'
-            ') AND updated >= -24h'
+            ') AND updated >= -3h'
         )
         try:
             client = bigquery.Client()
