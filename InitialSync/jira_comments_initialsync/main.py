@@ -265,7 +265,9 @@ def generate_rows(issues, jira_base_url, username, api_token, window_start, wind
 
 # Pass the base URL and the new JQL query
 def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client, window_start, window_end):
-    temp_table_id = 'JiraComments_temp'
+    # Use a unique temp table name for each run
+    run_id = str(uuid.uuid4())
+    temp_table_id = f'JiraComments_temp_{run_id}'
     schema = [
         bigquery.SchemaField("Issue_Key", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("Comment_ID", "STRING", mode="REQUIRED"),
@@ -595,9 +597,9 @@ def main():
     run_id = str(uuid.uuid4())
 
     jira_url = 'https://consoleconnect.atlassian.net'
-    # --- Automated Time Partitioning for Comments (2025 only) ---
-    window_days = 7
-    min_ts = datetime(2025, 1, 1)
+    # --- Automated Time Partitioning for Comments (2024 only) ---
+    window_days = 1
+    min_ts = datetime(2024, 7, 1)
     now = datetime.utcnow()
     progress_table = f"{table_id}_progress"
     progress_schema = [
@@ -682,16 +684,24 @@ def main():
 
     # Build JQL for this window
     jql_query = (
-        '(project = "GS&O Data Analytics" OR '
+        '('
+        'project = "GS&O Data Analytics" OR '
         'project = "GS&O Tool Automation" OR '
         'project = "GS&O Knowledge Consolidation" OR '
         'project = "Google Contact Center AI Solution" OR '
         'project = TAC OR '
+        'project = CCAS OR '
+        'project = VOICECE OR '
+        'project = IOTCE OR '
+        'project = TXCE OR '
+        'project = SMSCE OR '
+        'project = MSS OR '
         'project = "Console Application Support" OR '
-        'project = "VOICE - CE" OR '
-        'project = "IOT CE" OR '
         'project = "Console Connect Provisioning" OR '
-        'project = "Global Service Delivery Team" '
+        'project = "Global Service Delivery Team" OR '
+        'project = "Transmission TX-CE" OR '
+        'project = "Mobility SMS - CE" OR '
+        'project = "Managed Security Services"'
         f') AND updated >= "{window_start.strftime("%Y/%m/%d %H:%M")}" AND updated < "{window_end.strftime("%Y/%m/%d %H:%M")}"'
     )
 

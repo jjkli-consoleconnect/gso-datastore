@@ -137,6 +137,7 @@ def delete_temp_table(client, dataset_id, table_id):
 
 
 def fetch_and_sync_jira_data():
+    run_id = str(uuid.uuid4())
     config = load_config()
     if config is None:
         return
@@ -158,11 +159,10 @@ def fetch_and_sync_jira_data():
 
     # --- Pipeline/Progress Table Setup ---
     table_id = 'JiraTickets'
-    temp_table_id = 'JiraTickets_temp'
+    temp_table_id = f'JiraTickets_temp_{run_id}'
     pipeline_name = "jira_tickets"
-    run_id = str(uuid.uuid4())
-    window_days = 7
-    min_ts = datetime(2025, 1, 1)
+    window_days = 1
+    min_ts = datetime(2024, 7, 1)
     now = datetime.utcnow()
     progress_table = f"{table_id}_progress"
     progress_schema = [
@@ -248,11 +248,18 @@ def fetch_and_sync_jira_data():
             'project = "GS&O Knowledge Consolidation" OR '
             'project = "Google Contact Center AI Solution" OR '
             'project = TAC OR '
+            'project = CCAS OR '
+            'project = VOICECE OR '
+            'project = IOTCE OR '
+            'project = TXCE OR '
+            'project = SMSCE OR '
+            'project = MSS OR '
             'project = "Console Application Support" OR '
-            'project = "VOICE - CE" OR '
-            'project = "IOT CE" OR '
             'project = "Console Connect Provisioning" OR '
-            'project = "Global Service Delivery Team"'
+            'project = "Global Service Delivery Team" OR '
+            'project = "Transmission TX-CE" OR '
+            'project = "Mobility SMS - CE" OR '
+            'project = "Managed Security Services"'
             f') AND updated >= "{window_start.strftime("%Y/%m/%d %H:%M")}" AND updated < "{window_end.strftime("%Y/%m/%d %H:%M")}"'
         )
         # --- Log pipeline start ---
