@@ -1,765 +1,356 @@
-import requests
-import json
-from google.cloud import bigquery
-import logging
+"""Unified comments pipeline with changelog resiliency (rate limiting, adaptive shrink, degraded status)."""
+import argparse, json, logging, time, uuid, requests, random, threading
 from datetime import datetime, timedelta
-import time
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from bq_logger import log_to_bigquery
-import uuid
+from google.cloud import bigquery
 
-# Define DEBUG flag before logging setup
-DEBUG = False
+DEBUG=False
+logging.basicConfig(level=logging.DEBUG if DEBUG else logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
+# Adaptive thresholds
+ADAPT_HIGH_ROWS=50000
+ADAPT_MEDIUM_ROWS=15000
+ADAPT_LOW_ROWS=2000
+ADAPT_GROW_CONSECUTIVE=3
+MIN_SHRINK_HOURS=6
+MAX_GROW_DAYS=7
 
-# --- Logging Buffer for BigQuery Logs ---
-LOG_BUFFER = []
+OVERLAP_MINUTES=10
+FAILURE_RATIO_DEGRADED=0.02
 
-# Setup logging (reduce verbosity unless DEBUG=True)
-logging.basicConfig(level=logging.INFO if not DEBUG else logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-logging.info("Script startup test log")
+RATE_BUCKET_CAPACITY=120
+RATE_BUCKET_REFILL_PER_SEC=2
+RATE_MIN_SLEEP=0.05
+JITTER_MAX_SECONDS=0.3
+MAX_COMMENT_ATTEMPTS=5
+SECOND_PASS_MAX_WORKERS=4
+RATE_SHRINK_DETAIL_429=25
+RATE_SHRINK_SEARCH_429=8
+RATE_SHRINK_FACTOR=0.5
+
+DETAIL_MIN_WORKERS=4
+DETAIL_MAX_WORKERS=24
+CURRENT_DETAIL_WORKERS=16
+DETAIL_SCALE_DOWN_FACTOR=0.6
+DETAIL_SCALE_UP_FACTOR=1.2
+DETAIL_SCALE_UP_NO429_WINDOWS=2
+
+SEARCH_429_COUNT=0
+DETAIL_429_COUNT=0
+_NO429_STREAK=0
+
+LOG_BUFFER=[]
+
+class TokenBucket:
+    def __init__(self, capacity, refill_per_sec):
+        self.capacity=capacity; self.tokens=capacity; self.refill=refill_per_sec; self.last=time.time(); self.lock=threading.Lock()
+    def take(self, amount=1):
+        while True:
+            with self.lock:
+                now_t=time.time(); elapsed=now_t-self.last
+                if elapsed>0:
+                    add=elapsed*self.refill
+                    if add>0:
+                        self.tokens=min(self.capacity,self.tokens+add); self.last=now_t
+                if self.tokens>=amount:
+                    self.tokens-=amount; return True
+            time.sleep(RATE_MIN_SLEEP)
+
+RATE_LIMITER=TokenBucket(RATE_BUCKET_CAPACITY,RATE_BUCKET_REFILL_PER_SEC)
 
 def load_config():
     try:
-        with open('config.json') as f:
-            return json.load(f)
+        with open('config.json') as f: return json.load(f)
     except FileNotFoundError:
-        logging.error("config.json not found. Please create it with your Jira API token.")
-        return None
+        logging.error('config.json not found'); return None
 
-def convert_timestamp(timestamp):
-    if timestamp:
+def convert_ts(ts):
+    if not ts: return None
+    fmts=['%Y-%m-%dT%H:%M:%S.%fZ','%Y-%m-%dT%H:%M:%S.%f%z','%Y-%m-%dT%H:%M:%SZ','%Y-%m-%dT%H:%M:%S%z','%Y-%m-%dT%H:%M:%S']
+    for fmt in fmts:
         try:
-            # Adjust format string to handle potential lack of milliseconds
-            # Also, ensure timezone offset is handled correctly (e.g., '+0000' or 'Z')
-            # Jira Cloud often returns 'Z' for UTC
-            if timestamp.endswith('Z'):
-                 return datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ').strftime('%Y-%m-%d %H:%M:%S')
-            else: # Try with milliseconds and timezone offset
-                 return datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%f%z').strftime('%Y-%m-%d %H:%M:%S')
-        except ValueError as e:
-            logging.warning(f"Invalid timestamp format: {timestamp}, Error: {e}")
-            # Attempt to parse without milliseconds if the above fails
-            try:
-                if timestamp.endswith('Z'):
-                     return datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d %H:%M:%S')
-                else:
-                     return datetime.strptime(timestamp.rsplit('.', 1)[0] + timestamp.rsplit('.', 1)[1][3:], '%Y-%m-%dT%H:%M:%S%z').strftime('%Y-%m-%d %H:%M:%S')
-            except ValueError as e2:
-                logging.warning(f"Could not parse timestamp after retry: {timestamp}, Error: {e2}")
-                return None
+            dt=datetime.strptime(ts,fmt)
+            if dt.tzinfo: dt=dt.replace(tzinfo=None)
+            return dt.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception: continue
     return None
 
-
-def create_or_replace_temp_table(client, dataset_id, table_id, schema):
+def create_or_replace_table(client,dataset,table,schema):
     try:
-        # Use standard SQL for CREATE OR REPLACE
-        query = f"CREATE OR REPLACE TABLE `{dataset_id}.{table_id}` ({', '.join(f'`{f.name}` {f.field_type}' for f in schema)})"
-        logging.debug(f"Executing query: {query}")
-        client.query(query).result()
-        logging.info(f"Temporary table '{dataset_id}.{table_id}' created or replaced.")
-        return True
+        ddl=f"CREATE OR REPLACE TABLE `{dataset}.{table}` ("+','.join(f'`{c.name}` {c.field_type}' for c in schema)+")"; client.query(ddl).result(); return True
     except Exception as e:
-        logging.exception(f"Error creating or replacing temporary table '{dataset_id}.{table_id}': {e}")
-        return False
+        logging.exception(f'Create table failed {dataset}.{table}: {e}'); return False
 
-def delete_temp_table(client, dataset_id, table_id):
-    table_ref = client.dataset(dataset_id).table(table_id)
-    try:
-        client.delete_table(table_ref)
-        logging.info(f"Temporary table '{dataset_id}.{table_id}' deleted.")
-        return True
-    except Exception as e:
-        # Handle case where table might not exist (e.g., script failed early)
-        if 'Not found' in str(e):
-             logging.warning(f"Temporary table '{dataset_id}.{table_id}' not found during deletion attempt, likely already gone or never created.")
-             return True # Treat as successful deletion if not found
-        logging.exception(f"Error deleting temporary table '{dataset_id}.{table_id}': {e}")
-        return False
+def table_exists(client,dataset,table):
+    try: client.get_table(f"{dataset}.{table}"); return True
+    except Exception: return False
 
-def table_exists(client, dataset_id, table_id):
-    try:
-        client.get_table(f"{dataset_id}.{table_id}")
-        return True
-    except Exception as e:
-        # BigQuery client raises a NotFound exception if the table doesn't exist
-        if 'Not found' in str(e):
-            return False
-        logging.exception(f"Error checking existence of table '{dataset_id}.{table_id}': {e}")
-        return False
-
-def wait_for_table(client, dataset_id, table_id, retries=10, delay=5):
-    for attempt in range(retries):
-        if table_exists(client, dataset_id, table_id):
-            logging.info(f"Table '{dataset_id}.{table_id}' is now available.")
-            return True
-        logging.debug(f"Waiting for table '{dataset_id}.{table_id}'. Attempt {attempt + 1}/{retries}")
+def wait_for_table(client,dataset,table,retries=12,delay=3):
+    for _ in range(retries):
+        if table_exists(client,dataset,table): return True
         time.sleep(delay)
-    logging.error(f"Table '{dataset_id}.{table_id}' is not available after {retries} attempts.")
     return False
 
-def insert_rows_with_retry(client, dataset_id, table_id, rows, schema, retries=5, delay=5):
+def insert_rows_with_retry(client,dataset,table,rows,schema,retries=6,delay=5):
+    if not rows: return True
+    ref=client.dataset(dataset).table(table)
     for attempt in range(retries):
         try:
-            # Use the table reference directly for insertion
-            table_ref = client.dataset(dataset_id).table(table_id)
-            errors = client.insert_rows_json(table_ref, rows)
-            if not errors:
-                logging.info(f"Successfully inserted {len(rows)} rows into '{dataset_id}.{table_id}'.")
-                return True
-            logging.error(f"Errors occurred while inserting rows: {errors}")
+            errs=client.insert_rows_json(ref,rows)
+            if not errs: return True
+            logging.error(f'Insert errors {errs}')
         except Exception as e:
-            # Explicitly check for 'Not found' error which indicates the table is missing/truncated
-            if "Not found" in str(e) or "Table is truncated" in str(e):
-                 logging.warning(f"Table '{dataset_id}.{table_id}' not found or truncated during insert. Recreating...")
-                 if create_or_replace_temp_table(client, dataset_id, table_id, schema) and wait_for_table(client, dataset_id, table_id):
-                     logging.info("Table recreated successfully, retrying insert.")
-                     continue # Retry the insert immediately after recreation
-                 else:
-                     logging.error("Failed to recreate table or wait for it to become available. Cannot retry insert.")
-                     return False # Cannot proceed if recreation fails
+            if 'Not found' in str(e):
+                if not create_or_replace_table(client,dataset,table,schema) or not wait_for_table(client,dataset,table): return False
             else:
-                logging.exception(f"Error inserting rows into BigQuery (Attempt {attempt + 1}/{retries}): {e}")
-
-        if attempt < retries - 1:
-            logging.info(f"Retrying insert rows into '{dataset_id}.{table_id}'. Attempt {attempt + 2}/{retries}")
-            time.sleep(delay)
-        else:
-            logging.error(f"Failed to insert rows after {retries} attempts.")
-            return False
-    return False # Should be unreachable if retries Exhausted, but good practice
-
-# Use /rest/api/2 for comments as it's generally compatible
-def fetch_comments_for_issue(jira_base_url, issue_key, username, api_token, max_results=75):
-    all_comments = []
-    start_at = 0
-
-    while True:
-        # Construct the full URL using the base URL and the /rest/api/2 path
-        url = f"{jira_base_url}/rest/api/2/issue/{issue_key}/comment"
-        headers = {"Accept": "application/json"}
-        # Basic Auth with username and API token
-        auth = (username, api_token)
-        params = {"startAt": start_at, "maxResults": max_results}
-
-        logging.debug(f"Fetching comments for {issue_key} starting at {start_at}")
-
-        try:
-            # Add a timeout for the request
-            response = requests.get(url, headers=headers, auth=auth, params=params, timeout=120)
-            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-            data = response.json()
-            comments = data.get('comments', [])
-            all_comments.extend(comments)
-
-            total_comments = data.get('total', 0)
-            if start_at + len(comments) >= total_comments: # Check if we got all comments on this page or exceeded total
-                 break # Exit the loop if all comments are fetched
-
-            start_at += len(comments) # Use actual number of comments returned in case max_results is ignored/capped
-
-
-        except requests.RequestException as e:
-            # Log specific error details, including response text if available
-            error_message = f"Error fetching comments for issue {issue_key}: {e}"
-            if e.response is not None:
-                 error_message += f", Status Code: {e.response.status_code}, Response Text: {e.response.text}"
-            logging.error(error_message)
-            return None # Return None to indicate failure for this issue
-
-        except json.JSONDecodeError as e:
-            logging.error(f"Error decoding JSON response for comments of issue {issue_key}: {e}")
-            return None # Return None to indicate failure
-
-    logging.debug(f"Fetched {len(all_comments)} comments for issue {issue_key}")
-    return all_comments
-
-def fetch_comments_batch(jira_base_url, issue_keys, username, api_token, max_results=75):
-    # Pass the base URL to the worker function
-    def fetch_single_issue(key):
-        return key, fetch_comments_for_issue(jira_base_url, key, username, api_token, max_results)
-
-    results = {}
-    # Use a reasonable number of workers, adjust based on your environment and Jira Cloud rate limits
-    MAX_CONCURRENT_COMMENT_FETCHES = 16 # Increased from 8, can be tuned
-    with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_COMMENT_FETCHES) as executor:
-        # Use a dictionary comprehension for cleaner submission
-        future_to_key = {executor.submit(fetch_single_issue, key): key for key in issue_keys}
-        
-        for future in as_completed(future_to_key):
-            issue_key = future_to_key[future]
-            try:
-                key, comments = future.result()
-                results[key] = comments
-                # Add a small delay between requests to potentially help with rate limits
-                time.sleep(0.1) 
-            except Exception as exc:
-                logging.error(f'{issue_key} generated an exception: {exc}')
-                results[issue_key] = None # Indicate failure for this specific issue
-
-    return results
-
-def generate_rows(issues, jira_base_url, username, api_token, window_start, window_end):
-    # Ensure issue_keys only contains valid keys
-    issue_keys = [issue.get('key') for issue in issues if issue and issue.get('key')]
-    if not issue_keys:
-        logging.warning("No valid issue keys provided to generate_rows.")
-        return # Generator yields nothing
-
-    # Pass the base URL to the batch fetch function
-    comments_batch = fetch_comments_batch(jira_base_url, issue_keys, username, api_token)
-
-    utc_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-    # Convert window_start and window_end to naive datetime for comparison
-    ws = window_start.replace(tzinfo=None) if hasattr(window_start, 'tzinfo') and window_start.tzinfo else window_start
-    we = window_end.replace(tzinfo=None) if hasattr(window_end, 'tzinfo') and window_end.tzinfo else window_end
-    for issue_key in issue_keys:
-        comments = comments_batch.get(issue_key)
-        if comments is None:
-            continue
-        if not comments:
-            continue
-        for comment in comments:
-            try:
-                comment_id = comment.get('id')
-                if not comment_id:
-                    continue
-                # Parse comment updated timestamp
-                updated_raw = comment.get('updated')
-                updated_dt = None
-                if updated_raw:
-                    try:
-                        if updated_raw.endswith('Z'):
-                            updated_dt = datetime.strptime(updated_raw, '%Y-%m-%dT%H:%M:%S.%fZ')
-                        else:
-                            updated_dt = datetime.strptime(updated_raw, '%Y-%m-%dT%H:%M:%S.%f%z').replace(tzinfo=None)
-                    except Exception:
-                        try:
-                            if updated_raw.endswith('Z'):
-                                updated_dt = datetime.strptime(updated_raw, '%Y-%m-%dT%H:%M:%SZ')
-                            else:
-                                updated_dt = datetime.strptime(updated_raw[:19], '%Y-%m-%dT%H:%M:%S')
-                        except Exception:
-                            updated_dt = None
-                # Only yield comments updated within the window
-                if updated_dt and ws <= updated_dt < we:
-                    author_info = comment.get('author', {})
-                    visibility_info = comment.get('visibility', {})
-                    yield {
-                        "Issue_Key": issue_key,
-                        "Comment_ID": comment_id,
-                        "Author_Account_ID": author_info.get('accountId'),
-                        "Author_Display_Name": author_info.get('displayName'),
-                        "Created": convert_timestamp(comment.get('created')),
-                        "Updated": convert_timestamp(comment.get('updated')),
-                        "Body": comment.get('body'),
-                        "Visibility_Type": visibility_info.get('type'),
-                        "Visibility_Value": visibility_info.get('value'),
-                        "SyncTime": utc_now,
-                        "InsertedAt": utc_now,
-                    }
-            except Exception as e:
-                logging.exception(f"Error processing comment {comment.get('id')} for issue {issue_key}: {e}")
-
-
-# Pass the base URL and the new JQL query
-def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client, window_start, window_end):
-    # Use a unique temp table name for each run
-    run_id = str(uuid.uuid4())
-    temp_table_id = f'JiraComments_temp_{run_id}'
-    schema = [
-        bigquery.SchemaField("Issue_Key", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("Comment_ID", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("Author_Account_ID", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Author_Display_Name", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Created", "TIMESTAMP", mode="NULLABLE"),
-        bigquery.SchemaField("Updated", "TIMESTAMP", mode="NULLABLE"),
-        bigquery.SchemaField("Body", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Visibility_Type", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Visibility_Value", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="REQUIRED"),
-        bigquery.SchemaField("InsertedAt", "TIMESTAMP", mode="NULLABLE"),
-    ]
-
-    if not create_or_replace_temp_table(client, dataset_id, temp_table_id, schema):
-        logging.error("Setup failed: Could not create temp table.")
-        return False
-    if not wait_for_table(client, dataset_id, temp_table_id):
-        logging.error("Setup failed: Temp table not available.")
-        return False
-
-    # --- Jira Search and Data Extraction ---
-    total_issues = float('inf')
-    start_at = 0
-    max_results = 100 # Max results for JQL search, can be up to 100 in Jira Cloud
-    issues_processed = 0
-    # Batch size for inserting rows into BigQuery - keep it reasonable
-    batch_size = 1000 
-    total_rows_inserted_to_temp = 0
-
-    # Construct the full search URL using the base URL and the /rest/api/2 path
-    # Although user mentioned '/latest', /rest/api/2/search is also valid and consistent
-    # with the comments endpoint path used in the script.
-    search_url = f"{jira_base_url}/rest/api/2/search" 
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    auth = (username, api_token)
-
-    logging.info(f"Starting Jira search from {search_url}")
-
-    while start_at < total_issues:
-        # The payload now includes the direct 'jql' string
-        payload = json.dumps({
-            "jql": jql_query,
-            "startAt": start_at,
-            "maxResults": max_results,
-            "fields": ["key"] # Only need the issue key for fetching comments
-        })
-
-        logging.info(f"Fetching issues with JQL, startAt: {start_at}, maxResults: {max_results}")
-
-        # --- Jira Search API Call with Retries ---
-        response = None # Define response before the loop
-        for attempt in range(5): # Increased retries for network issues
-            try:
-                # Add a generous timeout for the search request as it might be slow
-                response = requests.post(search_url, headers=headers, auth=auth, data=payload, timeout=300) 
-                response.raise_for_status()
-                break # Success, exit retry loop
-            except requests.exceptions.Timeout:
-                 logging.warning(f"Search request timed out on attempt {attempt + 1}/5. Retrying...")
-                 time.sleep(15) # Wait longer on timeout
-            except requests.RequestException as e:
-                error_message = f"Error searching issues on attempt {attempt + 1}/5: {e}"
-                if e.response is not None:
-                    error_message += f", Status Code: {e.response.status_code}, Response Text: {e.response.text}"
-                    # Handle specific Jira Cloud rate limiting (429)
-                    if e.response.status_code == 429:
-                         retry_after = e.response.headers.get('Retry-After', 30) # Default 30 seconds
-                         logging.warning(f"Rate limited (429). Retrying after {retry_after} seconds...")
-                         time.sleep(int(retry_after))
-                         continue # Skip sleep below, retry immediately after waiting
-                logging.error(error_message)
-
-                if attempt < 4:
-                    logging.info(f"Retrying Jira search in 10 seconds...")
-                    time.sleep(10)
-                else:
-                    logging.error("Failed to search issues after multiple attempts.")
-                    delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-                    return False # Give up after retries
-
-        if response is None: # If loop finished without a successful response
-            logging.error("Jira search failed after multiple retries.")
-            # Merge temp table into final table before exit
-            logging.info(f"Starting merge operation from '{dataset_id}.{temp_table_id}' to '{dataset_id}.{table_id}'...")
-            merge_query = f"""
-                MERGE `{dataset_id}.{table_id}` T
-                USING (
-                    SELECT DISTINCT
-                        Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body,
-                        Visibility_Type, Visibility_Value, SyncTime, InsertedAt
-                    FROM `{dataset_id}.{temp_table_id}`
-                ) S
-                ON T.Comment_ID = S.Comment_ID AND T.Updated = S.Updated
-                WHEN MATCHED THEN
-                    UPDATE SET
-                        T.Issue_Key = S.Issue_Key,
-                        T.Author_Account_ID = S.Author_Account_ID,
-                        T.Author_Display_Name = S.Author_Display_Name,
-                        T.Created = S.Created,
-                        T.Updated = S.Updated,
-                        T.Body = S.Body,
-                        T.Visibility_Type = S.Visibility_Type,
-                        T.Visibility_Value = S.Visibility_Value,
-                        T.SyncTime = S.SyncTime,
-                        T.InsertedAt = S.InsertedAt
-                WHEN NOT MATCHED THEN
-                    INSERT (Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body, Visibility_Type, Visibility_Value, SyncTime, InsertedAt)
-                    VALUES (S.Issue_Key, S.Comment_ID, S.Author_Account_ID, S.Author_Display_Name, S.Created, S.Updated, S.Body, S.Visibility_Type, S.Visibility_Value, S.SyncTime, S.InsertedAt)
-            """
-            try:
-                query_job = client.query(merge_query)
-                query_job.result()
-                logging.info("Data merged successfully into final table.")
-            except Exception as e:
-                logging.exception(f"Error running merge query: {e}")
-            delete_temp_table(client, dataset_id, temp_table_id)
-            # Mark window as failed for consistency with changelog script
-            progress_table = f"{table_id}_progress"
-            # Use window_start and window_end from arguments
-            try:
-                fail_query = f"""
-                    UPDATE `{dataset_id}.{progress_table}`
-                    SET Status='failed', LastRun=CURRENT_TIMESTAMP()
-                    WHERE CAST(WindowStart AS STRING) = CAST(TIMESTAMP('{window_start}') AS STRING)
-                      AND CAST(WindowEnd AS STRING) = CAST(TIMESTAMP('{window_end}') AS STRING)
-                      AND Status != 'complete'
-                """
-                client.query(fail_query).result()
-                logging.info(f"Marked window {window_start} to {window_end} as failed.")
-            except Exception as e:
-                logging.warning(f"Could not mark window as failed: {e}")
-            return False
-
-        # --- Process Search Results ---
-        try:
-            data = response.json()
-            issues = data.get('issues', [])
-            total_issues = data.get('total', 0) # Get the *total* number of issues matching the JQL
-
-            if not issues:
-                logging.info(f"No issues found on this page (startAt: {start_at}). Total issues reported: {total_issues}.")
-                if start_at == 0 and total_issues > 0:
-                    # This might happen if maxResults is too large or pagination is odd
-                    logging.warning("Got 0 issues on first page but total > 0. Check maxResults or JQL.")
-                break # No more issues to process
-
-            logging.info(f"Fetched {len(issues)} issues (startAt: {start_at}) out of total {total_issues}")
-
-            rows_to_insert = []
-            # Pass the base URL and window_start, window_end to generate_rows
-            for row in generate_rows(issues, jira_base_url, username, api_token, window_start, window_end):
-                rows_to_insert.append(row)
-                if len(rows_to_insert) >= batch_size:
-                    if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
-                        logging.error(f"Failed to insert batch of {len(rows_to_insert)} rows into temp table. Stopping processing.")
-                        delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-                        return False
-                    total_rows_inserted_to_temp += len(rows_to_insert)
-                    rows_to_insert = []
-
-            # Insert any remaining rows in the last batch
-            if rows_to_insert:
-                if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
-                    logging.error(f"Failed to insert remaining {len(rows_to_insert)} rows into temp table. Stopping processing.")
-                    delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-                    return False
-                total_rows_inserted_to_temp += len(rows_to_insert)
-
-
-            start_at += len(issues) # Increment start_at by the number of issues *actually* returned
-            issues_processed += len(issues)
-            logging.info(f"Finished processing {len(issues)} issues from this page. Total issues processed so far: {issues_processed}/{total_issues}")
-
-            # Optional: Add a short delay between search pages to be nice to Jira API
-            time.sleep(1)
-
-        except json.JSONDecodeError as e:
-            logging.error(f"Error decoding JSON response for search issues: {e}. Response text: {response.text if response else 'N/A'}")
-            delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-            return False
-        except Exception as e:
-            logging.exception(f"An unexpected error occurred during issue processing: {e}")
-            delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-            return False
-
-
-    logging.info(f"Finished fetching and inserting data into temporary table '{temp_table_id}'. Total rows inserted: {total_rows_inserted_to_temp}")
-
-    # --- Merge Data into Final Table ---
-    logging.info(f"Starting merge operation from '{dataset_id}.{temp_table_id}' to '{dataset_id}.{table_id}'...")
-    merge_query = f"""
-        MERGE `{dataset_id}.{table_id}` T
-        USING (
-            SELECT DISTINCT
-                Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body,
-                Visibility_Type, Visibility_Value, SyncTime, InsertedAt
-            FROM `{dataset_id}.{temp_table_id}`
-        ) S
-        ON T.Comment_ID = S.Comment_ID AND T.Updated = S.Updated
-        WHEN MATCHED THEN
-            UPDATE SET
-                T.Issue_Key = S.Issue_Key,
-                T.Author_Account_ID = S.Author_Account_ID,
-                T.Author_Display_Name = S.Author_Display_Name,
-                T.Created = S.Created,
-                T.Updated = S.Updated,
-                T.Body = S.Body,
-                T.Visibility_Type = S.Visibility_Type,
-                T.Visibility_Value = S.Visibility_Value,
-                T.SyncTime = S.SyncTime,
-                T.InsertedAt = S.InsertedAt
-        WHEN NOT MATCHED THEN
-            INSERT (Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body, Visibility_Type, Visibility_Value, SyncTime, InsertedAt)
-            VALUES (S.Issue_Key, S.Comment_ID, S.Author_Account_ID, S.Author_Display_Name, S.Created, S.Updated, S.Body, S.Visibility_Type, S.Visibility_Value, S.SyncTime, S.InsertedAt)
-    """
-
-    try:
-        query_job = client.query(merge_query)
-        query_job.result()
-        logging.info("Data merged successfully into final table.")
-    except Exception as e:
-        logging.exception(f"Error running merge query: {e}")
-        return False
-
-    logging.info(f"Sync process completed for JQL: {jql_query}")
-
-    # Drop temp table after merge
-    delete_temp_table(client, dataset_id, temp_table_id)
-
-    return True
-
-def wait_for_streaming_buffer_empty(client, project, dataset, table, max_wait=300, poll_interval=10):
-    table_ref = f"{project}.{dataset}.{table}"
-    waited = 0
-    while waited < max_wait:
-        table_obj = client.get_table(table_ref)
-        if not hasattr(table_obj, 'streaming_buffer'):
-            return True  
-        buffer = table_obj.streaming_buffer
-        if not buffer or buffer.estimated_rows == 0:
-            return True
-        logging.info(f"Waiting for streaming buffer to empty... ({buffer.estimated_rows} rows remaining)")
-        time.sleep(poll_interval)
-        waited += poll_interval
-    logging.warning("Streaming buffer not empty after waiting. Proceeding anyway.")
+                logging.exception(f'Insert exception: {e}')
+        if attempt<retries-1: time.sleep(delay)
     return False
 
-CHECKPOINT_FILE = "jira_comments_checkpoint.json"
+def delete_table_quiet(client,dataset,table):
+    try: client.delete_table(f"{dataset}.{table}")
+    except Exception: pass
 
+def fetch_issues_page(search_url,auth,headers,jql,start_at,max_results):
+    global SEARCH_429_COUNT
+    payload=json.dumps({'jql':jql,'startAt':start_at,'maxResults':max_results,'fields':['key']})
+    for attempt in range(5):
+        try:
+            RATE_LIMITER.take(); r=requests.post(search_url,headers=headers,auth=auth,data=payload,timeout=300)
+            if r.status_code==429:
+                SEARCH_429_COUNT+=1; ra=int(r.headers.get('Retry-After',30)); time.sleep(ra+random.uniform(0,JITTER_MAX_SECONDS)); continue
+            r.raise_for_status(); return r.json()
+        except requests.exceptions.Timeout:
+            time.sleep(15)
+        except requests.RequestException:
+            if attempt<4: time.sleep(8)
+            else: return None
+    return None
 
+def fetch_comments_for_issue(base_url,issue_key,auth):
+    global DETAIL_429_COUNT
+    url=f"{base_url}/rest/api/2/issue/{issue_key}/comment"; start=0; size=100; out=[]; attempts=0
+    while True:
+        try:
+            RATE_LIMITER.take(); r=requests.get(url,auth=auth,params={'startAt':start,'maxResults':size},timeout=180)
+            if r.status_code==429:
+                DETAIL_429_COUNT+=1; ra=int(r.headers.get('Retry-After',10)); time.sleep(ra+random.uniform(0,JITTER_MAX_SECONDS)); continue
+            r.raise_for_status(); data=r.json(); cm=data.get('comments',[]); out.extend(cm); total=data.get('total',len(out))
+            if start+len(cm)>=total: break
+            start+=len(cm); time.sleep(0.02+random.uniform(0,0.05))
+        except Exception:
+            attempts+=1
+            if attempts>=MAX_COMMENT_ATTEMPTS: break
+            back=min(60,2**attempts)+random.uniform(0,JITTER_MAX_SECONDS); time.sleep(back)
+    return out
 
+def fetch_comments_batch(base_url,keys,auth,max_workers=None):
+    if max_workers is None: max_workers=CURRENT_DETAIL_WORKERS
+    res={}
+    def worker(k): return k, fetch_comments_for_issue(base_url,k,auth)
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        fmap={ex.submit(worker,k):k for k in keys}
+        for fut in as_completed(fmap):
+            k=fmap[fut]
+            try: kk,data=fut.result(); res[kk]=data
+            except Exception: res[k]=[]
+            time.sleep(0.01+random.uniform(0,0.03))
+    return res
 
+def generate_rows(issues,cmap,ws,we):
+    now_str=datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    for issue in issues:
+        key=issue.get('key') if issue else None
+        if not key: continue
+        for c in cmap.get(key,[]):
+            created=convert_ts(c.get('created')); updated=convert_ts(c.get('updated')); ref=updated or created
+            if not ref: continue
+            try: ref_dt=datetime.strptime(ref,'%Y-%m-%d %H:%M:%S')
+            except Exception: continue
+            if not (ws <= ref_dt < we): continue
+            a=c.get('author',{}); vis=c.get('visibility',{})
+            yield {
+                'Issue_Key': key,'Comment_ID': c.get('id'),'Author_Account_ID': a.get('accountId'),'Author_Display_Name': a.get('displayName'),
+                'Created': created,'Updated': updated,'Body': c.get('body'),'Visibility_Type': vis.get('type'),'Visibility_Value': vis.get('value'),'SyncTime': now_str,
+            }
 
-# Buffer log entries for batch BigQuery logging
-def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, message, function_name=None, batch_id=None, details=None):
-    log_entry = {
-        "Timestamp": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-        "PipelineName": pipeline_name,
-        "RunID": run_id,
-        "LogLevel": level,
-        "Message": message,
-        "FunctionName": function_name,
-        "BatchID": batch_id,
-        "Details": details
-    }
-    LOG_BUFFER.append(log_entry)
-
-# At the end of the pipeline, flush all logs to BigQuery in a batch
-def flush_logs_to_bigquery(client, dataset_id, table_id):
-    if not LOG_BUFFER:
-        return
-    temp_log_table = "PipelineLogs_temp"
-    log_schema = [
-        bigquery.SchemaField("Timestamp", "TIMESTAMP", mode="NULLABLE"),
-        bigquery.SchemaField("PipelineName", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("RunID", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("LogLevel", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Message", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("FunctionName", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("BatchID", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Details", "STRING", mode="NULLABLE"),
-    ]
-    if not create_or_replace_temp_table(client, dataset_id, temp_log_table, log_schema):
-        logging.error("Setup failed: Could not create temp logs table.")
-        return
-    if not wait_for_table(client, dataset_id, temp_log_table, retries=20, delay=5):
-        logging.error("Setup failed: Temp logs table not available.")
-        return
-    if not insert_rows_with_retry(client, dataset_id, temp_log_table, LOG_BUFFER, log_schema, retries=20, delay=10):
-        logging.error("Failed to insert log entries into temp logs table after retries.")
-        return
-    merge_query = f"""
-        MERGE `{client.project}.{dataset_id}.PipelineLogs` T
-        USING (
-            SELECT DISTINCT * FROM `{client.project}.{dataset_id}.{temp_log_table}`
-        ) S
-        ON T.Timestamp = S.Timestamp AND T.RunID = S.RunID
-        WHEN MATCHED THEN
-            UPDATE SET
-                T.PipelineName = S.PipelineName,
-                T.LogLevel = S.LogLevel,
-                T.Message = S.Message,
-                T.FunctionName = S.FunctionName,
-                T.BatchID = S.BatchID,
-                T.Details = S.Details
-        WHEN NOT MATCHED THEN
-            INSERT (PipelineName, RunID, LogLevel, Message, FunctionName, BatchID, Details)
-            VALUES (S.PipelineName, S.RunID, S.LogLevel, S.Message, S.FunctionName, S.BatchID, S.Details)
+def sync_window(base_url,jql,auth,client,dataset,table,ws,we):
+    temp=f'JiraComments_temp_{uuid.uuid4()}'
+    schema=[bigquery.SchemaField(n,t) for n,t in [
+        ('Issue_Key','STRING'),('Comment_ID','STRING'),('Author_Account_ID','STRING'),('Author_Display_Name','STRING'),('Created','TIMESTAMP'),('Updated','TIMESTAMP'),('Body','STRING'),('Visibility_Type','STRING'),('Visibility_Value','STRING'),('SyncTime','TIMESTAMP')]]
+    if not table_exists(client,dataset,table): create_or_replace_table(client,dataset,table,schema)
+    else:
+        try: client.query(f"ALTER TABLE `{dataset}.{table}` ADD COLUMN IF NOT EXISTS SyncTime TIMESTAMP").result()
+        except Exception: pass
+    if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp): return False,0
+    search_url=f"{base_url}/rest/api/2/search"; headers={'Accept':'application/json','Content-Type':'application/json'}
+    start=0; max_results=100; total=float('inf'); buf=[]; batch=1000; inserted=0
+    while start<total:
+        data=fetch_issues_page(search_url,auth,headers,jql,start,max_results)
+        if data is None: delete_table_quiet(client,dataset,temp); return False,inserted
+        issues=data.get('issues',[]); total=data.get('total',0)
+        if not issues: break
+        keys=[i.get('key') for i in issues if i.get('key')]
+        cmap=fetch_comments_batch(base_url,keys,auth)
+        for row in generate_rows(issues,cmap,ws,we):
+            buf.append(row)
+            if len(buf)>=batch:
+                if not insert_rows_with_retry(client,dataset,temp,buf,schema): delete_table_quiet(client,dataset,temp); return False,inserted
+                inserted+=len(buf); buf=[]
+        if buf:
+            if not insert_rows_with_retry(client,dataset,temp,buf,schema): delete_table_quiet(client,dataset,temp); return False,inserted
+            inserted+=len(buf); buf=[]
+        start+=len(issues); time.sleep(1)
+    merge=f"""
+      MERGE `{dataset}.{table}` T USING (SELECT DISTINCT * FROM `{dataset}.{temp}`) S
+      ON T.Comment_ID=S.Comment_ID AND T.Updated=S.Updated
+      WHEN MATCHED THEN UPDATE SET T.Issue_Key=S.Issue_Key,T.Author_Account_ID=S.Author_Account_ID,T.Author_Display_Name=S.Author_Display_Name,T.Created=S.Created,T.Body=S.Body,T.Visibility_Type=S.Visibility_Type,T.Visibility_Value=S.Visibility_Value,T.SyncTime=S.SyncTime
+      WHEN NOT MATCHED THEN INSERT (Issue_Key,Comment_ID,Author_Account_ID,Author_Display_Name,Created,Updated,Body,Visibility_Type,Visibility_Value,SyncTime)
+      VALUES (S.Issue_Key,S.Comment_ID,S.Author_Account_ID,S.Author_Display_Name,S.Created,S.Updated,S.Body,S.Visibility_Type,S.Visibility_Value,S.SyncTime)
     """
-    client.query(merge_query).result()
-    client.delete_table(f"{dataset_id}.{temp_log_table}")
-    logging.info("All log entries successfully merged into BigQuery logs table.")
+    try: client.query(merge).result()
+    except Exception as e: delete_table_quiet(client,dataset,temp); logging.exception(f'Merge failed: {e}'); return False,inserted
+    delete_table_quiet(client,dataset,temp); return True,inserted
+
+def log_buf(pipeline,run_id,level,msg,fn=None,details=None):
+    LOG_BUFFER.append({'Timestamp':datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),'PipelineName':pipeline,'RunID':run_id,'LogLevel':level,'Message':msg,'FunctionName':fn,'Details':details})
+
+def flush_logs(client,dataset,table):
+    if not LOG_BUFFER: return
+    temp='PipelineLogs_temp_comments'
+    schema=[bigquery.SchemaField(n,t) for n,t in [('Timestamp','TIMESTAMP'),('PipelineName','STRING'),('RunID','STRING'),('LogLevel','STRING'),('Message','STRING'),('FunctionName','STRING'),('Details','STRING')]]
+    if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp): return
+    if not insert_rows_with_retry(client,dataset,temp,LOG_BUFFER,schema): return
+    merge=f"MERGE `{dataset}.{table}` T USING (SELECT * FROM `{dataset}.{temp}`) S ON T.Timestamp=S.Timestamp AND T.RunID=S.RunID AND T.Message=S.Message WHEN MATCHED THEN UPDATE SET T.PipelineName=S.PipelineName,T.LogLevel=S.LogLevel,T.FunctionName=S.FunctionName,T.Details=S.Details WHEN NOT MATCHED THEN INSERT (Timestamp,PipelineName,RunID,LogLevel,Message,FunctionName,Details) VALUES (S.Timestamp,S.PipelineName,S.RunID,S.LogLevel,S.Message,S.FunctionName,S.Details)"
+    client.query(merge).result(); delete_table_quiet(client,dataset,temp)
 
 def main():
-    config = load_config()
-    logging.info("Config loaded.")
-    if config is None:
-        logging.error("Config is None, exiting early.")
-        return
-
-    # Define dataset and table names first, before using them
-    dataset_id = 'GSO'
-    table_id = 'JiraComments'
-    log_table_id = 'PipelineLogs'
-    pipeline_name = "jira_comments"
-    run_id = str(uuid.uuid4())
-
-    jira_url = 'https://consoleconnect.atlassian.net'
-    # --- Automated Time Partitioning for Comments (2024 only) ---
-    window_days = 1
-    min_ts = datetime(2024, 7, 1)
-    now = datetime.utcnow()
-    progress_table = f"{table_id}_progress"
-    progress_schema = [
-        bigquery.SchemaField("WindowStart", "TIMESTAMP", mode="REQUIRED"),
-        bigquery.SchemaField("WindowEnd", "TIMESTAMP", mode="REQUIRED"),
-        bigquery.SchemaField("Status", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("LastRun", "TIMESTAMP", mode="NULLABLE"),
-    ]
-    # Client must be initialized before table_exists
-    try:
-        client = bigquery.Client()
-    except Exception as e:
-        logging.exception(f"Failed to initialize BigQuery client: {e}. Ensure GCP credentials are set up correctly.")
-        return
-    if not table_exists(client, dataset_id, progress_table):
-        create_or_replace_temp_table(client, dataset_id, progress_table, progress_schema)
-
-
-    # Find the earliest window with status not 'complete'
-    progress_query = f"SELECT WindowStart, WindowEnd FROM `{dataset_id}.{progress_table}` WHERE Status != 'complete' ORDER BY WindowStart ASC LIMIT 1"
-    window_start = None
-    window_end = None
-    try:
-        result = client.query(progress_query).result()
-        for row in result:
-            window_start = row.WindowStart
-            window_end = row.WindowEnd
-            break
-    except Exception as e:
-        logging.warning(f"Could not query progress table: {e}")
-
-    if window_start and window_end:
-        # There is an incomplete window, process it
-        window_end_candidate = window_end
+    cfg=load_config();
+    if not cfg: return
+    dataset='GSO'; table='JiraComments'; progress=f'{table}_progress'; log_table='PipelineLogs'; pipeline='jira_comments'; run_id=str(uuid.uuid4()); base_days=7
+    min_start=datetime(2024,7,1); client=bigquery.Client(); now=datetime.utcnow()
+    prog_schema=[bigquery.SchemaField(n,t) for n,t in [ ('WindowStart','TIMESTAMP'),('WindowEnd','TIMESTAMP'),('Status','STRING'),('LastRun','TIMESTAMP'),('Projects','STRING'),('Project','STRING'),('RowCount','INT64'),('Search429','INT64'),('Detail429','INT64')]]
+    if not table_exists(client,dataset,progress): create_or_replace_table(client,dataset,progress,prog_schema)
     else:
-        # All windows complete or no windows, advance to next window
-        # Find the latest window
-        latest_query = f"SELECT WindowEnd FROM `{dataset_id}.{progress_table}` ORDER BY WindowEnd DESC LIMIT 1"
-        latest_end = None
-        try:
-            result = client.query(latest_query).result()
-            for row in result:
-                latest_end = row.WindowEnd
-                break
-        except Exception as e:
-            logging.warning(f"Could not query for latest window: {e}")
-        if latest_end:
-            window_start = latest_end
-        else:
-            window_start = min_ts
-        window_end_candidate = window_start + timedelta(days=window_days)
-
-    # Ensure both window_end_candidate and now are offset-naive for comparison
-    if hasattr(window_end_candidate, 'tzinfo') and window_end_candidate.tzinfo is not None and window_end_candidate.tzinfo.utcoffset(window_end_candidate) is not None:
-        window_end_candidate_naive = window_end_candidate.replace(tzinfo=None)
-    else:
-        window_end_candidate_naive = window_end_candidate
-
-    if now.tzinfo is not None and now.tzinfo.utcoffset(now) is not None:
-        now_naive = now.replace(tzinfo=None)
-    else:
-        now_naive = now
-
-    window_end = min(window_end_candidate_naive, now_naive)
-
-    # Mark this window as in_progress
-    try:
-        merge_query = f'''
-            MERGE `{dataset_id}.{progress_table}` T
-            USING (SELECT TIMESTAMP('{window_start}') AS WindowStart, TIMESTAMP('{window_end}') AS WindowEnd) S
-            ON T.WindowStart = S.WindowStart AND T.WindowEnd = S.WindowEnd
-            WHEN MATCHED THEN
-              UPDATE SET Status = 'in_progress', LastRun = CURRENT_TIMESTAMP()
-            WHEN NOT MATCHED THEN
-              INSERT (WindowStart, WindowEnd, Status, LastRun)
-              VALUES (S.WindowStart, S.WindowEnd, 'in_progress', CURRENT_TIMESTAMP())
-        '''
-        client.query(merge_query).result()
-        logging.info(f"Progress table updated: window {window_start} to {window_end} marked as in_progress.")
-    except Exception as e:
-        logging.warning(f"Could not update progress table: {e}")
-
-    # Build JQL for this window
-    jql_query = (
-        '('
-        'project = "GS&O Data Analytics" OR '
-        'project = "GS&O Tool Automation" OR '
-        'project = "GS&O Knowledge Consolidation" OR '
-        'project = "Google Contact Center AI Solution" OR '
-        'project = TAC OR '
-        'project = CCAS OR '
-        'project = VOICECE OR '
-        'project = IOTCE OR '
-        'project = TXCE OR '
-        'project = SMSCE OR '
-        'project = MSS OR '
-        'project = "Console Application Support" OR '
-        'project = "Console Connect Provisioning" OR '
-        'project = "Global Service Delivery Team" OR '
-        'project = "Transmission TX-CE" OR '
-        'project = "Mobility SMS - CE" OR '
-        'project = "Managed Security Services"'
-        f') AND updated >= "{window_start.strftime("%Y/%m/%d %H:%M")}" AND updated < "{window_end.strftime("%Y/%m/%d %H:%M")}"'
-    )
-
-    username = "jjkli@consoleconnect.com"
-    api_token = config.get('jira_api_token')
-
-    dataset_id = 'GSO'
-    table_id = 'JiraComments'
-    log_table_id = 'PipelineLogs'
-    pipeline_name = "jira_comments"
-    run_id = str(uuid.uuid4())
-
-
-    try:
-        client = bigquery.Client()
-    except Exception as e:
-        logging.exception(f"Failed to initialize BigQuery client: {e}. Ensure GCP credentials are set up correctly.")
-        return
-
-    # Log pipeline start
-    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", function_name="main")
-
-    try:
-        if sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client, window_start, window_end):
-            logging.info("Successfully synced comments to BigQuery.")
-            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced comments to BigQuery", function_name="main")
-            # Mark only the exact matching window as complete in the progress table
+        for col,ctype in [('Project','STRING'),('RowCount','INT64'),('Search429','INT64'),('Detail429','INT64')]:
+            try: client.query(f"ALTER TABLE `{dataset}.{progress}` ADD COLUMN IF NOT EXISTS {col} {ctype}").result()
+            except Exception: pass
+    default_projects=[ 'Managed Security Services','GS&O Tool Automation','GS&O Data Analytics','IOT CE','Google Contact Center AI Solution','GS&O Knowledge Consolidation' ]
+    parser=argparse.ArgumentParser(); parser.add_argument('--project'); parser.add_argument('--projects'); args,_=parser.parse_known_args()
+    if args.projects: req=[p.strip() for p in args.projects.split(',') if p.strip()]; projects=[p for p in default_projects if p in req]
+    elif args.project: projects=[p for p in default_projects if p==args.project]
+    else: projects=default_projects
+    if not projects: return
+    user=cfg.get('jira_username') or 'jjkli@consoleconnect.com'; token=cfg.get('jira_api_token')
+    if not token: logging.error('jira_api_token missing'); return
+    auth=(user,token); base_url='https://consoleconnect.atlassian.net'
+    for proj in projects:
+        last_completed_start=None
+        while True:
+            ws=None; we=None
+            q=f"SELECT WindowStart,WindowEnd FROM `{dataset}.{progress}` WHERE Project=@p AND Status NOT IN ('complete','degraded') ORDER BY WindowStart ASC LIMIT 1"
+            cfgq=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter('p','STRING',proj)])
             try:
-                # Use CAST to ensure timestamp match
-                update_query = f"""
-                    UPDATE `{dataset_id}.{progress_table}`
-                    SET Status='complete', LastRun=CURRENT_TIMESTAMP()
-                    WHERE CAST(WindowStart AS STRING) = CAST(TIMESTAMP('{window_start}') AS STRING)
-                      AND CAST(WindowEnd AS STRING) = CAST(TIMESTAMP('{window_end}') AS STRING)
-                      AND Status != 'complete'
-                """
-                result = client.query(update_query).result()
-                # Check if any row was updated
-                updated_count = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else None
-                if updated_count and updated_count > 0:
-                    logging.info(f"Marked window {window_start} to {window_end} as complete.")
+                rows=client.query(q,job_config=cfgq).result()
+                for r in rows: ws=r.WindowStart; we=r.WindowEnd; break
+            except Exception: pass
+            adaptive=base_days
+            try:
+                hist=list(client.query(f"SELECT RowCount,WindowStart,WindowEnd, IFNULL(Search429,0) Search429, IFNULL(Detail429,0) Detail429 FROM `{dataset}.{progress}` WHERE Project=@p AND Status IN ('complete','degraded') ORDER BY WindowEnd DESC LIMIT 5",job_config=cfgq).result())
+                if hist:
+                    last=hist[0]; last_count=last.RowCount or 0
+                    try: last_hours=max(0.01,(last.WindowEnd-last.WindowStart).total_seconds()/3600.0)
+                    except Exception: last_hours=base_days*24
+                    base_hours=base_days*24; min_hours=MIN_SHRINK_HOURS; candidate_hours=last_hours
+                    ls429=getattr(last,'Search429',0) or 0; ld429=getattr(last,'Detail429',0) or 0
+                    if (ld429>=RATE_SHRINK_DETAIL_429) or (ls429>=RATE_SHRINK_SEARCH_429):
+                        candidate_hours=max(min_hours,last_hours*RATE_SHRINK_FACTOR)
+                    elif last_count>ADAPT_HIGH_ROWS and last_hours>min_hours:
+                        candidate_hours=max(min_hours,last_hours/2.0)
+                    elif last_count>ADAPT_MEDIUM_ROWS and last_hours>12:
+                        candidate_hours=max(12,last_hours/1.5)
+                    else:
+                        if last_hours<base_hours:
+                            recent=hist[:ADAPT_GROW_CONSECUTIVE]
+                            if len(recent)==ADAPT_GROW_CONSECUTIVE and all((r.RowCount or 0)<ADAPT_LOW_ROWS for r in recent):
+                                candidate_hours=min(base_hours,last_hours*2.0)
+                    candidate_hours=max(min_hours,min(candidate_hours,base_hours)); adaptive=candidate_hours/24.0
+            except Exception: pass
+            if ws and we: cand=we
+            else:
+                latest=None
+                try:
+                    lr=client.query(f"SELECT WindowEnd FROM `{dataset}.{progress}` WHERE Project=@p ORDER BY WindowEnd DESC LIMIT 1",job_config=cfgq).result()
+                    for r in lr: latest=r.WindowEnd; break
+                except Exception: pass
+                if latest:
+                    overlap=timedelta(minutes=OVERLAP_MINUTES)
+                    latest_naive=latest.replace(tzinfo=None) if getattr(latest,'tzinfo',None) else latest
+                    last_completed_naive=last_completed_start.replace(tzinfo=None) if (last_completed_start and getattr(last_completed_start,'tzinfo',None)) else last_completed_start
+                    cand_start=latest_naive-overlap
+                    if last_completed_naive and cand_start<=last_completed_naive: cand_start=latest_naive
+                    if last_completed_naive and (latest_naive-last_completed_naive)<=overlap*2: cand_start=latest_naive
+                    if cand_start<min_start: cand_start=min_start
+                    ws=cand_start
+                else: ws=min_start
+                cand=ws+timedelta(days=adaptive)
+            ws_naive=ws.replace(tzinfo=None) if getattr(ws,'tzinfo',None) else ws
+            now_naive=now.replace(tzinfo=None)
+            cand_naive=cand.replace(tzinfo=None) if getattr(cand,'tzinfo',None) else cand
+            we=min(cand_naive,now_naive)
+            if ws_naive>=now_naive: break
+            proj_clause=f'project = "{proj}"' if (' ' in proj or '&' in proj) else f'project = {proj}'
+            jql=f"({proj_clause}) AND updated >= \"{ws_naive.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
+            try:
+                merge=(
+                    f"MERGE `{dataset}.{progress}` T USING (SELECT TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S')}') AS WindowStart, TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS WindowEnd, '{proj}' AS Project) S "
+                    "ON T.WindowStart=S.WindowStart AND T.WindowEnd=S.WindowEnd AND T.Project=S.Project "
+                    "WHEN MATCHED THEN UPDATE SET Status='in_progress', LastRun=CURRENT_TIMESTAMP(), Project=S.Project "
+                    "WHEN NOT MATCHED THEN INSERT (WindowStart,WindowEnd,Status,LastRun,Project) VALUES (S.WindowStart,S.WindowEnd,'in_progress',CURRENT_TIMESTAMP(),S.Project)"
+                ); client.query(merge).result()
+            except Exception: break
+            SUCCESS=False; rc=0
+            global SEARCH_429_COUNT, DETAIL_429_COUNT, CURRENT_DETAIL_WORKERS, _NO429_STREAK
+            SEARCH_429_COUNT=0; DETAIL_429_COUNT=0
+            try: SUCCESS,rc=sync_window(base_url,jql,auth,client,dataset,table,ws_naive,we)
+            except Exception as e: log_buf(pipeline,run_id,'ERROR',f'Fatal {proj} {ws_naive}->{we} {e}','main',str(e))
+            degraded=False
+            if SUCCESS:
+                ratio=DETAIL_429_COUNT/max(1,rc)
+                if ratio>FAILURE_RATIO_DEGRADED: degraded=True
+            status='degraded' if degraded else ('complete' if SUCCESS else 'failed')
+            upd=(
+                f"UPDATE `{dataset}.{progress}` SET Status='{status}', LastRun=CURRENT_TIMESTAMP(), RowCount={rc}, Search429={SEARCH_429_COUNT}, Detail429={DETAIL_429_COUNT} "
+                f"WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND Status!='complete'"
+            ); client.query(upd).result()
+            if status in ('complete','degraded'):
+                last_completed_start=ws_naive
+                if (SEARCH_429_COUNT>0 or DETAIL_429_COUNT>0):
+                    CURRENT_DETAIL_WORKERS=max(DETAIL_MIN_WORKERS,int(CURRENT_DETAIL_WORKERS*DETAIL_SCALE_DOWN_FACTOR)); _NO429_STREAK=0
                 else:
-                    logging.warning(f"No window was marked as complete. Check timestamp precision and progress table.")
-            except Exception as e:
-                logging.warning(f"Could not mark window as complete: {e}")
-        else:
-            logging.error("Failed to sync comments to BigQuery.")
-            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync comments to BigQuery", function_name="main")
-    except Exception as e:
-        logging.exception(f"Pipeline run fail ed: {e}")
-        log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Pipeline run failed: {e}", function_name="main", details=str(e))
+                    _NO429_STREAK+=1
+                    if _NO429_STREAK>=DETAIL_SCALE_UP_NO429_WINDOWS and CURRENT_DETAIL_WORKERS<DETAIL_MAX_WORKERS:
+                        CURRENT_DETAIL_WORKERS=min(DETAIL_MAX_WORKERS,max(CURRENT_DETAIL_WORKERS+1,int(CURRENT_DETAIL_WORKERS*DETAIL_SCALE_UP_FACTOR))); _NO429_STREAK=0
+            if not SUCCESS:
+                try: span_hours=(we-ws_naive).total_seconds()/3600.0
+                except Exception: span_hours=0
+                if span_hours>(MIN_SHRINK_HOURS+0.05):
+                    new_span=max(MIN_SHRINK_HOURS,span_hours*RATE_SHRINK_FACTOR); new_end=ws_naive+timedelta(hours=new_span)
+                    try:
+                        client.query(
+                            f"UPDATE `{dataset}.{progress}` SET WindowEnd=TIMESTAMP('{new_end.strftime('%Y-%m-%d %H:%M:%S')}'), Status='failed' WHERE Project='{proj}' "
+                            f"AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING)"
+                        ).result();
+                        continue
+                    except Exception: break
+                else:
+                    try:
+                        client.query(
+                            f"UPDATE `{dataset}.{progress}` SET Status='degraded' WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND Status='failed'"
+                        ).result()
+                    except Exception: pass
+                    break
+    log_buf(pipeline,run_id,'INFO','Comments pipeline finished','main'); flush_logs(client,dataset,log_table)
 
-    # Log pipeline end
-    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", function_name="main")
-    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Batch processed", function_name="main", batch_id="your_batch_id")
-
-    # At the end, flush all logs to BigQuery in a batch
-    flush_logs_to_bigquery(client, dataset_id, log_table_id)
-
-if __name__ == "__main__":
+if __name__=='__main__':
     main()

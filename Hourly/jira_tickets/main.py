@@ -212,18 +212,15 @@ def fetch_and_sync_jira_data():
             'project = "GS&O Knowledge Consolidation" OR '
             'project = "Google Contact Center AI Solution" OR '
             'project = TAC OR '
-            'project = CCAS OR '
-            'project = VOICECE OR '
-            'project = IOTCE OR '
-            'project = TXCE OR '
-            'project = SMSCE OR '
-            'project = MSS OR '
+            'project = "VOICE - CE" OR '
+            'project = "IOT CE" OR '
             'project = "Console Application Support" OR '
             'project = "Console Connect Provisioning" OR '
             'project = "Global Service Delivery Team" OR '
             'project = "Transmission TX-CE" OR '
             'project = "Mobility SMS - CE" OR '
-            'project = "Managed Security Services"'
+            'project = "Managed Security Services" OR '
+            'project = "Vendor Management Escalations"'
             ') AND updated >= -3h'
         )
 
@@ -247,7 +244,6 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
-            # SLA fields: elapsed, goal, breached, cycle count
             bigquery.SchemaField("TimeToFirstResponse_Elapsed", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToFirstResponse_Goal", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"),
@@ -291,7 +287,6 @@ def fetch_and_sync_jira_data():
         BULK_FETCH_SIZE = 50  # Number of issues to fetch details for in parallel (tune as needed)
 
         def extract_sla_metrics(sla_field):
-            # Returns elapsed (hours), goal (hours), breached (bool), cycles (int)
             if not isinstance(sla_field, dict):
                 return None, None, None, None
             cycles = sla_field.get('completedCycles', [])

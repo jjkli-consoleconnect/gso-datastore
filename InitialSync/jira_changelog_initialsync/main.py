@@ -4,614 +4,850 @@ from google.cloud import bigquery
 import logging
 from datetime import datetime, timedelta
 import time
-import os
-from concurrent.futures import ThreadPoolExecutor
-import random
 import uuid
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# --- Logging Buffer for BigQuery Logs ---
-LOG_BUFFER = []
+# ----------------- CONFIG -----------------
+DEBUG = False
+logging.basicConfig(level=logging.INFO if not DEBUG else logging.DEBUG,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+logging.info("Changelog initial sync starting up")
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+LOG_BUFFER = []  # buffered logs for batch write
 
-DEBUG = False  # Set to True to enable detailed logging
+# -------- Data completeness / rate-limit resiliency settings --------
+MAX_HISTORY_ATTEMPTS = 5              # per-issue history retries
+HISTORY_RETRY_BASE_SLEEP = 2          # base sleep for non-429 retries (exponential backoff)
+HISTORY_REQUEUE_COOLDOWN = 10         # seconds before requeue second pass
+FAILURE_RATIO_DEGRADED = 0.02         # >2% remaining failed issue histories => degraded
+OVERLAP_MINUTES = 10                  # small overlap between windows to catch late or missed events
+JITTER_MAX_SECONDS = 0.3              # jitter for smoothing parallel request bursts
+SECOND_PASS_MAX_WORKERS = 4           # reduced concurrency during requeue
 
+# Rate limiting / dynamic concurrency
+RATE_BUCKET_CAPACITY = 120            # max tokens in bucket (rough target: requests per minute)
+RATE_BUCKET_REFILL_PER_SEC = 2        # tokens refilled each second (2 * 60 = 120/minute)
+RATE_MIN_SLEEP = 0.05                 # minimum sleep while waiting for token
+HISTORY_MAX_WORKERS_BASE = 16         # starting upper bound for history concurrency
+HISTORY_MIN_WORKERS = 4               # floor
+HISTORY_MAX_WORKERS = 24              # ceiling if conditions are good
+HISTORY_SCALE_UP_NO429_WINDOWS = 2    # consecutive windows without 429 to scale up
+HISTORY_SCALE_DOWN_FACTOR = 0.6       # multiply current workers on 429 burst
+HISTORY_SCALE_UP_FACTOR = 1.2         # multiply current workers when scaling up
+
+CURRENT_HISTORY_WORKERS = HISTORY_MAX_WORKERS_BASE
+_NO429_STREAK = 0
+
+# Global counters (reset each window) for metrics
+SEARCH_429_COUNT = 0
+HISTORY_429_COUNT = 0
+
+import threading
+class TokenBucket:
+    def __init__(self, capacity, refill_per_sec):
+        self.capacity = capacity
+        self.tokens = capacity
+        self.refill_per_sec = refill_per_sec
+        self.last = time.time()
+        self.lock = threading.Lock()
+    def take(self, amount=1):
+        while True:
+            with self.lock:
+                now_t = time.time()
+                elapsed = now_t - self.last
+                if elapsed > 0:
+                    refill = elapsed * self.refill_per_sec
+                    if refill > 0:
+                        self.tokens = min(self.capacity, self.tokens + refill)
+                        self.last = now_t
+                if self.tokens >= amount:
+                    self.tokens -= amount
+                    return True
+            time.sleep(RATE_MIN_SLEEP)
+
+RATE_LIMITER = TokenBucket(RATE_BUCKET_CAPACITY, RATE_BUCKET_REFILL_PER_SEC)
+
+
+# -------- Adaptive window tuning thresholds --------
+# These thresholds allow dynamic shrinking/expansion of window length to cope with spikes.
+# Tunable constants (row counts per completed window):
+ADAPT_HIGH_ROWS = 50000      # if last window > this, halve window length (down to min 6h)
+ADAPT_MEDIUM_ROWS = 15000    # if last window > this (but <= high), shrink toward 12h+ as needed
+ADAPT_LOW_ROWS = 2000        # if consistently below this we can regrow window length
+ADAPT_GROW_CONSECUTIVE = 3   # consecutive low windows required before expansion
+MAX_GROW_DAYS = 7            # never expand beyond base 7 days
+MIN_SHRINK_HOURS = 6         # minimum window length when shrinking
+
+# Rate-based adaptive shrink (respond to Jira throttling even if row counts moderate)
+RATE_SHRINK_HISTORY_429 = 25   # if previous window had >= this many history 429s, shrink next window
+RATE_SHRINK_SEARCH_429 = 8     # if previous window had >= this many search 429s, shrink next window
+RATE_SHRINK_FACTOR = 0.5       # multiply previous window span by this when rate-shrink triggered
+
+# ----------------- UTIL -----------------
 def load_config():
     try:
         with open('config.json') as f:
             return json.load(f)
     except FileNotFoundError:
-        logging.error("config.json not found. Please create it with your Jira API token and email.")
+        logging.error("config.json not found. Please provide Jira credentials.")
         return None
 
-def convert_timestamp(timestamp):
-    if timestamp:
+
+def convert_timestamp(ts: str):
+    if not ts:
+        return None
+    # Try multiple Jira timestamp formats
+    fmts = [
+        '%Y-%m-%dT%H:%M:%S.%fZ',
+        '%Y-%m-%dT%H:%M:%S.%f%z',
+        '%Y-%m-%dT%H:%M:%SZ',
+        '%Y-%m-%dT%H:%M:%S%z',
+        '%Y-%m-%dT%H:%M:%S'
+    ]
+    for fmt in fmts:
         try:
-            return datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%f%z').strftime('%Y-%m-%d %H:%M:%S')
-        except ValueError as e:
-            logging.warning(f"Invalid timestamp format: {timestamp}, Error: {e}")
-            return None
+            dt = datetime.strptime(ts, fmt)
+            # Strip tzinfo for consistency
+            if dt.tzinfo:
+                dt = dt.replace(tzinfo=None)
+            return dt.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            continue
+    logging.warning(f"Could not parse timestamp: {ts}")
     return None
 
-def create_or_replace_temp_table(client, dataset_id, table_id, schema):
+# -------------- BigQuery helpers --------------
+
+def create_or_replace_table(client, dataset_id, table_id, schema):
     try:
-        query = f"""
-        CREATE OR REPLACE TABLE `{client.project}.{dataset_id}.{table_id}`
-        (
-            {', '.join(f'{f.name} {f.field_type}' for f in schema)}
-        )
-        """
+        query = f"CREATE OR REPLACE TABLE `{dataset_id}.{table_id}` (" \
+                + ', '.join(f'`{f.name}` {f.field_type}' for f in schema) + ")"
         client.query(query).result()
-        logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' created or replaced.")
+        logging.debug(f"(Re)created table {dataset_id}.{table_id}")
         return True
     except Exception as e:
-        logging.exception(f"Error creating or replacing temporary table '{client.project}.{dataset_id}.{table_id}': {e}")
-        return False
-
-# This function is defined but not used. Consider removing if not planned for use.
-# def create_temp_table_if_not_exists(client, dataset_id, table_id, schema):
-#     if not table_exists(client, dataset_id, table_id):
-#         return create_or_replace_temp_table(client, dataset_id, table_id, schema)
-#     return True
-
-def delete_temp_table(client, dataset_id, table_id):
-    table_ref = client.dataset(dataset_id).table(table_id)
-    try:
-        client.delete_table(table_ref)
-        logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' deleted.")
-        return True
-    except Exception as e:
-        logging.exception(f"Error deleting temporary table '{client.project}.{dataset_id}.{table_id}': {e}")
-        return False
-    table_ref = client.dataset(dataset_id).table(table_id)
-    try:
-        client.delete_table(table_ref, not_found_ok=True)  # not_found_ok is supported in google-cloud-bigquery >= 1.25.0
-        logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' deleted (or did not exist).")
-        return True
-    except TypeError:
-        # For older google-cloud-bigquery versions, fallback to manual not found handling
-        try:
-            client.delete_table(table_ref)
-            logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' deleted.")
-            return True
-        except Exception as e:
-            if 'Not found' in str(e) or '404' in str(e):
-                logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' did not exist (already deleted).")
-                return True
-            logging.exception(f"Error deleting temporary table '{client.project}.{dataset_id}.{table_id}': {e}")
-            return False
-    except Exception as e:
-        if 'Not found' in str(e) or '404' in str(e):
-            logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' did not exist (already deleted).")
-            return True
-        logging.exception(f"Error deleting temporary table '{client.project}.{dataset_id}.{table_id}': {e}")
+        logging.exception(f"Error creating/replacing table {dataset_id}.{table_id}: {e}")
         return False
 
 def table_exists(client, dataset_id, table_id):
     try:
-        client.get_table(f"{client.project}.{dataset_id}.{table_id}")
+        client.get_table(f"{dataset_id}.{table_id}")
         return True
-    except Exception: # More specific exception (e.g., google.cloud.exceptions.NotFound) is better
-        # logging.error(f"Table '{client.project}.{dataset_id}.{table_id}' does not exist: {e}") # 'e' not defined here
+    except Exception as e:
+        if 'Not found' in str(e):
+            return False
+        logging.exception(f"Error checking table {dataset_id}.{table_id}: {e}")
         return False
 
-def wait_for_table(client, dataset_id, table_id, retries=5, delay=5):
-    for attempt in range(retries):
+def wait_for_table(client, dataset_id, table_id, retries=15, delay=4):
+    for i in range(retries):
         if table_exists(client, dataset_id, table_id):
-            logging.info(f"Table '{client.project}.{dataset_id}.{table_id}' is now available.")
             return True
-        logging.info(f"Waiting for table '{client.project}.{dataset_id}.{table_id}' to be available. Attempt {attempt + 1}/{retries}")
         time.sleep(delay)
-    logging.error(f"Table '{client.project}.{dataset_id}.{table_id}' is not available after {retries} attempts.")
+    logging.error(f"Table {dataset_id}.{table_id} not available after waits")
     return False
 
-def insert_rows_with_retry(client, dataset_id, table_id, rows, retries=5, delay=5):
+def insert_rows_with_retry(client, dataset_id, table_id, rows, schema, retries=6, delay=6):
     if not rows:
-        logging.info(f"No rows to insert into '{client.project}.{dataset_id}.{table_id}'.")
         return True
+    table_ref = client.dataset(dataset_id).table(table_id)
     for attempt in range(retries):
         try:
-            errors = client.insert_rows_json(f"{client.project}.{dataset_id}.{table_id}", rows)
+            errors = client.insert_rows_json(table_ref, rows)
             if not errors:
-                logging.info(f"Successfully inserted {len(rows)} rows into '{client.project}.{dataset_id}.{table_id}'.")
+                logging.info(f"Inserted {len(rows)} rows -> {dataset_id}.{table_id}")
                 return True
-            logging.error(f"Errors occurred while inserting rows: {errors}")
+            logging.error(f"Insert errors (attempt {attempt+1}): {errors}")
         except Exception as e:
-            logging.exception(f"Error inserting rows into BigQuery: {e}")
-        logging.info(f"Retrying insert rows into table '{client.project}.{dataset_id}.{table_id}' after 5 seconds. Attempt {attempt + 1}/{retries}")
-        time.sleep(5)
-    logging.error(f"Failed to insert rows into '{client.project}.{dataset_id}.{table_id}' after {retries} retries.")
+            if 'Not found' in str(e):
+                logging.warning(f"Temp table missing {dataset_id}.{table_id}; recreating")
+                if not create_or_replace_table(client, dataset_id, table_id, schema) or not wait_for_table(client, dataset_id, table_id):
+                    return False
+            else:
+                logging.exception(f"Insert exception attempt {attempt+1}: {e}")
+        if attempt < retries - 1:
+            time.sleep(delay)
     return False
 
-def fetch_issue_history(jira_url, issue_key, username, api_token):
-    """Fetches the history (including transitions) for a given issue."""
-    # For Jira Cloud, /rest/api/2/ and /rest/api/latest/ are often interchangeable for core functionalities
-    # The script uses /rest/api/2/ which is generally fine.
-    url = f"{jira_url}/rest/api/2/issue/{issue_key}?expand=changelog"
-    headers = {"Accept": "application/json"}
-    auth = (username, api_token) # For Jira Cloud, username is typically the email address
-
+def delete_table_quiet(client, dataset_id, table_id):
     try:
-        response = requests.get(url, headers=headers, auth=auth, timeout=60)
-        response.raise_for_status()
-        data = response.json()
-        return data
-    except requests.RequestException as e:
-        logging.error(f"Error fetching history for issue {issue_key}: {e}")
-        return None
-    except json.JSONDecodeError as e:
-        logging.error(f"Error decoding JSON response for issue {issue_key}: {e}")
-        return None
+        client.delete_table(f"{dataset_id}.{table_id}")
+        logging.debug(f"Deleted temp table {dataset_id}.{table_id}")
+    except Exception as e:
+        if 'Not found' in str(e):
+            return
+        logging.warning(f"Could not delete temp table {dataset_id}.{table_id}: {e}")
 
-def fetch_issue_histories_parallel(jira_url, issues, username, api_token):
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(fetch_issue_history, jira_url, issue['key'], username, api_token): issue for issue in issues}
-        results = {}
-        for future in futures:
-            issue_key = futures[future]['key']
-            try:
-                results[issue_key] = future.result()
-            except Exception as e:
-                logging.error(f"Error fetching history for issue {issue_key} in parallel: {e}") # Added "in parallel" for clarity
-    return results
+# -------------- Jira fetch helpers --------------
 
-def fetch_issues_with_retry(jira_search_url, headers, auth, payload, retries=5, delay=5):
-    for attempt in range(retries):
+def fetch_issues_page(search_url, auth, headers, jql, start_at, max_results):
+    payload = json.dumps({
+        'jql': jql,
+        'startAt': start_at,
+        'maxResults': max_results,
+        'fields': ['key']
+    })
+    for attempt in range(5):
         try:
-            # Use data=payload (JSON string) for compatibility with Jira API, as in the working comments sync script
-            response = requests.post(jira_search_url, headers=headers, auth=auth, data=payload, timeout=300)
-            response.raise_for_status()
-            return response.json()
+            RATE_LIMITER.take()
+            resp = requests.post(search_url, headers=headers, auth=auth, data=payload, timeout=300)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.exceptions.Timeout:
+            logging.warning(f"Search timeout attempt {attempt+1}/5 startAt={start_at}")
+            time.sleep(15)
         except requests.RequestException as e:
-            backoff = delay * (2 ** attempt) + random.uniform(0, 1)
-            logging.warning(f"Retrying API call to {jira_search_url} after {backoff:.2f} seconds. Attempt {attempt + 1}/{retries}. Error: {e}")
-            time.sleep(backoff)
-    logging.error(f"Failed to fetch issues from {jira_search_url} after multiple retries.")
+            status = e.response.status_code if e.response else 'NA'
+            if status == 429:
+                global SEARCH_429_COUNT
+                SEARCH_429_COUNT += 1
+                retry_after = int(e.response.headers.get('Retry-After', 30)) if e.response else 30
+                sleep_for = retry_after + random.uniform(0, JITTER_MAX_SECONDS)
+                logging.warning(f"Rate limited 429 search attempt {attempt+1}/5; sleeping {sleep_for:.1f}s")
+                time.sleep(sleep_for)
+                continue
+            logging.error(f"Search error attempt {attempt+1}/5: {e} status={status}")
+            if attempt < 4:
+                time.sleep(10)
+            else:
+                return None
     return None
 
-
-
-def run_merge_query(client, dataset_id, table_id, temp_table_id):
-    merge_query = f"""
-        MERGE `{client.project}.{dataset_id}.{table_id}` T
-        USING (
-            SELECT DISTINCT
-                Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To,
-                Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime
-            FROM `{client.project}.{dataset_id}.{temp_table_id}`
-        ) S
-        ON T.History_ID = S.History_ID AND T.Transition_Timestamp = S.Transition_Timestamp
-        WHEN MATCHED THEN
-            UPDATE SET
-                T.Issue_Key = S.Issue_Key,
-                T.Transitioned_From = S.Transitioned_From,
-                T.Transitioned_To = S.Transitioned_To,
-                T.Transitioned_By_Account_ID = S.Transitioned_By_Account_ID,
-                T.Transitioned_By_Display_Name = S.Transitioned_By_Display_Name,
-                T.SyncTime = S.SyncTime
-        WHEN NOT MATCHED THEN
-            INSERT (Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To, Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime)
-            VALUES (S.Issue_Key, S.History_ID, S.Transition_Timestamp, S.Transitioned_From, S.Transitioned_To, S.Transitioned_By_Account_ID, S.Transitioned_By_Display_Name, S.SyncTime)
-    """
-
-    logging.info(f"Executing MERGE query into {client.project}.{dataset_id}.{table_id}")
-    try:
-        query_job = client.query(merge_query)
-        query_job.result()
-        logging.info("Merge query executed successfully.")
-    except Exception as e:
-        logging.exception(f"Error running merge query: {e}")
-        return False
-    return True
-
-# --- BigQuery Logging Mechanism ---
-def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, message, FunctionName=None, BatchID=None, Details=None):
-    log_entry = {
-        # 'Timestamp' intentionally omitted; BigQuery will use its default value
-        "PipelineName": pipeline_name,
-        "RunID": run_id,
-        "LogLevel": level,
-        "Message": message,
-        "FunctionName": FunctionName,
-        "BatchID": BatchID,
-        "Details": Details
-    }
-    LOG_BUFFER.append(log_entry)
-
-def flush_logs_to_bigquery(client, dataset_id, table_id):
-    if not LOG_BUFFER:
-        return
-    # Use run_id from the first log entry (all logs in a run share the same run_id)
-    run_id = LOG_BUFFER[0]["RunID"] if LOG_BUFFER and "RunID" in LOG_BUFFER[0] else str(uuid.uuid4())
-    temp_log_table = f"PipelineLogs_temp_{run_id.replace('-', '')}"
-    log_schema = [
-        bigquery.SchemaField("PipelineName", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("RunID", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("LogLevel", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Message", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("FunctionName", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("BatchID", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Details", "STRING", mode="NULLABLE"),
-    ]
-    if not create_or_replace_temp_table(client, dataset_id, temp_log_table, log_schema):
-        logging.error("Setup failed: Could not create temp logs table.")
-        return
-    if not wait_for_table(client, dataset_id, temp_log_table, retries=5, delay=5):
-        logging.error("Setup failed: Temp logs table not available.")
-        return
-    if not insert_rows_with_retry(client, dataset_id, temp_log_table, LOG_BUFFER, retries=5, delay=5):
-        logging.error("Failed to insert log entries into temp logs table after retries.")
-        return
-    merge_query = f"""
-        MERGE `{client.project}.{dataset_id}.PipelineLogs` T
-        USING (
-            SELECT DISTINCT * FROM `{client.project}.{dataset_id}.{temp_log_table}`
-        ) S
-        ON T.RunID = S.RunID AND T.Message = S.Message
-        WHEN MATCHED THEN
-            UPDATE SET
-                T.PipelineName = S.PipelineName,
-                T.LogLevel = S.LogLevel,
-                T.FunctionName = S.FunctionName,
-                T.BatchID = S.BatchID,
-                T.Details = S.Details
-        WHEN NOT MATCHED THEN
-            INSERT (PipelineName, RunID, LogLevel, Message, FunctionName, BatchID, Details)
-            VALUES (S.PipelineName, S.RunID, S.LogLevel, S.Message, S.FunctionName, S.BatchID, S.Details)
-    """
-    client.query(merge_query).result()
-    client.delete_table(f"{dataset_id}.{temp_log_table}")
-    logging.info("All log entries successfully merged into BigQuery logs table.")
-
-def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
-    temp_table_id = f"{table_id}_temp"
-    # Use a unique temp table name per run to avoid collisions
-    run_id = datetime.utcnow().strftime('%Y%m%d%H%M%S') + '_' + str(uuid.uuid4())[:8]
-    temp_table_id = f"{table_id}_temp_{run_id}"
-
-    schema = [
-        bigquery.SchemaField("Issue_Key", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("History_ID", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Transition_Timestamp", "TIMESTAMP", mode="NULLABLE"),
-        bigquery.SchemaField("Transitioned_From", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Transitioned_To", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Transitioned_By_Account_ID", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Transitioned_By_Display_Name", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
-    ]
-
-    if not create_or_replace_temp_table(client, dataset_id, temp_table_id, schema):
-        logging.error("Failed to create or replace temporary table.")
-        return False
-
-    if not wait_for_table(client, dataset_id, temp_table_id):
-        logging.error(f"Temporary table '{temp_table_id}' is not available.")
-        return False
-
-    # --- Automated Time Partitioning Logic ---
-    # Use a BigQuery table to track progress of time windows processed
-    progress_table = f"{table_id}_progress"
-    progress_schema = [
-        bigquery.SchemaField("WindowStart", "TIMESTAMP", mode="REQUIRED"),
-        bigquery.SchemaField("WindowEnd", "TIMESTAMP", mode="REQUIRED"),
-        bigquery.SchemaField("Status", "STRING", mode="REQUIRED"),  # e.g. 'complete', 'in_progress', 'failed'
-        bigquery.SchemaField("LastRun", "TIMESTAMP", mode="NULLABLE"),
-    ]
-    # Ensure progress table exists, but do NOT recreate or replace it
-    if not table_exists(client, dataset_id, progress_table):
+def fetch_histories_for_issue(base_url, issue_key, auth):
+    """Fetch single issue with changelog, retrying on 429 & transient errors.
+    Returns (data, attempts, last_error_str, had_429)"""
+    global HISTORY_429_COUNT
+    url = f"{base_url}/rest/api/2/issue/{issue_key}?expand=changelog"
+    last_err = None
+    had_429 = False
+    for attempt in range(1, MAX_HISTORY_ATTEMPTS + 1):
         try:
-            client.create_table(bigquery.Table(f"{client.project}.{dataset_id}.{progress_table}", schema=progress_schema))
-            logging.info(f"Progress table '{client.project}.{dataset_id}.{progress_table}' created.")
-        except Exception as e:
-            logging.error(f"Error creating progress table: {e}")
-
-    # Define window size (e.g., 7 days for full history, or 1 day for incremental)
-    window_days = 1
-    # Restrict to only process data from 2024 onwards
-    min_ts = datetime(2024, 7, 1)
-
-    # Find the latest transition timestamp in Jira (for upper bound)
-    now = datetime.utcnow()
-
-
-    # Find the earliest window with status not 'complete'
-    progress_query = f"SELECT WindowStart, WindowEnd FROM `{client.project}.{dataset_id}.{progress_table}` WHERE Status != 'complete' ORDER BY WindowStart ASC LIMIT 1"
-    window_start = None
-    window_end = None
-    try:
-        result = client.query(progress_query).result()
-        for row in result:
-            window_start = row.WindowStart
-            window_end = row.WindowEnd
-            break
-    except Exception as e:
-        logging.warning(f"Could not query progress table: {e}")
-
-    if window_start and window_end:
-        # There is an incomplete window, process it
-        window_end_candidate = window_end
-    else:
-        # All windows complete or no windows, advance to next window
-        # Find the latest window
-        latest_query = f"SELECT WindowEnd FROM `{client.project}.{dataset_id}.{progress_table}` ORDER BY WindowEnd DESC LIMIT 1"
-        latest_end = None
-        try:
-            result = client.query(latest_query).result()
-            for row in result:
-                latest_end = row.WindowEnd
-                break
-        except Exception as e:
-            logging.warning(f"Could not query for latest window: {e}")
-        if latest_end:
-            window_start = latest_end
-        else:
-            window_start = min_ts
-        window_end_candidate = window_start + timedelta(days=window_days)
-
-    # Ensure both window_end_candidate and now are offset-naive for comparison
-    if hasattr(window_end_candidate, 'tzinfo') and window_end_candidate.tzinfo is not None and window_end_candidate.tzinfo.utcoffset(window_end_candidate) is not None:
-        window_end_candidate_naive = window_end_candidate.replace(tzinfo=None)
-    else:
-        window_end_candidate_naive = window_end_candidate
-
-    if now.tzinfo is not None and now.tzinfo.utcoffset(now) is not None:
-        now_naive = now.replace(tzinfo=None)
-    else:
-        now_naive = now
-
-    window_end = min(window_end_candidate_naive, now_naive)
-
-    # Mark this window as in_progress using BigQuery-compatible MERGE
-    try:
-        merge_query = f'''
-            MERGE `{client.project}.{dataset_id}.{progress_table}` T
-            USING (SELECT TIMESTAMP('{window_start}') AS WindowStart, TIMESTAMP('{window_end}') AS WindowEnd) S
-            ON T.WindowStart = S.WindowStart AND T.WindowEnd = S.WindowEnd
-            WHEN MATCHED THEN
-              UPDATE SET Status = 'in_progress', LastRun = CURRENT_TIMESTAMP()
-            WHEN NOT MATCHED THEN
-              INSERT (WindowStart, WindowEnd, Status, LastRun)
-              VALUES (S.WindowStart, S.WindowEnd, 'in_progress', CURRENT_TIMESTAMP())
-        '''
-        client.query(merge_query).result()
-        logging.info(f"Progress table updated: window {window_start} to {window_end} marked as in_progress.")
-    except Exception as e:
-        logging.warning(f"Could not update progress table: {e}")
-
-    # Build JQL for this window (use updated >= ... AND updated < ... for API compatibility)
-    window_jql = (
-        f"({jql_query}) AND updated >= '{window_start.strftime('%Y/%m/%d %H:%M')}' "
-        f"AND updated < '{window_end.strftime('%Y/%m/%d %H:%M')}'"
-    )
-
-    total_issues = float('inf')
-    start_at = 0
-    max_results = 100
-    issues_processed = 0
-    batch_size = 1000
-    search_api_endpoint = f"{jira_base_url}/rest/api/2/search"
-    rows_inserted = False
-
-    while start_at < total_issues:
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        auth = (username, api_token)
-        payload = json.dumps({"jql": window_jql, "startAt": start_at, "maxResults": max_results, "fields": ["key"]})
-
-        logging.info(f"Fetching issues from Jira: {search_api_endpoint} with JQL window {window_start} to {window_end}, startAt {start_at}, maxResults {max_results}")
-        try:
-            data = fetch_issues_with_retry(search_api_endpoint, headers, auth, payload)
-            if data is None:
-                logging.error(f"Repeated failures in fetching issues. Merging and exiting.")
-                if rows_inserted:
-                    run_merge_query(client, dataset_id, table_id, temp_table_id)
-                delete_temp_table(client, dataset_id, temp_table_id)
-                # Mark window as failed
-                client.query(f"UPDATE `{client.project}.{dataset_id}.{progress_table}` SET Status='failed', LastRun=CURRENT_TIMESTAMP() WHERE WindowStart=TIMESTAMP('{window_start}') AND WindowEnd=TIMESTAMP('{window_end}')").result()
-                return False
-        except Exception as e:
-            logging.error(f"Unexpected error during issue fetch: {e}")
-            start_at += max_results
-            continue
-
-        issues = data.get('issues', [])
-        total_issues = data.get('total', 0)
-
-        if not issues:
-            if start_at == 0:
-                logging.info(f"No issues found for JQL window: {window_jql}")
+            RATE_LIMITER.take()
+            resp = requests.get(url, auth=auth, timeout=180)
+            if resp.status_code == 429:
+                HISTORY_429_COUNT += 1
+                had_429 = True
+                retry_after = int(resp.headers.get('Retry-After', 10))
+                sleep_for = retry_after + random.uniform(0, JITTER_MAX_SECONDS)
+                logging.warning(f"429 history {issue_key} attempt {attempt}/{MAX_HISTORY_ATTEMPTS} retry_after={retry_after}s")
+                time.sleep(sleep_for)
+                continue
+            if resp.status_code >= 500:
+                last_err = f"{resp.status_code} server error"
+                back = min(60, HISTORY_RETRY_BASE_SLEEP * (2 ** (attempt - 1))) + random.uniform(0, JITTER_MAX_SECONDS)
+                logging.warning(f"Server error {resp.status_code} history {issue_key} attempt {attempt} sleeping {back:.1f}s")
+                time.sleep(back)
+                continue
+            resp.raise_for_status()
+            return resp.json(), attempt, None, had_429
+        except requests.RequestException as e:
+            last_err = str(e)
+            back = min(60, HISTORY_RETRY_BASE_SLEEP * (2 ** (attempt - 1))) + random.uniform(0, JITTER_MAX_SECONDS)
+            if attempt < MAX_HISTORY_ATTEMPTS:
+                logging.warning(f"History fetch failed {issue_key} attempt {attempt}/{MAX_HISTORY_ATTEMPTS}: {e}; retrying in {back:.1f}s")
+                time.sleep(back)
             else:
-                logging.info(f"No more issues found on page starting at {start_at}.")
-            break
+                logging.warning(f"History fetch failed permanently {issue_key}: {e}")
+    return None, MAX_HISTORY_ATTEMPTS, last_err, had_429
 
-
-        logging.info(f"Fetched {len(issues)} issues. Total according to Jira: {total_issues}. Current offset: {start_at}")
-
-        rows_to_insert = []
-        # Fetch histories in parallel for the current page of issues
-        issue_histories = fetch_issue_histories_parallel(jira_base_url, issues, username, api_token)
-
-        for issue_data in issues:
-            issue_key = issue_data.get('key')
-            if not issue_key:
-                logging.warning(f"Issue missing key in search results. Data: {issue_data}. Skipping.")
-                continue
-
-            issue_history_detail = issue_histories.get(issue_key)
-
-            if issue_history_detail is None:
-                logging.warning(f"Could not retrieve history for issue {issue_key}. Skipping.")
-                continue
-
-            histories = issue_history_detail.get('changelog', {}).get('histories', [])
-
-            for history_entry in histories:
-                history_id = history_entry.get('id')
-                author = history_entry.get('author', {})
-                created_timestamp = convert_timestamp(history_entry.get('created'))
-                if not created_timestamp:
-                    logging.warning(f"Skipping history entry {history_id} for issue {issue_key} due to invalid creation timestamp.")
-                    continue
+def fetch_histories_batch(base_url, issue_keys, auth, max_workers=None):
+    """Parallel fetch with retries per issue and second-pass requeue for misses."""
+    results = {}
+    meta = {}  # issue_key -> (attempts, error, had_429)
+    def worker(k):
+        data, attempts, err, had_429 = fetch_histories_for_issue(base_url, k, auth)
+        return k, data, attempts, err, had_429
+    if max_workers is None:
+        max_workers = CURRENT_HISTORY_WORKERS
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        future_map = {ex.submit(worker, k): k for k in issue_keys}
+        for fut in as_completed(future_map):
+            k = future_map[fut]
+            try:
+                issue_key, data, attempts, err, had_429 = fut.result()
+                results[issue_key] = data
+                meta[issue_key] = (attempts, err, had_429)
+            except Exception as e:
+                logging.warning(f"Worker exception {k}: {e}")
+                results[k] = None
+                meta[k] = (1, str(e), False)
+            time.sleep(0.02 + random.uniform(0, 0.05))  # micro pacing
+    # Requeue failures (None) once after cooldown
+    failed = [k for k, v in results.items() if v is None]
+    if failed:
+        logging.info(f"Requeue pass for {len(failed)} failed issues after cooldown {HISTORY_REQUEUE_COOLDOWN}s")
+        time.sleep(HISTORY_REQUEUE_COOLDOWN)
+        with ThreadPoolExecutor(max_workers=min(SECOND_PASS_MAX_WORKERS, max(1, len(failed)))) as ex:
+            future_map = {ex.submit(worker, k): k for k in failed}
+            for fut in as_completed(future_map):
+                k = future_map[fut]
                 try:
-                    created_dt = datetime.strptime(created_timestamp, '%Y-%m-%d %H:%M:%S')
+                    issue_key, data, attempts, err, had_429 = fut.result()
+                    results[issue_key] = data
+                    meta[issue_key] = (meta.get(issue_key, (0, None, False))[0] + attempts, err, had_429 or meta.get(issue_key,(0,None,False))[2])
                 except Exception as e:
-                    logging.warning(f"Could not parse created_timestamp {created_timestamp} for history {history_id}: {e}")
-                    continue
-                # Ensure all datetimes are offset-naive for comparison
-                ws = window_start.replace(tzinfo=None) if hasattr(window_start, 'tzinfo') and window_start.tzinfo is not None else window_start
-                we = window_end.replace(tzinfo=None) if hasattr(window_end, 'tzinfo') and window_end.tzinfo is not None else window_end
-                cd = created_dt.replace(tzinfo=None) if hasattr(created_dt, 'tzinfo') and created_dt.tzinfo is not None else created_dt
-                if not (ws <= cd < we):
-                    continue  # Skip transitions outside the window
-                for item in history_entry.get('items', []):
-                    if item.get('fieldId') == 'status' or item.get('field') == 'status':
-                        rows_to_insert.append({
-                            "Issue_Key": issue_key,
-                            "History_ID": history_id,
-                            "Transition_Timestamp": created_timestamp,
-                            "Transitioned_From": item.get('fromString'),
-                            "Transitioned_To": item.get('toString'),
-                            "Transitioned_By_Account_ID": author.get('accountId'),
-                            "Transitioned_By_Display_Name": author.get('displayName'),
-                            "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-                        })
+                    logging.warning(f"Second pass worker exception {k}: {e}")
+                    results[k] = None
+                    base_attempts = meta.get(k, (0, None, False))[0]
+                    meta[k] = (base_attempts + 1, str(e), meta.get(k,(0,None,False))[2])
+                time.sleep(0.05 + random.uniform(0, 0.1))
+    return results, meta
 
-            # Insert rows in batches to BigQuery temp table
-            if len(rows_to_insert) >= batch_size:
-                if insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert):
-                    rows_inserted = True
-                else:
-                    logging.error(f"Failed to insert batch of {len(rows_to_insert)} rows into temp table. Stopping processing.")
-                    if rows_inserted:
-                        # Merge whatever is in temp table before exit
-                        run_merge_query(client, dataset_id, table_id, temp_table_id)
-                    delete_temp_table(client, dataset_id, temp_table_id)
-                    # Mark window as failed
-                    client.query(f"UPDATE `{client.project}.{dataset_id}.{progress_table}` SET Status='failed', LastRun=CURRENT_TIMESTAMP() WHERE WindowStart=TIMESTAMP('{window_start}') AND WindowEnd=TIMESTAMP('{window_end}')").result()
-                    return False
-                rows_to_insert = []
+# -------------- Changelog row generation --------------
 
-        # Insert any remaining rows after processing all issues on the page
-        if rows_to_insert:
-            if insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert):
-                rows_inserted = True
-            else:
-                logging.error(f"Failed to insert remaining rows into temp table. Stopping processing.")
-                if rows_inserted:
-                    # Merge whatever is in temp table before exit
-                    run_merge_query(client, dataset_id, table_id, temp_table_id)
-                delete_temp_table(client, dataset_id, temp_table_id)
-                # Mark window as failed
-                client.query(f"UPDATE `{client.project}.{dataset_id}.{progress_table}` SET Status='failed', LastRun=CURRENT_TIMESTAMP() WHERE WindowStart=TIMESTAMP('{window_start}') AND WindowEnd=TIMESTAMP('{window_end}')").result()
-                return False
+def generate_changelog_rows(issues, histories_map, window_start, window_end):
+    utc_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    ws = window_start.replace(tzinfo=None) if getattr(window_start, 'tzinfo', None) else window_start
+    we = window_end.replace(tzinfo=None) if getattr(window_end, 'tzinfo', None) else window_end
+    for issue in issues:
+        key = issue.get('key') if issue else None
+        if not key:
+            continue
+        issue_data = histories_map.get(key)
+        if not issue_data:
+            continue
+        histories = issue_data.get('changelog', {}).get('histories', [])
+        for h in histories:
+            hist_id = h.get('id')
+            created_raw = h.get('created')
+            created_conv = convert_timestamp(created_raw)
+            if not created_conv:
+                continue
+            try:
+                created_dt = datetime.strptime(created_conv, '%Y-%m-%d %H:%M:%S')
+            except Exception:
+                continue
+            if not (ws <= created_dt < we):
+                continue
+            author = h.get('author', {})
+            for item in h.get('items', []):
+                if (item.get('fieldId') == 'status') or (item.get('field') == 'status'):
+                    yield {
+                        'Issue_Key': key,
+                        'History_ID': hist_id,
+                        'Transition_Timestamp': created_conv,
+                        'Transitioned_From': item.get('fromString'),
+                        'Transitioned_To': item.get('toString'),
+                        'Transitioned_By_Account_ID': author.get('accountId'),
+                        'Transitioned_By_Display_Name': author.get('displayName'),
+                        'SyncTime': utc_now,
+                        # InsertedAt removed (use SyncTime only)
+                    }
 
-        issues_processed += len(issues)
-        logging.info(f"Processed details for {len(issues)} issues. Total issues processed so far: {issues_processed} out of {total_issues}")
-        remaining_issues = total_issues - issues_processed
-        logging.info(f"Remaining issues to process: {remaining_issues}")
-        start_at += max_results  # Advance to next page
+# -------------- Sync core --------------
+
+def sync_changelog_window(base_url, jql, auth, client, dataset_id, table_id, window_start, window_end):
+    run_id = str(uuid.uuid4())
+    temp_table = f'JiraChangelog_temp_{run_id}'
+    schema = [
+        bigquery.SchemaField('Issue_Key', 'STRING'),
+        bigquery.SchemaField('History_ID', 'STRING'),
+        bigquery.SchemaField('Transition_Timestamp', 'TIMESTAMP'),
+        bigquery.SchemaField('Transitioned_From', 'STRING'),
+        bigquery.SchemaField('Transitioned_To', 'STRING'),
+        bigquery.SchemaField('Transitioned_By_Account_ID', 'STRING'),
+        bigquery.SchemaField('Transitioned_By_Display_Name', 'STRING'),
+        bigquery.SchemaField('SyncTime', 'TIMESTAMP'),
+    ]
+    # Ensure destination table exists with required columns; add missing columns if legacy schema
+    try:
+        if not table_exists(client, dataset_id, table_id):
+            create_or_replace_table(client, dataset_id, table_id, schema)
+        else:
+            # Add new column if it doesn't exist (SyncTime)
+            client.query(f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS SyncTime TIMESTAMP").result()
+    except Exception as e:
+        logging.warning(f"Could not ensure target table schema: {e}")
+
+    if not create_or_replace_table(client, dataset_id, temp_table, schema) or not wait_for_table(client, dataset_id, temp_table):
+        return False, 0
+
+    search_url = f"{base_url}/rest/api/2/search"
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    max_results = 100
+    start_at = 0
+    total = float('inf')
+    batch_size = 1000
+    rows_buffer = []
+    total_rows = 0
+
+    while start_at < total:
+        data = fetch_issues_page(search_url, auth, headers, jql, start_at, max_results)
+        if data is None:
+            logging.error("Issue search failed permanently; aborting window.")
+            delete_table_quiet(client, dataset_id, temp_table)
+            return False, 0
+        issues = data.get('issues', [])
+        total = data.get('total', 0)
+        if not issues:
+            break
+        issue_keys = [i.get('key') for i in issues if i.get('key')]
+        histories_map, histories_meta = fetch_histories_batch(base_url, issue_keys, auth)
+        for row in generate_changelog_rows(issues, histories_map, window_start, window_end):
+            rows_buffer.append(row)
+            if len(rows_buffer) >= batch_size:
+                if not insert_rows_with_retry(client, dataset_id, temp_table, rows_buffer, schema):
+                    delete_table_quiet(client, dataset_id, temp_table)
+                    return False, total_rows
+                total_rows += len(rows_buffer)
+                rows_buffer = []
+        if rows_buffer:
+            if not insert_rows_with_retry(client, dataset_id, temp_table, rows_buffer, schema):
+                delete_table_quiet(client, dataset_id, temp_table)
+                return False, total_rows
+            total_rows += len(rows_buffer)
+            rows_buffer = []
+        start_at += len(issues)
+        logging.info(f"Processed issues {start_at}/{total}")
         time.sleep(1)
 
-
-    # Merge temp table into final table (upsert logic)
-    if rows_inserted:
-        run_merge_query(client, dataset_id, table_id, temp_table_id)
-    delete_temp_table(client, dataset_id, temp_table_id)
-
-    # Mark only the exact matching window as complete in the progress table (robust to microsecond differences)
+    logging.info(f"Inserted total {total_rows} changelog rows into temp table {temp_table}")
+    # Merge
+    merge_query = f"""
+        MERGE `{dataset_id}.{table_id}` T
+        USING (
+            SELECT DISTINCT Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To,
+                            Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime
+            FROM `{dataset_id}.{temp_table}`
+        ) S
+        ON T.History_ID = S.History_ID AND T.Transition_Timestamp = S.Transition_Timestamp
+        WHEN MATCHED THEN UPDATE SET
+            T.Issue_Key = S.Issue_Key,
+            T.Transitioned_From = S.Transitioned_From,
+            T.Transitioned_To = S.Transitioned_To,
+            T.Transitioned_By_Account_ID = S.Transitioned_By_Account_ID,
+            T.Transitioned_By_Display_Name = S.Transitioned_By_Display_Name,
+            T.SyncTime = S.SyncTime
+    WHEN NOT MATCHED THEN INSERT (Issue_Key, History_ID, Transition_Timestamp, Transitioned_From, Transitioned_To,
+                      Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime)
+    VALUES (S.Issue_Key, S.History_ID, S.Transition_Timestamp, S.Transitioned_From, S.Transitioned_To,
+        S.Transitioned_By_Account_ID, S.Transitioned_By_Display_Name, S.SyncTime)
+    """
     try:
-        # Round timestamps to the nearest second for comparison
-        window_start_rounded = window_start.replace(microsecond=0)
-        window_end_rounded = window_end.replace(microsecond=0)
-        update_query = f"""
-            UPDATE `{client.project}.{dataset_id}.{progress_table}`
-            SET Status='complete', LastRun=CURRENT_TIMESTAMP()
-            WHERE TIMESTAMP_TRUNC(WindowStart, SECOND) = TIMESTAMP('{window_start_rounded}')
-              AND TIMESTAMP_TRUNC(WindowEnd, SECOND) = TIMESTAMP('{window_end_rounded}')
-              AND Status != 'complete'
-        """
-        result = client.query(update_query).result()
-        updated_count = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else None
-        if updated_count and updated_count > 0:
-            logging.info(f"Marked window {window_start_rounded} to {window_end_rounded} as complete.")
-        else:
-            logging.warning(f"No window was marked as complete. Check timestamp precision and progress table.")
+        client.query(merge_query).result()
+        logging.info("Merge completed into final changelog table")
     except Exception as e:
-        logging.warning(f"Could not mark window as complete in progress table: {e}")
+        logging.exception(f"Merge failed: {e}")
+        delete_table_quiet(client, dataset_id, temp_table)
+        return False, total_rows
 
-    return True
+    delete_table_quiet(client, dataset_id, temp_table)
+    return True, total_rows
 
+# -------------- Logging buffer -> BigQuery --------------
+
+def log_to_bigquery_buffer(pipeline_name, run_id, level, message, function_name=None, details=None):
+    LOG_BUFFER.append({
+        'Timestamp': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+        'PipelineName': pipeline_name,
+        'RunID': run_id,
+        'LogLevel': level,
+        'Message': message,
+        'FunctionName': function_name,
+        'Details': details
+    })
+
+def flush_logs(client, dataset_id, log_table):
+    if not LOG_BUFFER:
+        return
+    temp = 'PipelineLogs_temp'
+    schema = [
+        bigquery.SchemaField('Timestamp', 'TIMESTAMP'),
+        bigquery.SchemaField('PipelineName', 'STRING'),
+        bigquery.SchemaField('RunID', 'STRING'),
+        bigquery.SchemaField('LogLevel', 'STRING'),
+        bigquery.SchemaField('Message', 'STRING'),
+        bigquery.SchemaField('FunctionName', 'STRING'),
+        bigquery.SchemaField('Details', 'STRING'),
+    ]
+    if not create_or_replace_table(client, dataset_id, temp, schema) or not wait_for_table(client, dataset_id, temp):
+        logging.error("Could not create temp logs table")
+        return
+    if not insert_rows_with_retry(client, dataset_id, temp, LOG_BUFFER, schema, retries=10, delay=5):
+        logging.error("Inserting logs failed")
+        return
+    merge = f"""
+        MERGE `{dataset_id}.{log_table}` T
+        USING (SELECT * FROM `{dataset_id}.{temp}`) S
+        ON T.Timestamp = S.Timestamp AND T.RunID = S.RunID AND T.Message = S.Message
+        WHEN MATCHED THEN UPDATE SET
+            T.PipelineName = S.PipelineName,
+            T.LogLevel = S.LogLevel,
+            T.FunctionName = S.FunctionName,
+            T.Details = S.Details
+        WHEN NOT MATCHED THEN INSERT (Timestamp, PipelineName, RunID, LogLevel, Message, FunctionName, Details)
+        VALUES (S.Timestamp, S.PipelineName, S.RunID, S.LogLevel, S.Message, S.FunctionName, S.Details)
+    """
+    client.query(merge).result()
+    delete_table_quiet(client, dataset_id, temp)
+    logging.info("Flushed logs to BigQuery")
+
+# -------------- Main orchestration --------------
 
 def main():
     config = load_config()
-    if config is None:
-        logging.error("Failed to load configuration. Exiting.")
-        return
-
-    jira_base_url = 'https://consoleconnect.atlassian.net'
-    jql_query = (
-        '('
-        'project = "GS&O Data Analytics" OR '
-        'project = "GS&O Tool Automation" OR '
-        'project = "GS&O Knowledge Consolidation" OR '
-        'project = "Google Contact Center AI Solution" OR '
-        'project = TAC OR '
-        'project = CCAS OR '
-        'project = VOICECE OR '
-        'project = IOTCE OR '
-        'project = TXCE OR '
-        'project = SMSCE OR '
-        'project = MSS OR '
-        'project = "Console Application Support" OR '
-        'project = "Console Connect Provisioning" OR '
-        'project = "Global Service Delivery Team" OR '
-        'project = "Transmission TX-CE" OR '
-        'project = "Mobility SMS - CE" OR '
-        'project = "Managed Security Services"'
-        ')'
-    )
-
-    username = 'jjkli@consoleconnect.com'
-    logging.info(f"Using Jira username: {username}")
-
-    api_token = config.get('jira_api_token')
-    if not api_token:
-        logging.error("Jira API token not found in config.json. Exiting.")
+    if not config:
         return
 
     dataset_id = 'GSO'
     table_id = 'JiraChangelog'
     log_table_id = 'PipelineLogs'
-    pipeline_name = "jira_changelog"
+    pipeline_name = 'jira_changelog'
     run_id = str(uuid.uuid4())
+    jira_url = 'https://consoleconnect.atlassian.net'
+
+    window_days = 7
+    min_ts = datetime(2024, 7, 1)
+    now = datetime.utcnow()
+
+    progress_table = f"{table_id}_progress"
+    # Extended schema to support per-project tracking (Project column). Keep legacy 'Projects' if present.
+    progress_schema = [
+        bigquery.SchemaField('WindowStart', 'TIMESTAMP'),
+        bigquery.SchemaField('WindowEnd', 'TIMESTAMP'),
+        bigquery.SchemaField('Status', 'STRING'),
+        bigquery.SchemaField('LastRun', 'TIMESTAMP'),
+        bigquery.SchemaField('Projects', 'STRING'),  # legacy aggregate list
+        bigquery.SchemaField('Project', 'STRING'),   # new per-project field
+        bigquery.SchemaField('RowCount', 'INT64'),   # rows processed in window
+    bigquery.SchemaField('Search429', 'INT64'),  # number of search endpoint 429s in window
+    bigquery.SchemaField('History429', 'INT64'), # number of history endpoint 429s in window
+    ]
 
     try:
         client = bigquery.Client()
-        logging.info(f"Successfully connected to BigQuery project: {client.project}")
     except Exception as e:
-        logging.error(f"Failed to initialize BigQuery client: {e}")
-        log_to_bigquery(None, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Failed to initialize BigQuery client: {e}", FunctionName="main")
+        logging.exception(f"BigQuery client init failed: {e}")
         return
 
-    # Log pipeline start
-    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", FunctionName="main")
+    if not table_exists(client, dataset_id, progress_table):
+        create_or_replace_table(client, dataset_id, progress_table, progress_schema)
+    else:
+        # Attempt to add Project column if legacy table exists
+        try:
+            client.query(f"ALTER TABLE `{dataset_id}.{progress_table}` ADD COLUMN IF NOT EXISTS Project STRING").result()
+            client.query(f"ALTER TABLE `{dataset_id}.{progress_table}` ADD COLUMN IF NOT EXISTS RowCount INT64").result()
+            client.query(f"ALTER TABLE `{dataset_id}.{progress_table}` ADD COLUMN IF NOT EXISTS Search429 INT64").result()
+            client.query(f"ALTER TABLE `{dataset_id}.{progress_table}` ADD COLUMN IF NOT EXISTS History429 INT64").result()
+        except Exception:
+            pass
 
-    try:
-        if sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
-            logging.info("Successfully synced transitions history to BigQuery.")
-            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced transitions history to BigQuery", FunctionName="main")
-        else:
-            logging.error("Failed to sync transition history to BigQuery.")
-            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync transition history to BigQuery", FunctionName="main")
-    except Exception as e:
-        logging.exception(f"Pipeline run failed: {e}")
-        log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Pipeline run failed: {e}", FunctionName="main", Details=str(e))
+    # User-specified project list (order determines processing sequence); can be filtered by CLI args
+    project_list_default = [
+        'Transmission TX-CE',
+        'Console Application Support',
+        'TAC',
+        'Console Connect Provisioning',
+        'Global Service Delivery Team'
+    ]
+    # Parse CLI args early to filter project list
+    import argparse, sys
+    parser = argparse.ArgumentParser(description='Jira changelog initial sync')
+    parser.add_argument('--project', help='Single project to process')
+    parser.add_argument('--projects', help='Comma separated list of projects to process (overrides --project)')
+    args, unknown = parser.parse_known_args()
+    if args.projects:
+        requested = [p.strip() for p in args.projects.split(',') if p.strip()]
+        project_list = [p for p in project_list_default if p in requested]
+    elif args.project:
+        project_list = [p for p in project_list_default if p == args.project]
+    else:
+        project_list = project_list_default
+    if not project_list:
+        logging.error('No valid projects resolved from arguments; exiting')
+        return
 
-    # Log pipeline end
-    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", FunctionName="main")
+    username = config.get('jira_username') or 'jjkli@consoleconnect.com'
+    api_token = config.get('jira_api_token')
+    if not api_token:
+        logging.error('Missing jira_api_token in config.json')
+        return
+    auth = (username, api_token)
 
-    # At the end, flush all logs to BigQuery in a batch
-    flush_logs_to_bigquery(client, dataset_id, log_table_id)
+    # Process each project sequentially
+    for project in project_list:
+        logging.info(f"Starting backfill for project {project}")
+        last_completed_start = None
+        while True:
+            # Determine next window for this project
+            window_start = None
+            window_end = None
+            q_next = f"SELECT WindowStart, WindowEnd FROM `{dataset_id}.{progress_table}` WHERE Project = @project AND Status NOT IN ('complete','degraded') ORDER BY WindowStart ASC LIMIT 1"
+            job_config = bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter('project', 'STRING', project)])
+            try:
+                res = client.query(q_next, job_config=job_config).result()
+                for row in res:
+                    window_start = row.WindowStart
+                    window_end = row.WindowEnd
+                    break
+            except Exception as e:
+                logging.warning(f"Progress query failed for project {project}: {e}")
 
-if __name__ == "__main__":
+            adaptive_days = window_days  # default 7-day window
+            # Adaptive sizing using recent history (last up to 5 complete windows)
+            try:
+                hist_q = f"""
+                    SELECT RowCount, WindowStart, WindowEnd, IFNULL(Search429,0) AS Search429, IFNULL(History429,0) AS History429
+                    FROM `{dataset_id}.{progress_table}`
+                    WHERE Project=@project AND Status IN ('complete','degraded')
+                    ORDER BY WindowEnd DESC
+                    LIMIT 5
+                """
+                hist_cfg = bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter('project','STRING',project)])
+                hist = list(client.query(hist_q, job_config=hist_cfg).result())
+                if hist:
+                    last = hist[0]
+                    last_count = last.RowCount or 0
+                    # Compute last window span hours
+                    try:
+                        span_sec = (last.WindowEnd - last.WindowStart).total_seconds()
+                        last_hours = max(0.01, span_sec / 3600.0)
+                    except Exception:
+                        last_hours = window_days * 24
+                    base_hours = window_days * 24
+                    min_hours = MIN_SHRINK_HOURS
+                    candidate_hours = last_hours
+
+                    # Shrink rules (multiplicative / halving toward thresholds)
+                    # Rate-limit driven shrink has precedence
+                    last_search_429 = getattr(last, 'Search429', 0) or 0
+                    last_history_429 = getattr(last, 'History429', 0) or 0
+                    if (last_history_429 >= RATE_SHRINK_HISTORY_429) or (last_search_429 >= RATE_SHRINK_SEARCH_429):
+                        candidate_hours = max(min_hours, last_hours * RATE_SHRINK_FACTOR)
+                    elif last_count > ADAPT_HIGH_ROWS and last_hours > min_hours:
+                        candidate_hours = max(min_hours, last_hours / 2.0)
+                    elif last_count > ADAPT_MEDIUM_ROWS and last_hours > 12:
+                        # soften shrink for medium spike
+                        candidate_hours = max(12, last_hours / 1.5)
+                    else:
+                        # Potential expansion back toward base if consistently low AND we are currently below base
+                        if last_hours < base_hours:
+                            # look at most recent ADAPT_GROW_CONSECUTIVE windows
+                            recent = hist[:ADAPT_GROW_CONSECUTIVE]
+                            if len(recent) == ADAPT_GROW_CONSECUTIVE:
+                                if all((r.RowCount or 0) < ADAPT_LOW_ROWS for r in recent):
+                                    candidate_hours = min(base_hours, last_hours * 2.0)
+
+                    # Final clamp
+                    candidate_hours = max(min_hours, min(candidate_hours, base_hours))
+                    adaptive_days = candidate_hours / 24.0
+            except Exception as e:
+                logging.debug(f"Adaptive sizing query failed for {project}: {e}")
+
+            if window_start and window_end:
+                candidate_end = window_end  # existing in-progress slice; do not alter span (will clamp later)
+            else:
+                latest_end = None
+                q_latest = f"SELECT WindowEnd FROM `{dataset_id}.{progress_table}` WHERE Project = @project ORDER BY WindowEnd DESC LIMIT 1"
+                try:
+                    res = client.query(q_latest, job_config=job_config).result()
+                    for row in res:
+                        latest_end = row.WindowEnd
+                        break
+                except Exception as e:
+                    logging.warning(f"Latest window query failed for project {project}: {e}")
+                # Overlap if possible when we have a previous completed/degraded window
+                if latest_end:
+                    overlap = timedelta(minutes=OVERLAP_MINUTES)
+                    # Normalize inputs to naive
+                    latest_end_naive = latest_end.replace(tzinfo=None) if getattr(latest_end, 'tzinfo', None) else latest_end
+                    last_completed_naive = last_completed_start.replace(tzinfo=None) if (last_completed_start and getattr(last_completed_start, 'tzinfo', None)) else last_completed_start
+                    candidate_start = latest_end_naive - overlap
+                    # If repeating or going backwards, drop overlap
+                    if last_completed_naive and candidate_start <= last_completed_naive:
+                        candidate_start = latest_end_naive
+                    # If prior span already short (<=2*overlap) skip overlap
+                    if last_completed_naive and (latest_end_naive - last_completed_naive) <= overlap * 2:
+                        candidate_start = latest_end_naive
+                    norm_min_ts = min_ts.replace(tzinfo=None) if getattr(min_ts, 'tzinfo', None) else min_ts
+                    if candidate_start < norm_min_ts:
+                        candidate_start = norm_min_ts
+                    window_start = candidate_start
+                else:
+                    window_start = min_ts
+                candidate_end = window_start + timedelta(days=adaptive_days)
+
+            ws_naive = window_start.replace(tzinfo=None) if getattr(window_start, 'tzinfo', None) else window_start
+            now_naive = now.replace(tzinfo=None) if getattr(now, 'tzinfo', None) else now
+            candidate_end_naive = candidate_end.replace(tzinfo=None) if getattr(candidate_end, 'tzinfo', None) else candidate_end
+            window_end = min(candidate_end_naive, now_naive)
+
+            # Guard: clamp any oversized existing window (e.g., legacy 1-year row) down to configured window_days
+            span_days = (window_end - ws_naive).days + ((window_end - ws_naive).seconds/86400)
+            max_span = window_days
+            if span_days > max_span + 0.01:  # allow minor rounding
+                # Update progress row to split into proper day-sized window, then continue loop to re-select
+                try:
+                    new_end = ws_naive + timedelta(days=window_days)
+                    adjust = f"""
+                        UPDATE `{dataset_id}.{progress_table}`
+                        SET WindowEnd = TIMESTAMP('{new_end}')
+                        WHERE Project='{project}' AND Status!='complete'
+                          AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive}') AS STRING)
+                          AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{window_end}') AS STRING)
+                    """
+                    client.query(adjust).result()
+                    logging.info(f"Clamped oversized window for {project} from span {span_days:.2f}d to {window_days}d; re-evaluating")
+                    continue
+                except Exception as e:
+                    logging.warning(f"Failed to clamp oversized window for {project}: {e}; aborting project")
+                    break
+
+            if ws_naive >= now_naive:
+                logging.info(f"Backfill complete for project {project}; no further windows (ws >= now)")
+                break
+
+            project_clause = f'project = "{project}"' if ' ' in project or '&' in project else f'project = {project}'
+            jql_query = f"({project_clause}) AND updated >= \"{ws_naive.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{window_end.strftime('%Y/%m/%d %H:%M')}\""
+
+            # Mark window in_progress
+            try:
+                merge = f"""
+                    MERGE `{dataset_id}.{progress_table}` T
+                    USING (SELECT TIMESTAMP('{ws_naive}') AS WindowStart, TIMESTAMP('{window_end}') AS WindowEnd, '{project}' AS Project) S
+                    ON T.WindowStart = S.WindowStart AND T.WindowEnd = S.WindowEnd AND T.Project = S.Project
+                    WHEN MATCHED THEN UPDATE SET Status='in_progress', LastRun=CURRENT_TIMESTAMP(), Project=S.Project
+                    WHEN NOT MATCHED THEN INSERT (WindowStart, WindowEnd, Status, LastRun, Project)
+                    VALUES (S.WindowStart, S.WindowEnd, 'in_progress', CURRENT_TIMESTAMP(), S.Project)
+                """
+                client.query(merge).result()
+                logging.info(f"Project {project} window {ws_naive} -> {window_end} marked in_progress")
+            except Exception as e:
+                logging.warning(f"Could not mark window in_progress for project {project}: {e}")
+                break
+
+            log_to_bigquery_buffer(pipeline_name, run_id, 'INFO', f'Window sync started for {project} {ws_naive}->{window_end}', 'main')
+            success = False
+            row_count = 0
+            # reset per-window counters
+            global SEARCH_429_COUNT, HISTORY_429_COUNT
+            SEARCH_429_COUNT = 0
+            HISTORY_429_COUNT = 0
+            try:
+                success, row_count = sync_changelog_window(jira_url, jql_query, auth, client, dataset_id, table_id, ws_naive, window_end)
+            except Exception as e:
+                logging.exception(f"Window sync fatal error for {project}: {e}")
+                log_to_bigquery_buffer(pipeline_name, run_id, 'ERROR', f'Window sync failed {project}: {e}', 'main', details=str(e))
+
+            if success:
+                # Determine degraded vs complete
+                failed_histories = 0
+                total_histories = 0
+                try:
+                    # Estimate by counting distinct History_ID inserted this window (optional heavier query omitted). Use counters instead.
+                    pass
+                except Exception:
+                    pass
+                # If high rate-limits or failures proportionally, degrade
+                degraded = False
+                # Approximate failure ratio using HISTORY_429_COUNT relative to issues processed if available
+                try:
+                    issues_processed = client.query(
+                        f"SELECT COUNT(DISTINCT Issue_Key) c FROM `{dataset_id}.{table_id}` WHERE SyncTime >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)"  # heuristic
+                    ).result()
+                    # Not strictly needed; rely on threshold constants
+                except Exception:
+                    pass
+                if (HISTORY_429_COUNT > 0 or SEARCH_429_COUNT > 0):
+                    # We don't have exact failed issue count here; degraded if any remaining history gaps exceed threshold.
+                    # Simpler rule: if history 429s proportionally > 0 and row_count > 0 and HISTORY_429_COUNT / max(1,row_count) > FAILURE_RATIO_DEGRADED -> degrade
+                    ratio = HISTORY_429_COUNT / max(1, row_count)
+                    if ratio > FAILURE_RATIO_DEGRADED:
+                        degraded = True
+                status_final = 'degraded' if degraded else 'complete'
+                try:
+                    upd = f"""
+                        UPDATE `{dataset_id}.{progress_table}`
+                        SET Status='{status_final}', LastRun=CURRENT_TIMESTAMP(), Project='{project}', RowCount={row_count},
+                            Search429={SEARCH_429_COUNT}, History429={HISTORY_429_COUNT}
+                        WHERE CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive}') AS STRING)
+                          AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{window_end}') AS STRING)
+                          AND Project='{project}'
+                          AND Status!='complete'
+                    """
+                    client.query(upd).result()
+                    logging.info(f"Project {project} window {ws_naive}->{window_end} {status_final} rows={row_count} 429_search={SEARCH_429_COUNT} 429_history={HISTORY_429_COUNT}")
+                    log_to_bigquery_buffer(pipeline_name, run_id, 'INFO', f'Window {status_final} {project} rows={row_count} search429={SEARCH_429_COUNT} history429={HISTORY_429_COUNT}', 'main')
+                    if status_final in ('complete','degraded'):
+                        last_completed_start = ws_naive
+                    # Dynamic concurrency scaling
+                    global CURRENT_HISTORY_WORKERS, _NO429_STREAK
+                    if HISTORY_429_COUNT > 0 or SEARCH_429_COUNT > 0:
+                        # scale down immediately
+                        CURRENT_HISTORY_WORKERS = max(HISTORY_MIN_WORKERS, int(CURRENT_HISTORY_WORKERS * HISTORY_SCALE_DOWN_FACTOR))
+                        _NO429_STREAK = 0
+                        logging.info(f"Scaling down history workers to {CURRENT_HISTORY_WORKERS} due to 429s")
+                    else:
+                        _NO429_STREAK += 1
+                        if _NO429_STREAK >= HISTORY_SCALE_UP_NO429_WINDOWS and CURRENT_HISTORY_WORKERS < HISTORY_MAX_WORKERS:
+                            CURRENT_HISTORY_WORKERS = min(HISTORY_MAX_WORKERS, max(CURRENT_HISTORY_WORKERS + 1, int(CURRENT_HISTORY_WORKERS * HISTORY_SCALE_UP_FACTOR)))
+                            _NO429_STREAK = 0
+                            logging.info(f"Scaling up history workers to {CURRENT_HISTORY_WORKERS} (no 429 streak)")
+                except Exception as e:
+                    logging.warning(f"Failed to mark window {status_final} for {project}: {e}")
+            else:
+                try:
+                    fail = f"""
+                        UPDATE `{dataset_id}.{progress_table}`
+                        SET Status='failed', LastRun=CURRENT_TIMESTAMP(), Project='{project}', RowCount={row_count},
+                            Search429={SEARCH_429_COUNT}, History429={HISTORY_429_COUNT}
+                        WHERE CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive}') AS STRING)
+                          AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{window_end}') AS STRING)
+                          AND Project='{project}'
+                          AND Status!='complete'
+                    """
+                    client.query(fail).result()
+                    logging.info(f"Project {project} window {ws_naive}->{window_end} failed rows={row_count}")
+                    log_to_bigquery_buffer(pipeline_name, run_id, 'ERROR', f'Window failed {project} rows={row_count}', 'main')
+                except Exception as e:
+                    logging.warning(f"Failed to mark window failed for {project}: {e}")
+
+            if not success:
+                # Incremental shrink strategy (Option B): reduce span and retry until MIN_SHRINK_HOURS; if already minimal -> mark degraded and break
+                try:
+                    current_span_hours = (window_end - ws_naive).total_seconds() / 3600.0
+                except Exception:
+                    current_span_hours = 0
+                if current_span_hours > (MIN_SHRINK_HOURS + 0.05):
+                    new_span_hours = max(MIN_SHRINK_HOURS, current_span_hours * RATE_SHRINK_FACTOR)
+                    new_end = ws_naive + timedelta(hours=new_span_hours)
+                    try:
+                        adjust_fail = f"""
+                            UPDATE `{dataset_id}.{progress_table}`
+                            SET WindowEnd = TIMESTAMP('{new_end}'), Status='failed'
+                            WHERE Project='{project}'
+                              AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive}') AS STRING)
+                              AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{window_end}') AS STRING)
+                        """
+                        client.query(adjust_fail).result()
+                        logging.info(f"Shrinking failed window for {project} from {current_span_hours:.2f}h -> {new_span_hours:.2f}h; will retry")
+                        # continue loop to pick up adjusted (failed) window again
+                        continue
+                    except Exception as e:
+                        logging.warning(f"Could not shrink failed window for {project}: {e}; breaking")
+                        break
+                else:
+                    # Already at minimal span; mark degraded to allow progress and break
+                    try:
+                        degrade = f"""
+                            UPDATE `{dataset_id}.{progress_table}`
+                            SET Status='degraded', LastRun=CURRENT_TIMESTAMP()
+                            WHERE Project='{project}'
+                              AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive}') AS STRING)
+                              AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{window_end}') AS STRING)
+                              AND Status='failed'
+                        """
+                        client.query(degrade).result()
+                        logging.info(f"Marking minimal failed window as degraded for {project} {ws_naive}->{window_end}; moving on")
+                    except Exception as e:
+                        logging.warning(f"Failed to mark minimal window degraded for {project}: {e}")
+                    break
+
+            # Continue loop to process next window
+
+    log_to_bigquery_buffer(pipeline_name, run_id, 'INFO', 'Pipeline finished (all projects processed)', 'main')
+    flush_logs(client, dataset_id, log_table_id)
+
+if __name__ == '__main__':
     main()
