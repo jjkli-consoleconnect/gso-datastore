@@ -511,8 +511,8 @@ def main():
         bigquery.SchemaField('Projects', 'STRING'),  # legacy aggregate list
         bigquery.SchemaField('Project', 'STRING'),   # new per-project field
         bigquery.SchemaField('RowCount', 'INT64'),   # rows processed in window
-    bigquery.SchemaField('Search429', 'INT64'),  # number of search endpoint 429s in window
-    bigquery.SchemaField('History429', 'INT64'), # number of history endpoint 429s in window
+        bigquery.SchemaField('Search429', 'INT64'),  # number of search endpoint 429s in window
+        bigquery.SchemaField('History429', 'INT64'), # number of history endpoint 429s in window
     ]
 
     try:
@@ -539,7 +539,8 @@ def main():
         'Console Application Support',
         'TAC',
         'Console Connect Provisioning',
-        'Global Service Delivery Team'
+        'Global Service Delivery Team',
+        'Vendor Management Escalations'
     ]
     # Parse CLI args early to filter project list
     import argparse, sys

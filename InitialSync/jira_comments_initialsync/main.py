@@ -235,7 +235,21 @@ def main():
         for col,ctype in [('Project','STRING'),('RowCount','INT64'),('Search429','INT64'),('Detail429','INT64')]:
             try: client.query(f"ALTER TABLE `{dataset}.{progress}` ADD COLUMN IF NOT EXISTS {col} {ctype}").result()
             except Exception: pass
-    default_projects=[ 'Managed Security Services','GS&O Tool Automation','GS&O Data Analytics','IOT CE','Google Contact Center AI Solution','GS&O Knowledge Consolidation' ]
+    default_projects = [
+        'GS&O Data Analytics',
+        'GS&O Tool Automation',
+        'GS&O Knowledge Consolidation',
+        'TAC',
+        'VOICE - CE',
+        'IOT CE',
+        'Console Application Support',
+        'Console Connect Provisioning',
+        'Global Service Delivery Team',
+        'Transmission TX-CE',
+        'Mobility SMS - CE',
+        'Managed Security Services',
+        'Vendor Management Escalations'
+    ]
     parser=argparse.ArgumentParser(); parser.add_argument('--project'); parser.add_argument('--projects'); args,_=parser.parse_known_args()
     if args.projects: req=[p.strip() for p in args.projects.split(',') if p.strip()]; projects=[p for p in default_projects if p in req]
     elif args.project: projects=[p for p in default_projects if p==args.project]
