@@ -1,0 +1,29 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run jira_comments_initialsync container",
+			"type": "shell",
+			"command": "docker run --rm jira_comments_initialsync:latest",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Docker: Build jira_comments_initialsync",
+			"type": "shell",
+			"command": "docker build --pull --rm -f \"InitialSync\\jira_comments_initialsync\\Dockerfile\" -t \"jira_comments_initialsync:latest\" \"InitialSync\\jira_comments_initialsync\"",
+			"isBackground": false,
+			"problemMatcher": [
+				"$eslint-stylish"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Docker: Run+Monitor jira_comments_initialsync",
+			"type": "shell",
+			"command": "powershell -NoProfile -Command \"$env:LOG_LEVEL=INFO; docker rm -f jira_comments_initialsync_run 2>$null; docker run -d --rm --name jira_comments_initialsync_run jira_comments_initialsync:latest | Out-Null; docker logs -f jira_comments_initialsync_run\"",
+			"isBackground": false,
+			"group": "test"
+		}
+	]
+}

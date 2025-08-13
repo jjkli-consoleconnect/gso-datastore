@@ -2,6 +2,7 @@
 var subject = 'BQ - GSO.SHR:People';
 var sender = 'noreply-bmchelix@onbmc.com';
 var label = 'CloudWatch';
+var VERBOSE = true; // extra logs for tracing
 
 // BigQuery details
 var projectId = 'pccw-internal-virt-agent-uat';
@@ -22,109 +23,110 @@ function searchForEmailAndAttachments() {
   var searchQuery = 'subject:' + subject + ' from:' + sender + ' label:' + label;
   var threads = GmailApp.search(searchQuery);
   console.log("Number of emails found:", threads.length);
+  if (VERBOSE) {
+    for (var ti = 0; ti < threads.length; ti++) {
+      var th = threads[ti];
+      console.log('[Thread]', ti + 1, '/', threads.length, 'id=', th.getId(), 'subject="' + th.getFirstMessageSubject() + '"', 'lastDate=', th.getLastMessageDate());
+    }
+  }
 
   if (threads.length === 0) {
     console.log('No emails found with the given search query.');
     return;
   }
 
+  // Process ALL matching threads/messages/attachments
+  var tempTableId = 'SHRPeople_tmp_' + Utilities.getUuid().replace(/-/g, '').substring(0, 18);
+  var attachmentsProcessed = 0;
+  var perAttachmentCounts = [];
+  var failedAttachments = [];
+  var dashboardLabelObj = GmailApp.getUserLabelByName(label);
+  var archivedLabelObj = GmailApp.getUserLabelByName(archivedLabel);
+
   threads.sort(function(a, b) {
     return b.getLastMessageDate().getTime() - a.getLastMessageDate().getTime();
   });
 
-  var latestThread = threads[0];
-  var messages = latestThread.getMessages();
-  var latestMessage = messages[messages.length - 1];
-
-  // Print actual subject for debugging
-  console.log('Actual subject: "' + latestMessage.getSubject() + '"');
-
-  var attachments = latestMessage.getAttachments();
-  console.log('  Number of attachments:', attachments.length);
-
-  if (attachments.length > 0) {
-    console.log('  Attachment names:');
-    var allRows = [];
-    for (var j = 0; j < attachments.length; j++) {
-      console.log('    ' + attachments[j].getName());
-      var csvData = Utilities.parseCsv(attachments[j].getDataAsString());
-      csvData.shift(); // remove header row
-      csvData = csvData.filter(row => row.some(cell => cell !== ''));
-      var transformedData = csvData.map(row => [
-        row[0],  // CustID
-        row[1],  // CustName
-        row[2],  // SRNo
-        row[3],  // Product Family
-        row[4],  // SiteA
-        row[5],  // SiteB
-        row[6],  // Region A
-        row[7],  // Region B
-        row[8],  // Product ID
-        row[9],  // Insight Circuit ID
-        row[10], // Circuit Owner
-        row[11]  // ProductDescription
-      ]);
-      allRows = allRows.concat(transformedData);
-    }
-
-    var processedCsvContent = allRows.map(row => row.join(',')).join('\n');
-    var fileName = 'combined_attachments_amended.csv';
-    var file = DriveApp.getFolderById(folderId).createFile(fileName, processedCsvContent);
-    console.log('Processed combined CSV file saved to Google Drive:', file.getUrl());
-
-    var job = {
-      configuration: {
-        load: {
-          destinationTable: {
-            projectId: projectId,
-            datasetId: datasetId,
-            tableId: tableId
-          },
-          sourceFormat: 'CSV',
-          skipLeadingRows: 0,
-          writeDisposition: 'WRITE_TRUNCATE'
+  for (var t = 0; t < threads.length; t++) {
+    var thread = threads[t];
+    var messages = thread.getMessages();
+    if (VERBOSE) console.log('[Thread]', t + 1, '/', threads.length, 'id=', thread.getId(), 'messages=', messages.length);
+    var threadOk = true;
+    try {
+      for (var m = 0; m < messages.length; m++) {
+        var message = messages[m];
+        var attachments = message.getAttachments();
+        if (VERBOSE) console.log('  [Message]', m + 1, '/', messages.length, 'id=', message.getId(), 'date=', message.getDate(), 'attachments=', (attachments ? attachments.length : 0));
+        if (!attachments || attachments.length === 0) continue;
+        for (var j = 0; j < attachments.length; j++) {
+          var att = attachments[j];
+          if (VERBOSE) console.log('    [Attachment]', j + 1, '/', attachments.length, 'name="' + att.getName() + '"', 'size=', (att.getSize ? att.getSize() : '?'), 'bytes');
+          try {
+            var res = loadAttachmentToTemp(att, tempTableId, attachmentsProcessed === 0);
+            attachmentsProcessed++;
+            perAttachmentCounts.push({ name: att.getName(), rows: res.rows, jobId: res.jobId });
+            if (VERBOSE) console.log('      -> loaded rows=', res.rows, 'jobId=', res.jobId);
+          } catch (e) {
+            threadOk = false;
+            failedAttachments.push({ name: att.getName(), error: e.message });
+            console.error('Failed processing attachment ' + att.getName() + ': ' + e.message);
+          }
         }
       }
-    };
-
-    BigQuery.Jobs.insert(job, projectId, Utilities.newBlob(processedCsvContent));
-    console.log("CSV data updated in BigQuery table successfully!");
-
-    logToBigQuery(
-      datasetId,           // 'GSO'
-      'PipelineLogs',      // Your log table name
-      'Gmail_to_BQ_GSO_SHRPeople', // pipelineName
-      Utilities.getUuid(), // runId (or any unique string)
-      "INFO",              // logLevel
-      "CSV data updated in BigQuery table successfully!", // message
-      "searchForEmailAndAttachments", // FunctionName
-      null,                // BatchID
-      null                 // Details
-    );
-
-    deleteCsvFile(fileName, folderId);
-
-    // Label Handling
-    var archivedLabelObj = GmailApp.getUserLabelByName(archivedLabel);
-    var dashboardLabelObj = GmailApp.getUserLabelByName(label);
-
-    if (dashboardLabelObj) {
-      latestThread.removeLabel(dashboardLabelObj);
-      console.log('Label "' + label + '" removed from email thread.');
-    } else {
-      console.log('Label "' + label + '" not found.');
+    } catch (err) {
+      threadOk = false;
+      console.error('Error processing thread: ' + err.message);
     }
 
-    if (archivedLabelObj) {
-      latestThread.addLabel(archivedLabelObj);
-      console.log('Label "' + archivedLabel + '" added to email thread.');
-    } else {
-      console.log('Label "' + archivedLabel + '" not found.');
+    // Label handling per thread if processed without errors
+    if (threadOk) {
+      if (dashboardLabelObj) {
+        thread.removeLabel(dashboardLabelObj);
+        console.log('Label "' + label + '" removed from email thread.');
+      }
+      if (archivedLabelObj) {
+        thread.addLabel(archivedLabelObj);
+        console.log('Label "' + archivedLabel + '" added to email thread.');
+      }
     }
-
-  } else {
-    console.log('  No attachments found.');
   }
+
+  if (attachmentsProcessed === 0) {
+    console.log('No attachments to load across all matching emails.');
+    return;
+  }
+
+  // MERGE temp into target by SRNo (non-null)
+  try {
+    runMergeTempIntoTarget(tempTableId);
+    console.log('MERGE completed into ' + datasetId + '.' + tableId);
+  } catch (mergeErr) {
+    console.error('MERGE failed: ' + mergeErr.message);
+    throw mergeErr;
+  } finally {
+    // Drop temp table best effort
+    try { dropTempTable(tempTableId); } catch (dropErr) { console.warn('Temp drop failed: ' + dropErr.message); }
+  }
+
+  // Log summary
+  var summary = {
+    tempTableId: tempTableId,
+    attachmentsProcessed: attachmentsProcessed,
+    perAttachmentCounts: perAttachmentCounts,
+    failedAttachments: failedAttachments
+  };
+
+  logToBigQuery(
+    datasetId,
+    'PipelineLogs',
+    'Gmail_to_BQ_GSO_SHRPeople',
+    Utilities.getUuid(),
+    'INFO',
+    'Loaded attachments via temp table and merged into target',
+    'searchForEmailAndAttachments',
+    null,
+    JSON.stringify(summary)
+  );
 }
 
 function processAttachment(attachment) {
@@ -251,4 +253,165 @@ function logToBigQuery(datasetId, tableId, pipelineName, runId, logLevel, messag
 
   var response = UrlFetchApp.fetch(url, options);
   Logger.log("BigQuery log response: " + response.getContentText());
+}
+
+// === Helpers ===
+function getSchemaFields() {
+  return [
+    { name: 'CustID', type: 'STRING' },
+    { name: 'CustName', type: 'STRING' },
+    { name: 'SRNo', type: 'STRING' },
+    { name: 'Product Family', type: 'STRING' },
+    { name: 'SiteA', type: 'STRING' },
+    { name: 'SiteB', type: 'STRING' },
+    { name: 'Region A', type: 'STRING' },
+    { name: 'Region B', type: 'STRING' },
+    { name: 'Product ID', type: 'STRING' },
+    { name: 'Insight Circuit ID', type: 'STRING' },
+    { name: 'Circuit Owner', type: 'STRING' },
+    { name: 'ProductDescription', type: 'STRING' }
+  ];
+}
+
+function normalizeRowLength(row, expected) {
+  var out = row.slice(0, expected);
+  while (out.length < expected) out.push('');
+  return out;
+}
+
+function csvFromRows(rows) {
+  // Minimal quoting: wrap fields containing comma, quote, or newline
+  return rows.map(function(r){
+    return r.map(function(f){
+      if (f == null) return '';
+      f = String(f);
+      if (/[",\n\r]/.test(f)) {
+        return '"' + f.replace(/"/g, '""') + '"';
+      }
+      return f;
+    }).join(',');
+  }).join('\n');
+}
+
+function loadAttachmentToTemp(attachment, tempTableId, isFirst) {
+  var csvData = Utilities.parseCsv(attachment.getDataAsString());
+  if (!csvData || csvData.length === 0) return 0;
+  // remove header row if present
+  var header = csvData[0];
+  var looksLikeHeader = header && header.length >= 3 && /CustID|SRNo|Product/i.test(header.join(','));
+  if (looksLikeHeader) csvData.shift();
+  var filtered = csvData.filter(function(row){ return row && row.some(function(c){ return c !== ''; }); });
+  var rows = filtered.map(function(row){
+    var norm = normalizeRowLength(row, 12);
+    return [
+      norm[0],  // CustID
+      norm[1],  // CustName
+      norm[2],  // SRNo
+      norm[3],  // Product Family
+      norm[4],  // SiteA
+      norm[5],  // SiteB
+      norm[6],  // Region A
+      norm[7],  // Region B
+      norm[8],  // Product ID
+      norm[9],  // Insight Circuit ID
+      norm[10], // Circuit Owner
+      norm[11]  // ProductDescription
+    ];
+  });
+  if (rows.length === 0) return 0;
+
+  var content = csvFromRows(rows);
+  var job = {
+    configuration: {
+      load: {
+        destinationTable: {
+          projectId: projectId,
+          datasetId: datasetId,
+          tableId: tempTableId
+        },
+        sourceFormat: 'CSV',
+        skipLeadingRows: 0,
+        writeDisposition: isFirst ? 'WRITE_TRUNCATE' : 'WRITE_APPEND',
+        createDisposition: 'CREATE_IF_NEEDED',
+        allowQuotedNewlines: true,
+        fieldDelimiter: ',',
+        quote: '"',
+        encoding: 'UTF-8',
+        schema: { fields: getSchemaFields() }
+      }
+    }
+  };
+  var jobResp = BigQuery.Jobs.insert(job, projectId, Utilities.newBlob(content));
+  var jobId = jobResp && jobResp.jobReference ? jobResp.jobReference.jobId : null;
+  if (VERBOSE) console.log('      BigQuery load submitted: table=', datasetId + '.' + tempTableId, 'writeDisposition=', (isFirst ? 'WRITE_TRUNCATE' : 'WRITE_APPEND'), 'jobId=', jobId);
+  return { rows: rows.length, jobId: jobId };
+}
+
+function runMergeTempIntoTarget(tempTableId) {
+  var fqTemp = '`' + projectId + '.' + datasetId + '.' + tempTableId + '`';
+  var fqTarget = '`' + projectId + '.' + datasetId + '.' + tableId + '`';
+  var query = [
+    'MERGE ' + fqTarget + ' T',
+    'USING (',
+    '  SELECT * FROM (',
+    '    SELECT',
+    '      CAST(CustID AS STRING) AS CustID,',
+    '      CAST(CustName AS STRING) AS CustName,',
+    '      CAST(SRNo AS STRING) AS SRNo,',
+    '      CAST(`Product Family` AS STRING) AS `Product Family`,',
+    '      CAST(SiteA AS STRING) AS SiteA,',
+    '      CAST(SiteB AS STRING) AS SiteB,',
+    '      CAST(`Region A` AS STRING) AS `Region A`,',
+    '      CAST(`Region B` AS STRING) AS `Region B`,',
+    '      CAST(`Product ID` AS STRING) AS `Product ID`,',
+    '      CAST(`Insight Circuit ID` AS STRING) AS `Insight Circuit ID`,',
+    '      CAST(`Circuit Owner` AS STRING) AS `Circuit Owner`,',
+    '      CAST(ProductDescription AS STRING) AS ProductDescription,',
+    '      ROW_NUMBER() OVER (PARTITION BY SRNo ORDER BY SRNo) AS rn',
+    '    FROM ' + fqTemp,
+    '    WHERE SRNo IS NOT NULL AND SRNo != ""',
+    '  ) WHERE rn = 1',
+    ') S',
+    'ON T.SRNo = S.SRNo',
+    'WHEN MATCHED THEN UPDATE SET',
+    '  T.CustID = S.CustID,',
+    '  T.CustName = S.CustName,',
+    '  T.`Product Family` = S.`Product Family`,',
+    '  T.SiteA = S.SiteA,',
+    '  T.SiteB = S.SiteB,',
+    '  T.`Region A` = S.`Region A`,',
+    '  T.`Region B` = S.`Region B`,',
+    '  T.`Product ID` = S.`Product ID`,',
+    '  T.`Insight Circuit ID` = S.`Insight Circuit ID`,',
+    '  T.`Circuit Owner` = S.`Circuit Owner`,',
+    '  T.ProductDescription = S.ProductDescription',
+    'WHEN NOT MATCHED THEN',
+    '  INSERT (SRNo, CustID, CustName, `Product Family`, SiteA, SiteB, `Region A`, `Region B`, `Product ID`, `Insight Circuit ID`, `Circuit Owner`, ProductDescription)',
+    '  VALUES (S.SRNo, S.CustID, S.CustName, S.`Product Family`, S.SiteA, S.SiteB, S.`Region A`, S.`Region B`, S.`Product ID`, S.`Insight Circuit ID`, S.`Circuit Owner`, S.ProductDescription)'
+  ].join('\n');
+
+  var request = {
+    query: query,
+    useLegacySql: false
+  };
+  var response = BigQuery.Jobs.query(request, projectId);
+  if (VERBOSE && response && response.jobReference) {
+    console.log('MERGE jobId=', response.jobReference.jobId);
+  }
+  if (!response.jobComplete) {
+    throw new Error('Merge job did not complete in time');
+  }
+  if (response.status && response.status.errorResult) {
+    throw new Error('Merge error: ' + JSON.stringify(response.status.errors || response.status.errorResult));
+  }
+}
+
+function dropTempTable(tempTableId) {
+  var fqTemp = projectId + ':' + datasetId + '.' + tempTableId;
+  try {
+    BigQuery.Tables.remove(projectId, datasetId, tempTableId);
+    console.log('Dropped temp table ' + fqTemp);
+  } catch (e) {
+    console.warn('Failed to drop temp table ' + fqTemp + ': ' + e.message);
+  }
 }

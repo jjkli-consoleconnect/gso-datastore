@@ -1,11 +1,15 @@
-"""Unified comments pipeline with changelog resiliency (rate limiting, adaptive shrink, degraded status)."""
+"""Unified comments pipeline with changelog-aligned resiliency (rate limiting, adaptive sizing, degraded status) and logging."""
 import argparse, json, logging, time, uuid, requests, random, threading, os
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery
 
 DEBUG=False
-logging.basicConfig(level=logging.DEBUG if DEBUG else logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+# Allow runtime log level override via env (LOG_LEVEL=DEBUG|INFO|WARNING|ERROR)
+_env_level = os.environ.get('LOG_LEVEL', None)
+_level = getattr(logging, _env_level.upper(), None) if _env_level else (logging.DEBUG if DEBUG else logging.INFO)
+logging.basicConfig(level=_level, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.info("Comments initial sync starting up")
 
 # Adaptive thresholds
 ADAPT_HIGH_ROWS=50000
@@ -124,8 +128,12 @@ def insert_rows_with_retry(client,dataset,table,rows,schema,retries=6,delay=5):
             if not errs: return True
             logging.error(f'Insert errors {errs}')
         except Exception as e:
-            if 'Not found' in str(e):
+            msg=str(e)
+            if 'not found' in msg.lower():
+                logging.warning(f"Temp table missing {dataset}.{table}; recreating (attempt {attempt+1})")
                 if not create_or_replace_table(client,dataset,table,schema) or not wait_for_table(client,dataset,table): return False
+                # brief pause to avoid post-DDL streaming race
+                time.sleep(2)
             else:
                 logging.exception(f'Insert exception: {e}')
         if attempt<retries-1: time.sleep(delay)
@@ -140,13 +148,18 @@ def fetch_issues_page(search_url,auth,headers,jql,start_at,max_results):
     payload=json.dumps({'jql':jql,'startAt':start_at,'maxResults':max_results,'fields':['key']})
     for attempt in range(5):
         try:
-            RATE_LIMITER.take(); r=requests.post(search_url,headers=headers,auth=auth,data=payload,timeout=300)
+            logging.debug(f"Searching issues startAt={start_at} maxResults={max_results} attempt={attempt+1}/5")
+            RATE_LIMITER.take(); r=requests.post(search_url,headers=headers,auth=auth,data=payload,timeout=120)
             if r.status_code==429:
-                SEARCH_429_COUNT+=1; ra=int(r.headers.get('Retry-After',30)); time.sleep(ra+random.uniform(0,JITTER_MAX_SECONDS)); continue
+                SEARCH_429_COUNT+=1; ra=int(r.headers.get('Retry-After',30)); sleep_for=ra+random.uniform(0,JITTER_MAX_SECONDS)
+                logging.warning(f"429 search attempt {attempt+1}/5 startAt={start_at}; sleeping {sleep_for:.1f}s")
+                time.sleep(sleep_for); continue
             r.raise_for_status(); return r.json()
         except requests.exceptions.Timeout:
-            time.sleep(15)
-        except requests.RequestException:
+            logging.warning(f"Search timeout attempt {attempt+1}/5 startAt={start_at}"); time.sleep(15)
+        except requests.RequestException as e:
+            status = e.response.status_code if getattr(e, 'response', None) else 'NA'
+            logging.error(f"Search error attempt {attempt+1}/5 startAt={start_at} status={status}: {e}")
             if attempt<4: time.sleep(8)
             else: return None
     return None
@@ -158,7 +171,9 @@ def fetch_comments_for_issue(base_url,issue_key,auth):
         try:
             RATE_LIMITER.take(); r=requests.get(url,auth=auth,params={'startAt':start,'maxResults':size},timeout=180)
             if r.status_code==429:
-                DETAIL_429_COUNT+=1; ra=int(r.headers.get('Retry-After',10)); time.sleep(ra+random.uniform(0,JITTER_MAX_SECONDS)); continue
+                DETAIL_429_COUNT+=1; ra=int(r.headers.get('Retry-After',10)); sleep_for=ra+random.uniform(0,JITTER_MAX_SECONDS)
+                logging.warning(f"429 comments {issue_key} startAt={start}; sleeping {sleep_for:.1f}s")
+                time.sleep(sleep_for); continue
             r.raise_for_status(); data=r.json(); cm=data.get('comments',[]); out.extend(cm); total=data.get('total',len(out))
             if start+len(cm)>=total: break
             start+=len(cm); time.sleep(0.02+random.uniform(0,0.05))
@@ -211,20 +226,36 @@ def sync_window(base_url,jql,auth,client,dataset,table,ws,we):
     start=0; max_results=100; total=float('inf'); buf=[]; batch=1000; inserted=0
     while start<total:
         data=fetch_issues_page(search_url,auth,headers,jql,start,max_results)
-        if data is None: delete_table_quiet(client,dataset,temp); return False,inserted
+        if data is None:
+            logging.error("Issue search failed permanently; aborting window.")
+            delete_table_quiet(client,dataset,temp); return False,inserted
         issues=data.get('issues',[]); total=data.get('total',0)
+        try:
+            logging.debug(f"Search returned issues={len(issues)} total={total} startAt={start}")
+        except Exception:
+            pass
         if not issues: break
         keys=[i.get('key') for i in issues if i.get('key')]
         cmap=fetch_comments_batch(base_url,keys,auth)
+        logging.debug(f"Fetched comments for {len(keys)} keys; non-empty maps={sum(1 for v in cmap.values() if v)}")
+        rows_page = 0
         for row in generate_rows(issues,cmap,ws,we):
             buf.append(row)
+            rows_page += 1
             if len(buf)>=batch:
                 if not insert_rows_with_retry(client,dataset,temp,buf,schema): delete_table_quiet(client,dataset,temp); return False,inserted
                 inserted+=len(buf); buf=[]
+        logging.debug(f"Generated rows this page={rows_page}; total inserted so far={inserted}")
         if buf:
             if not insert_rows_with_retry(client,dataset,temp,buf,schema): delete_table_quiet(client,dataset,temp); return False,inserted
             inserted+=len(buf); buf=[]
-        start+=len(issues); time.sleep(1)
+        prev_start = start
+        start+=len(issues)
+        if start == prev_start:
+            logging.warning("Pagination made no progress (start unchanged); breaking to avoid loop")
+            break
+        logging.debug(f"Advancing start from {prev_start} by {len(issues)} -> {start} of {total}")
+        time.sleep(1)
     merge=f"""
       MERGE `{dataset}.{table}` T USING (SELECT DISTINCT * FROM `{dataset}.{temp}`) S
       ON T.Comment_ID=S.Comment_ID AND T.Updated=S.Updated
@@ -239,14 +270,19 @@ def sync_window(base_url,jql,auth,client,dataset,table,ws,we):
 def log_buf(pipeline,run_id,level,msg,fn=None,details=None):
     LOG_BUFFER.append({'Timestamp':datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),'PipelineName':pipeline,'RunID':run_id,'LogLevel':level,'Message':msg,'FunctionName':fn,'Details':details})
 
+# Alias aligned with changelog script naming
+def log_to_bigquery_buffer(pipeline, run_id, level, message, function_name=None, details=None):
+    log_buf(pipeline, run_id, level, message, function_name, details)
+
 def flush_logs(client,dataset,table):
     if not LOG_BUFFER: return
-    temp='PipelineLogs_temp_comments'
+    # Use unique temp to avoid collisions with other pipelines flushing concurrently
+    temp=f"PipelineLogs_temp_comments_{uuid.uuid4().hex[:8]}"
     schema=[bigquery.SchemaField(n,t) for n,t in [('Timestamp','TIMESTAMP'),('PipelineName','STRING'),('RunID','STRING'),('LogLevel','STRING'),('Message','STRING'),('FunctionName','STRING'),('Details','STRING')]]
     if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp): return
-    if not insert_rows_with_retry(client,dataset,temp,LOG_BUFFER,schema): return
+    if not insert_rows_with_retry(client,dataset,temp,LOG_BUFFER,schema,retries=10,delay=5): return
     merge=f"MERGE `{dataset}.{table}` T USING (SELECT * FROM `{dataset}.{temp}`) S ON T.Timestamp=S.Timestamp AND T.RunID=S.RunID AND T.Message=S.Message WHEN MATCHED THEN UPDATE SET T.PipelineName=S.PipelineName,T.LogLevel=S.LogLevel,T.FunctionName=S.FunctionName,T.Details=S.Details WHEN NOT MATCHED THEN INSERT (Timestamp,PipelineName,RunID,LogLevel,Message,FunctionName,Details) VALUES (S.Timestamp,S.PipelineName,S.RunID,S.LogLevel,S.Message,S.FunctionName,S.Details)"
-    client.query(merge).result(); delete_table_quiet(client,dataset,temp)
+    client.query(merge).result(); delete_table_quiet(client,dataset,temp); logging.info("Flushed logs to BigQuery")
 
 def main():
     cfg=load_config();
@@ -285,6 +321,7 @@ def main():
     if not token: logging.error('jira_api_token missing'); return
     auth=(user,token); base_url='https://consoleconnect.atlassian.net'
     for proj in projects:
+        logging.info(f"Starting backfill for project {proj}")
         last_completed_start=None
         while True:
             ws=None; we=None
@@ -338,22 +375,42 @@ def main():
             now_naive=now.replace(tzinfo=None)
             cand_naive=cand.replace(tzinfo=None) if getattr(cand,'tzinfo',None) else cand
             we=min(cand_naive,now_naive)
+
+            # Clamp oversized existing window spans to base_days (align with changelog behavior)
+            try:
+                span_days=(we-ws_naive).days+((we-ws_naive).seconds/86400)
+            except Exception:
+                span_days=base_days
+            if span_days>base_days+0.01:
+                try:
+                    new_end=ws_naive+timedelta(days=base_days)
+                    client.query(
+                        f"UPDATE `{dataset}.{progress}` SET WindowEnd=TIMESTAMP('{new_end}') WHERE Project='{proj}' AND Status!='complete' "
+                        f"AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING)"
+                    ).result();
+                    logging.info(f"Clamped oversized window for {proj} from span {span_days:.2f}d to {base_days}d; re-evaluating")
+                    continue
+                except Exception:
+                    logging.warning(f"Failed to clamp oversized window for {proj}; aborting project")
+                    break
             if ws_naive>=now_naive: break
             proj_clause=f'project = "{proj}"' if (' ' in proj or '&' in proj) else f'project = {proj}'
             jql=f"({proj_clause}) AND updated >= \"{ws_naive.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
             try:
                 merge=(
-                    f"MERGE `{dataset}.{progress}` T USING (SELECT TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S')}') AS WindowStart, TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS WindowEnd, '{proj}' AS Project) S "
+                    f"MERGE `{dataset}.{progress}` T USING (SELECT TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS WindowStart, TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS WindowEnd, '{proj}' AS Project) S "
                     "ON T.WindowStart=S.WindowStart AND T.WindowEnd=S.WindowEnd AND T.Project=S.Project "
                     "WHEN MATCHED THEN UPDATE SET Status='in_progress', LastRun=CURRENT_TIMESTAMP(), Project=S.Project "
                     "WHEN NOT MATCHED THEN INSERT (WindowStart,WindowEnd,Status,LastRun,Project) VALUES (S.WindowStart,S.WindowEnd,'in_progress',CURRENT_TIMESTAMP(),S.Project)"
-                ); client.query(merge).result()
-            except Exception: break
+                ); client.query(merge).result(); logging.info(f"Project {proj} window {ws_naive} -> {we} marked in_progress")
+                log_to_bigquery_buffer(pipeline, run_id, 'INFO', f'Window sync started for {proj} {ws_naive}->{we}', 'main')
+            except Exception:
+                break
             SUCCESS=False; rc=0
             global SEARCH_429_COUNT, DETAIL_429_COUNT, CURRENT_DETAIL_WORKERS, _NO429_STREAK
             SEARCH_429_COUNT=0; DETAIL_429_COUNT=0
             try: SUCCESS,rc=sync_window(base_url,jql,auth,client,dataset,table,ws_naive,we)
-            except Exception as e: log_buf(pipeline,run_id,'ERROR',f'Fatal {proj} {ws_naive}->{we} {e}','main',str(e))
+            except Exception as e: logging.exception(f"Window sync fatal error for {proj}: {e}"); log_buf(pipeline,run_id,'ERROR',f'Fatal {proj} {ws_naive}->{we} {e}','main',str(e))
             degraded=False
             if SUCCESS:
                 ratio=DETAIL_429_COUNT/max(1,rc)
@@ -361,16 +418,22 @@ def main():
             status='degraded' if degraded else ('complete' if SUCCESS else 'failed')
             upd=(
                 f"UPDATE `{dataset}.{progress}` SET Status='{status}', LastRun=CURRENT_TIMESTAMP(), RowCount={rc}, Search429={SEARCH_429_COUNT}, Detail429={DETAIL_429_COUNT} "
-                f"WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND Status!='complete'"
+                f"WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND Status!='complete'"
             ); client.query(upd).result()
+            logging.info(f"Project {proj} window {ws_naive}->{we} {status} rows={rc} 429_search={SEARCH_429_COUNT} 429_detail={DETAIL_429_COUNT}")
+            log_to_bigquery_buffer(pipeline, run_id, 'INFO' if SUCCESS else 'ERROR', f"Window {status} {proj} rows={rc} search429={SEARCH_429_COUNT} detail429={DETAIL_429_COUNT}", 'main')
             if status in ('complete','degraded'):
                 last_completed_start=ws_naive
                 if (SEARCH_429_COUNT>0 or DETAIL_429_COUNT>0):
                     CURRENT_DETAIL_WORKERS=max(DETAIL_MIN_WORKERS,int(CURRENT_DETAIL_WORKERS*DETAIL_SCALE_DOWN_FACTOR)); _NO429_STREAK=0
+                    logging.info(f"Scaling down comment workers to {CURRENT_DETAIL_WORKERS} due to 429s")
                 else:
                     _NO429_STREAK+=1
                     if _NO429_STREAK>=DETAIL_SCALE_UP_NO429_WINDOWS and CURRENT_DETAIL_WORKERS<DETAIL_MAX_WORKERS:
                         CURRENT_DETAIL_WORKERS=min(DETAIL_MAX_WORKERS,max(CURRENT_DETAIL_WORKERS+1,int(CURRENT_DETAIL_WORKERS*DETAIL_SCALE_UP_FACTOR))); _NO429_STREAK=0
+                        logging.info(f"Scaling up comment workers to {CURRENT_DETAIL_WORKERS} (no 429 streak)")
+            # Flush logs after each window for quicker visibility
+            flush_logs(client,dataset,log_table)
             if not SUCCESS:
                 try: span_hours=(we-ws_naive).total_seconds()/3600.0
                 except Exception: span_hours=0
@@ -378,15 +441,16 @@ def main():
                     new_span=max(MIN_SHRINK_HOURS,span_hours*RATE_SHRINK_FACTOR); new_end=ws_naive+timedelta(hours=new_span)
                     try:
                         client.query(
-                            f"UPDATE `{dataset}.{progress}` SET WindowEnd=TIMESTAMP('{new_end.strftime('%Y-%m-%d %H:%M:%S')}'), Status='failed' WHERE Project='{proj}' "
-                            f"AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING)"
+                            f"UPDATE `{dataset}.{progress}` SET WindowEnd=TIMESTAMP('{new_end.strftime('%Y-%m-%d %H:%M:%S.%f')}'), Status='failed' WHERE Project='{proj}' "
+                            f"AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING)"
                         ).result();
+                        logging.info(f"Shrinking failed window for {proj} from {span_hours:.2f}h -> {new_span:.2f}h; will retry")
                         continue
                     except Exception: break
                 else:
                     try:
                         client.query(
-                            f"UPDATE `{dataset}.{progress}` SET Status='degraded' WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND Status='failed'"
+                            f"UPDATE `{dataset}.{progress}` SET Status='degraded' WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND Status='failed'"
                         ).result()
                     except Exception: pass
                     break
