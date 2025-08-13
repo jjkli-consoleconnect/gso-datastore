@@ -1,5 +1,5 @@
 """Unified comments pipeline with changelog resiliency (rate limiting, adaptive shrink, degraded status)."""
-import argparse, json, logging, time, uuid, requests, random, threading
+import argparse, json, logging, time, uuid, requests, random, threading, os
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery
@@ -63,6 +63,30 @@ def load_config():
         with open('config.json') as f: return json.load(f)
     except FileNotFoundError:
         logging.error('config.json not found'); return None
+
+def load_projects_from_file(defaults):
+    """Load project names for Docker/local. Order: env JQL_FILE -> ../JQL.txt -> /app/InitialSync/JQL.txt -> /config/JQL.txt -> /data/JQL.txt."""
+    candidates=[]
+    try:
+        env_path=os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
+        if env_path: candidates.append(env_path)
+        script_dir=os.path.dirname(__file__)
+        candidates.append(os.path.normpath(os.path.join(script_dir,'..','JQL.txt')))
+        candidates.extend(['/app/InitialSync/JQL.txt','/config/JQL.txt','/data/JQL.txt'])
+        for p in candidates:
+            try:
+                if p and os.path.exists(p):
+                    with open(p,'r',encoding='utf-8') as f:
+                        lines=[ln.strip() for ln in f.readlines()]
+                    items=[ln for ln in lines if ln and not ln.startswith('#')]
+                    if items:
+                        logging.info(f'Loaded project list from {p} ({len(items)})')
+                        return items
+            except Exception as ie:
+                logging.debug(f'Project list read failed for {p}: {ie}')
+    except Exception as e:
+        logging.debug(f'Could not resolve external project list: {e}')
+    return defaults
 
 def convert_ts(ts):
     if not ts: return None
@@ -250,6 +274,8 @@ def main():
         'Managed Security Services',
         'Vendor Management Escalations'
     ]
+    # External file override (InitialSync/JQL.txt)
+    default_projects = load_projects_from_file(default_projects)
     parser=argparse.ArgumentParser(); parser.add_argument('--project'); parser.add_argument('--projects'); args,_=parser.parse_known_args()
     if args.projects: req=[p.strip() for p in args.projects.split(',') if p.strip()]; projects=[p for p in default_projects if p in req]
     elif args.project: projects=[p for p in default_projects if p==args.project]

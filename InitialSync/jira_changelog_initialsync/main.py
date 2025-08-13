@@ -1,5 +1,6 @@
 import requests
 import json
+import os
 from google.cloud import bigquery
 import logging
 from datetime import datetime, timedelta
@@ -116,6 +117,44 @@ def convert_timestamp(ts: str):
             continue
     logging.warning(f"Could not parse timestamp: {ts}")
     return None
+
+def load_projects_from_file(defaults):
+    """Load project names from external file for Docker/local usage.
+    Resolution order:
+      1) Env JQL_FILE (explicit path)
+      2) ../JQL.txt relative to this script
+      3) Common container mount paths: /app/InitialSync/JQL.txt, /config/JQL.txt, /data/JQL.txt
+      Fallback to defaults if none found or empty.
+    """
+    candidates = []
+    try:
+        # 1) Env override
+        env_path = os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
+        if env_path:
+            candidates.append(env_path)
+        # 2) Relative to script
+        script_dir = os.path.dirname(__file__)
+        candidates.append(os.path.normpath(os.path.join(script_dir, '..', 'JQL.txt')))
+        # 3) Common container paths
+        candidates.extend([
+            '/app/InitialSync/JQL.txt',
+            '/config/JQL.txt',
+            '/data/JQL.txt',
+        ])
+        for p in candidates:
+            try:
+                if p and os.path.exists(p):
+                    with open(p, 'r', encoding='utf-8') as f:
+                        lines = [ln.strip() for ln in f.readlines()]
+                    items = [ln for ln in lines if ln and not ln.startswith('#')]
+                    if items:
+                        logging.info(f"Loaded project list from {p} ({len(items)} entries)")
+                        return items
+            except Exception as ie:
+                logging.debug(f"Project list read failed for {p}: {ie}")
+    except Exception as e:
+        logging.debug(f"Could not resolve external project list: {e}")
+    return defaults
 
 # -------------- BigQuery helpers --------------
 
@@ -542,6 +581,8 @@ def main():
         'Global Service Delivery Team',
         'Vendor Management Escalations'
     ]
+    # Try external file override (InitialSync/JQL.txt)
+    project_list_default = load_projects_from_file(project_list_default)
     # Parse CLI args early to filter project list
     import argparse, sys
     parser = argparse.ArgumentParser(description='Jira changelog initial sync')
