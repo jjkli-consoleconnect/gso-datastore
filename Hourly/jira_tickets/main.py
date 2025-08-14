@@ -48,6 +48,7 @@ import time
 import uuid
 from google.api_core.exceptions import Conflict, NotFound, GoogleAPIError
 import re
+import os
 from bq_logger import log_to_bigquery
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -221,7 +222,8 @@ def fetch_and_sync_jira_data():
             'project = "Mobility SMS - CE" OR '
             'project = "Managed Security Services" OR '
             'project = "Vendor Management Escalations"'
-            ') AND updated >= -3h'
+            ')'
+            ' AND updated >= -3y'
         )
 
         # --- Log pipeline start ---
@@ -345,8 +347,20 @@ def fetch_and_sync_jira_data():
                     sla_metrics[f'{k}_Breached'] = breached
                     sla_metrics[f'{k}_Cycles'] = cycles
 
+                # Issue type
+                issue_type = fields.get('issuetype', {}).get('name')
+                # Build a source string to extract incident numbers (INC#########)
+                cf_name = config.get('remedy_ticket_customfield') if config else None
+                cf_val = fields.get(cf_name) if cf_name else None
+                remedy_source = ' | '.join([
+                    str(cf_val) if cf_val else '',
+                    str(fields.get('summary') or ''),
+                    str(fields.get('description') or ''),
+                ]).strip(' |')
+                remedy_numbers = extract_incident_numbers(remedy_source)
+
                 row = {
-                    "T": None,
+                    "T": issue_type,
                     "Project": fields.get('project', {}).get('name'),
                     "Key": issue_key,
                     "Summary": fields.get('summary'),
@@ -357,7 +371,7 @@ def fetch_and_sync_jira_data():
                     "Reporter": get_field_value(fields.get('reporter')),
                     "Assignee": get_field_value(fields.get('assignee')),
                     "Component": [get_field_value(c) for c in fields.get('components', [])] if fields.get('components') else [],
-                    "RemedyTicketNumber": [get_field_value(fields.get('remedyTicketNumber'))] if fields.get('remedyTicketNumber') else [],
+                    "RemedyTicketNumber": remedy_numbers,
                     "Links": extract_issue_links(fields.get('issuelinks')),
                     SR_REF_BQ_NAME: get_field_value(fields.get(SR_REF_JIRA_ID)),
                     "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),

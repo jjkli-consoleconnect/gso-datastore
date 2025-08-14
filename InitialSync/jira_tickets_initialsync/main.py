@@ -2,13 +2,19 @@
 Per-project adaptive window backfill (base 7d, shrink to 6h, regrow) aligned with changelog & comments pipelines.
 Temp staging + MERGE, progress ledger (Project, RowCount), buffered logging, SLA metrics extraction.
 """
-import json, logging, time, uuid, requests, argparse, random, threading, os
+import json, logging, time, uuid, requests, argparse, random, threading, os, re
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery
 
 DEBUG=False
-logging.basicConfig(level=logging.DEBUG if DEBUG else logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+# Allow runtime log level override via env (LOG_LEVEL=DEBUG|INFO|WARNING|ERROR)
+_env_level = os.environ.get('LOG_LEVEL', None)
+_level = getattr(logging, _env_level.upper(), None) if _env_level else (logging.DEBUG if DEBUG else logging.INFO)
+logging.basicConfig(
+    level=_level if isinstance(_level, int) else (logging.DEBUG if DEBUG else logging.INFO),
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 LOG_BUFFER=[]
 
 # Adaptive thresholds
@@ -37,6 +43,9 @@ RATE_SHRINK_DETAIL_429=25
 RATE_SHRINK_SEARCH_429=8
 RATE_SHRINK_FACTOR=0.5
 
+# Progress window hygiene: treat very tiny backlog windows as noise
+MIN_PROGRESS_WINDOW_SEC=600  # 10 minutes
+
 SEARCH_429_COUNT=0
 DETAIL_429_COUNT=0
 _NO429_STREAK=0
@@ -58,6 +67,9 @@ class TokenBucket:
 
 RATE_LIMITER=TokenBucket(RATE_BUCKET_CAPACITY,RATE_BUCKET_REFILL_PER_SEC)
 
+# Track tables we've already ensured schema for during this process to avoid repeated DDL
+SCHEMA_ENSURED=set()
+
 # Custom / SLA fields
 SR_REF_JIRA_ID='customfield_10382'
 SR_REF_BQ_NAME='SR_Ref'
@@ -70,6 +82,14 @@ SLA_FIELDS_MAP={
     'ProlongCase':'customfield_10560',
     'TimeToCloseAfterResolution':'customfield_10552',
 }
+
+# Fields to request from Jira search to avoid per-issue detail calls
+FIELDS_FOR_SEARCH=[
+    'key','summary','status','created','updated','resolutiondate','project','reporter','assignee','components','issuelinks',
+    SR_REF_JIRA_ID, ESCALATION_FIELD,
+    # SLA custom fields
+    *list(SLA_FIELDS_MAP.values())
+]
 
 # ---------------- Utilities ----------------
 def load_config():
@@ -121,14 +141,51 @@ def get_field_value(field):
     if isinstance(field,bool): return str(field)
     return str(field)
 
+def extract_issue_links(issuelinks):
+    """Extract a readable list of linked issue keys with optional status, e.g. "PROJ-123 [Done], ABC-9"."""
+    if not issuelinks or not isinstance(issuelinks, list):
+        return None
+    links=[]
+    def status_name(issue):
+        if not issue: return None
+        st=issue.get('fields',{}).get('status',{})
+        return st.get('name')
+    for link in issuelinks:
+        for direction in ('outwardIssue','inwardIssue'):
+            iss=link.get(direction)
+            if not iss: continue
+            k=iss.get('key'); sn=status_name(iss)
+            if k:
+                links.append(f"{k} [{sn}]" if sn else k)
+    return ', '.join(links) if links else None
+
+def extract_incident_numbers(text):
+    """Extract all incident numbers like INC followed by 9+ digits from the provided text."""
+    if not text: return []
+    if isinstance(text, list):
+        text=' | '.join([str(t) for t in text if t])
+    return re.findall(r'INC\d{9,}', str(text))
+
 # ---------------- BigQuery helpers ----------------
 def table_exists(client,dataset,table):
     try: client.get_table(f"{dataset}.{table}"); return True
     except Exception: return False
 
+def _bq_type_with_mode(c: bigquery.SchemaField) -> str:
+    """Render BigQuery DDL type for a schema field.
+    - REPEATED -> ARRAY<type>
+    - REQUIRED -> keep base type (we avoid NOT NULL in DDL to stay safe on ALTERs without defaults)
+    - NULLABLE -> base type
+    """
+    base = c.field_type
+    mode = (c.mode or '').upper()
+    if mode == 'REPEATED':
+        return f"ARRAY<{base}>"
+    return base
+
 def create_or_replace_table(client,dataset,table,schema):
     try:
-        cols=','.join(f'`{c.name}` {c.field_type}' for c in schema)
+        cols=','.join(f'`{c.name}` {_bq_type_with_mode(c)}' for c in schema)
         client.query(f"CREATE OR REPLACE TABLE `{dataset}.{table}` ({cols})").result(); return True
     except Exception as e:
         logging.exception(f'Create/replace {dataset}.{table} failed: {e}'); return False
@@ -138,6 +195,25 @@ def wait_for_table(client,dataset,table,retries=10,delay=2):
         if table_exists(client,dataset,table): return True
         time.sleep(delay)
     return False
+
+def ensure_table_columns(client,dataset,table,schema):
+    """Add missing columns to an existing table to match the provided schema.
+    Uses ARRAY<T> for repeated fields; leaves nullability default for safety.
+    """
+    try:
+        # Fetch existing schema to avoid issuing unnecessary DDL per column per window
+        tbl = client.get_table(f"{dataset}.{table}")
+        existing = {c.name for c in tbl.schema}
+        missing = [c for c in schema if c.name not in existing]
+        for c in missing:
+            ddl_type = _bq_type_with_mode(c)
+            client.query(
+                f"ALTER TABLE `{dataset}.{table}` ADD COLUMN IF NOT EXISTS `{c.name}` {ddl_type}"
+            ).result()
+        return True
+    except Exception as e:
+        logging.warning(f'ensure_table_columns failed for {dataset}.{table}: {e}')
+        return False
 
 def insert_rows_with_retry(client,dataset,table,rows,schema,retries=6,delay=6):
     if not rows: return True
@@ -165,13 +241,17 @@ SEARCH_URL=f'{BASE_URL}/rest/api/2/search'
 
 def fetch_issues_page(auth,jql,start_at,max_results):
     global SEARCH_429_COUNT
-    payload=json.dumps({'jql':jql,'startAt':start_at,'maxResults':max_results,'fields':['key']})
+    payload=json.dumps({'jql':jql,'startAt':start_at,'maxResults':max_results,'fields':FIELDS_FOR_SEARCH})
     headers={'Accept':'application/json','Content-Type':'application/json'}
     for attempt in range(5):
         try:
-            RATE_LIMITER.take(); r=requests.post(SEARCH_URL,headers=headers,auth=auth,data=payload,timeout=300)
+            RATE_LIMITER.take()
+            r=requests.post(SEARCH_URL,headers=headers,auth=auth,data=payload,timeout=120)
             if r.status_code==429:
-                SEARCH_429_COUNT+=1; ra=int(r.headers.get('Retry-After',30)); time.sleep(ra+random.uniform(0,JITTER_MAX_SECONDS)); continue
+                SEARCH_429_COUNT+=1
+                ra=int(r.headers.get('Retry-After',30))
+                logging.warning(f'429 search startAt={start_at}; sleeping {ra:.1f}s')
+                time.sleep(ra+random.uniform(0,JITTER_MAX_SECONDS)); continue
             r.raise_for_status(); return r.json()
         except requests.exceptions.Timeout:
             time.sleep(15)
@@ -181,20 +261,8 @@ def fetch_issues_page(auth,jql,start_at,max_results):
     return None
 
 def fetch_issue_detail(issue_key,auth):
-    global DETAIL_429_COUNT
-    url=f'{BASE_URL}/rest/api/latest/issue/{issue_key}'
-    attempts=0
-    while True:
-        try:
-            RATE_LIMITER.take(); r=requests.get(url,auth=auth,timeout=120)
-            if r.status_code==429:
-                DETAIL_429_COUNT+=1; ra=int(r.headers.get('Retry-After',10)); time.sleep(ra+random.uniform(0,JITTER_MAX_SECONDS)); continue
-            r.raise_for_status(); return r.json()
-        except Exception as e:
-            attempts+=1
-            if attempts>=MAX_DETAIL_ATTEMPTS:
-                logging.warning(f'Issue detail failed permanently {issue_key}: {e}'); return None
-            back=min(60,2**attempts)+random.uniform(0,JITTER_MAX_SECONDS); time.sleep(back)
+    # No longer used: we fetch needed fields in the search call for speed.
+    return None
 
 def extract_sla_metrics(sla_field):
     if not isinstance(sla_field,dict): return (None,None,None,None)
@@ -218,55 +286,64 @@ def extract_sla_metrics(sla_field):
     breached=breach_time is not None
     return (elapsed,goal,breached,n)
 
-def generate_ticket_rows(issue_keys,ws,we,auth):
+def generate_ticket_rows(issues,ws,we):
     now_str=datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
     rows=[]
-    def worker(k): return k, fetch_issue_detail(k,auth)
-    with ThreadPoolExecutor(max_workers=min(CURRENT_TICKET_WORKERS,12)) as ex:
-        fut_map={ex.submit(worker,k):k for k in issue_keys}
-        for fut in as_completed(fut_map):
-            k=fut_map[fut]
-            try: _,detail=fut.result()
-            except Exception:
-                detail=None
-            if not detail: continue
-            fields=detail.get('fields',{})
-            created=convert_ts(fields.get('created'))
-            updated=convert_ts(fields.get('updated'))
-            ref=updated or created
-            if not ref: continue
-            try: ref_dt=datetime.strptime(ref,'%Y-%m-%d %H:%M:%S')
-            except Exception: continue
-            if not (ws <= ref_dt < we): continue
-            sla={}
-            for name,jid in SLA_FIELDS_MAP.items():
-                e,g,b,c=extract_sla_metrics(fields.get(jid)); sla[name]=(e,g,b,c)
-            row={
-                'Project': fields.get('project',{}).get('name'),
-                'Key': k,
-                'Summary': fields.get('summary'),
-                'Status': fields.get('status',{}).get('name'),
-                'Created': created,
-                'Updated': updated,
-                'Resolved': convert_ts(fields.get('resolutiondate')),
-                'Reporter': get_field_value(fields.get('reporter')),
-                'Assignee': get_field_value(fields.get('assignee')),
-                'Component': [get_field_value(c) for c in fields.get('components',[])],
-                'RemedyTicketNumber': [],
-                'Links': get_field_value(fields.get('issuelinks')),
-                SR_REF_BQ_NAME: get_field_value(fields.get(SR_REF_JIRA_ID)),
-                'SyncTime': now_str,
-                'AppSupEscalation': get_field_value(fields.get(ESCALATION_FIELD)),
-            }
-            for name,(e,g,b,c) in sla.items():
-                row[f'{name}_Elapsed']=e; row[f'{name}_Goal']=g; row[f'{name}_Breached']=b; row[f'{name}_Cycles']=c
-            rows.append(row)
+    for item in issues:
+        k=item.get('key')
+        fields=item.get('fields',{})
+        issue_type = fields.get('issuetype',{}).get('name')
+        created=convert_ts(fields.get('created'))
+        updated=convert_ts(fields.get('updated'))
+        ref=updated or created
+        if not ref: continue
+        try: ref_dt=datetime.strptime(ref,'%Y-%m-%d %H:%M:%S')
+        except Exception: continue
+        if not (ws <= ref_dt < we): continue
+        sla={}
+        for name,jid in SLA_FIELDS_MAP.items():
+            e,g,b,c=extract_sla_metrics(fields.get(jid)); sla[name]=(e,g,b,c)
+        # Remedy/Incident numbers: attempt via configured customfield, else parse from summary/description
+        remedy_vals=[]
+        remedy_cf=os.environ.get('REMEDY_TICKET_CUSTOMFIELD') or None
+        if remedy_cf and fields.get(remedy_cf):
+            remedy_vals.append(get_field_value(fields.get(remedy_cf)))
+        # Fallbacks from common text sources
+        remedy_vals.append(fields.get('summary'))
+        remedy_vals.append(fields.get('description'))
+        remedy_numbers=[]
+        try:
+            remedy_numbers=extract_incident_numbers([v for v in remedy_vals if v])
+        except Exception:
+            remedy_numbers=[]
+        row={
+            'T': issue_type,
+            'Project': fields.get('project',{}).get('name'),
+            'Key': k,
+            'Summary': fields.get('summary'),
+            'Status': fields.get('status',{}).get('name'),
+            'Created': created,
+            'Updated': updated,
+            'Resolved': convert_ts(fields.get('resolutiondate')),
+            'Reporter': get_field_value(fields.get('reporter')),
+            'Assignee': get_field_value(fields.get('assignee')),
+            'Component': [get_field_value(c) for c in fields.get('components',[])],
+            'RemedyTicketNumber': remedy_numbers,
+            'Links': extract_issue_links(fields.get('issuelinks')),
+            SR_REF_BQ_NAME: get_field_value(fields.get(SR_REF_JIRA_ID)),
+            'SyncTime': now_str,
+            'AppSupEscalation': get_field_value(fields.get(ESCALATION_FIELD)),
+        }
+        for name,(e,g,b,c) in sla.items():
+            row[f'{name}_Elapsed']=e; row[f'{name}_Goal']=g; row[f'{name}_Breached']=b; row[f'{name}_Cycles']=c
+        rows.append(row)
     return rows
 
 # ---------------- Window sync ----------------
 def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
     temp=f'JiraTickets_temp_{uuid.uuid4()}'
     schema=[bigquery.SchemaField(n,t,mode) for n,t,mode in [
+        ('T','STRING','NULLABLE'),
         ('Project','STRING','NULLABLE'),
         ('Key','STRING','REQUIRED'),
         ('Summary','STRING','NULLABLE'),
@@ -307,31 +384,60 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         ('TimeToCloseAfterResolution_Cycles','INT64','NULLABLE'),
         ('AppSupEscalation','STRING','NULLABLE'),
     ]]
-    if not table_exists(client,dataset,table): create_or_replace_table(client,dataset,table,schema)
-    else:
-        try: client.query(f"ALTER TABLE `{dataset}.{table}` ADD COLUMN IF NOT EXISTS SyncTime TIMESTAMP").result()
-        except Exception: pass
-    if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp): return False,0
-    max_results=100; start=0; total=float('inf'); batch=500; buffer=[]; inserted=0
+    # Ensure destination table exists and only perform schema ensure once per process
+    table_key=f"{dataset}.{table}"
+    if not table_exists(client,dataset,table):
+        create_or_replace_table(client,dataset,table,schema)
+        SCHEMA_ENSURED.add(table_key)
+    elif table_key not in SCHEMA_ENSURED:
+        # Ensure all columns exist with correct shapes; important for REPEATED fields
+        ensure_table_columns(client,dataset,table,schema)
+        SCHEMA_ENSURED.add(table_key)
+
+    # Lazily create the temp table only when we actually have rows to insert
+    temp_created=False
+    max_results=100; start=0; total=float('inf'); batch=2000; buffer=[]; inserted=0
     while start<total:
         data=fetch_issues_page(auth,jql,start,max_results)
         if data is None:
-            delete_table_quiet(client,dataset,temp); return False,inserted
+            if temp_created:
+                delete_table_quiet(client,dataset,temp)
+            return False,inserted
         issues=data.get('issues',[]); total=data.get('total',0)
-        if not issues: break
-        issue_keys=[i.get('key') for i in issues if i.get('key')]
-        rows=generate_ticket_rows(issue_keys,ws,we,auth)
+        if not issues:
+            break
+        rows=generate_ticket_rows(issues,ws,we)
         for r in rows:
             buffer.append(r)
             if len(buffer)>=batch:
-                if not insert_rows_with_retry(client,dataset,temp,buffer,schema): delete_table_quiet(client,dataset,temp); return False,inserted
+                if not temp_created:
+                    if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp):
+                        return False,inserted
+                    temp_created=True
+                if not insert_rows_with_retry(client,dataset,temp,buffer,schema):
+                    if temp_created:
+                        delete_table_quiet(client,dataset,temp)
+                    return False,inserted
                 inserted+=len(buffer); buffer=[]
         if buffer:
-            if not insert_rows_with_retry(client,dataset,temp,buffer,schema): delete_table_quiet(client,dataset,temp); return False,inserted
-            inserted+=len(buffer); buffer=[]
-        start+=len(issues); time.sleep(1)
-    merge=f"""MERGE `{dataset}.{table}` T USING (SELECT * FROM `{dataset}.{temp}`) S ON T.Key=S.Key AND (T.Updated=S.Updated OR (T.Updated IS NULL AND S.Updated IS NULL)) WHEN MATCHED THEN UPDATE SET Project=S.Project,Summary=S.Summary,Status=S.Status,Created=S.Created,Updated=S.Updated,Resolved=S.Resolved,Reporter=S.Reporter,Assignee=S.Assignee,Component=S.Component,RemedyTicketNumber=S.RemedyTicketNumber,Links=S.Links,{SR_REF_BQ_NAME}=S.{SR_REF_BQ_NAME},SyncTime=S.SyncTime,TimeToFirstResponse_Elapsed=S.TimeToFirstResponse_Elapsed,TimeToFirstResponse_Goal=S.TimeToFirstResponse_Goal,TimeToFirstResponse_Breached=S.TimeToFirstResponse_Breached,TimeToFirstResponse_Cycles=S.TimeToFirstResponse_Cycles,TimeToResolve_Elapsed=S.TimeToResolve_Elapsed,TimeToResolve_Goal=S.TimeToResolve_Goal,TimeToResolve_Breached=S.TimeToResolve_Breached,TimeToResolve_Cycles=S.TimeToResolve_Cycles,TimeToResolution_Elapsed=S.TimeToResolution_Elapsed,TimeToResolution_Goal=S.TimeToResolution_Goal,TimeToResolution_Breached=S.TimeToResolution_Breached,TimeToResolution_Cycles=S.TimeToResolution_Cycles,TimeToApproveNormalChange_Elapsed=S.TimeToApproveNormalChange_Elapsed,TimeToApproveNormalChange_Goal=S.TimeToApproveNormalChange_Goal,TimeToApproveNormalChange_Breached=S.TimeToApproveNormalChange_Breached,TimeToApproveNormalChange_Cycles=S.TimeToApproveNormalChange_Cycles,ProlongCase_Elapsed=S.ProlongCase_Elapsed,ProlongCase_Goal=S.ProlongCase_Goal,ProlongCase_Breached=S.ProlongCase_Breached,ProlongCase_Cycles=S.ProlongCase_Cycles,TimeToCloseAfterResolution_Elapsed=S.TimeToCloseAfterResolution_Elapsed,TimeToCloseAfterResolution_Goal=S.TimeToCloseAfterResolution_Goal,TimeToCloseAfterResolution_Breached=S.TimeToCloseAfterResolution_Breached,TimeToCloseAfterResolution_Cycles=S.TimeToCloseAfterResolution_Cycles,AppSupEscalation=S.AppSupEscalation WHEN NOT MATCHED THEN INSERT (Project,Key,Summary,Status,Created,Updated,Resolved,Reporter,Assignee,Component,RemedyTicketNumber,Links,{SR_REF_BQ_NAME},SyncTime,TimeToFirstResponse_Elapsed,TimeToFirstResponse_Goal,TimeToFirstResponse_Breached,TimeToFirstResponse_Cycles,TimeToResolve_Elapsed,TimeToResolve_Goal,TimeToResolve_Breached,TimeToResolve_Cycles,TimeToResolution_Elapsed,TimeToResolution_Goal,TimeToResolution_Breached,TimeToResolution_Cycles,TimeToApproveNormalChange_Elapsed,TimeToApproveNormalChange_Goal,TimeToApproveNormalChange_Breached,TimeToApproveNormalChange_Cycles,ProlongCase_Elapsed,ProlongCase_Goal,ProlongCase_Breached,ProlongCase_Cycles,TimeToCloseAfterResolution_Elapsed,TimeToCloseAfterResolution_Goal,TimeToCloseAfterResolution_Breached,TimeToCloseAfterResolution_Cycles,AppSupEscalation) VALUES (S.Project,S.Key,S.Summary,S.Status,S.Created,S.Updated,S.Resolved,S.Reporter,S.Assignee,S.Component,S.RemedyTicketNumber,S.Links,S.{SR_REF_BQ_NAME},S.SyncTime,S.TimeToFirstResponse_Elapsed,S.TimeToFirstResponse_Goal,S.TimeToFirstResponse_Breached,S.TimeToFirstResponse_Cycles,S.TimeToResolve_Elapsed,S.TimeToResolve_Goal,S.TimeToResolve_Breached,S.TimeToResolve_Cycles,S.TimeToResolution_Elapsed,S.TimeToResolution_Goal,S.TimeToResolution_Breached,S.TimeToResolution_Cycles,S.TimeToApproveNormalChange_Elapsed,S.TimeToApproveNormalChange_Goal,S.TimeToApproveNormalChange_Breached,S.TimeToApproveNormalChange_Cycles,S.ProlongCase_Elapsed,S.ProlongCase_Goal,S.ProlongCase_Breached,S.ProlongCase_Cycles,S.TimeToCloseAfterResolution_Elapsed,S.TimeToCloseAfterResolution_Goal,S.TimeToCloseAfterResolution_Breached,S.TimeToCloseAfterResolution_Cycles,S.AppSupEscalation)"""
-    try: client.query(merge).result()
+            if not temp_created and buffer:
+                if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp):
+                    return False,inserted
+                temp_created=True
+            if temp_created:
+                if not insert_rows_with_retry(client,dataset,temp,buffer,schema):
+                    delete_table_quiet(client,dataset,temp); return False,inserted
+                inserted+=len(buffer)
+            buffer=[]
+        start+=len(issues); time.sleep(0.2)
+    # If no rows were gathered for this window, skip MERGE to avoid unnecessary per-table quota usage
+    if inserted==0:
+        if temp_created:
+            delete_table_quiet(client,dataset,temp)
+        return True,0
+    merge=f"""MERGE `{dataset}.{table}` T USING (SELECT * FROM `{dataset}.{temp}`) S ON T.Key=S.Key AND (T.Updated=S.Updated OR (T.Updated IS NULL AND S.Updated IS NULL)) WHEN MATCHED THEN UPDATE SET T.T=S.T, Project=S.Project,Summary=S.Summary,Status=S.Status,Created=S.Created,Updated=S.Updated,Resolved=S.Resolved,Reporter=S.Reporter,Assignee=S.Assignee,Component=S.Component,RemedyTicketNumber=S.RemedyTicketNumber,Links=S.Links,{SR_REF_BQ_NAME}=S.{SR_REF_BQ_NAME},SyncTime=S.SyncTime,TimeToFirstResponse_Elapsed=S.TimeToFirstResponse_Elapsed,TimeToFirstResponse_Goal=S.TimeToFirstResponse_Goal,TimeToFirstResponse_Breached=S.TimeToFirstResponse_Breached,TimeToFirstResponse_Cycles=S.TimeToFirstResponse_Cycles,TimeToResolve_Elapsed=S.TimeToResolve_Elapsed,TimeToResolve_Goal=S.TimeToResolve_Goal,TimeToResolve_Breached=S.TimeToResolve_Breached,TimeToResolve_Cycles=S.TimeToResolve_Cycles,TimeToResolution_Elapsed=S.TimeToResolution_Elapsed,TimeToResolution_Goal=S.TimeToResolution_Goal,TimeToResolution_Breached=S.TimeToResolution_Breached,TimeToResolution_Cycles=S.TimeToResolution_Cycles,TimeToApproveNormalChange_Elapsed=S.TimeToApproveNormalChange_Elapsed,TimeToApproveNormalChange_Goal=S.TimeToApproveNormalChange_Goal,TimeToApproveNormalChange_Breached=S.TimeToApproveNormalChange_Breached,TimeToApproveNormalChange_Cycles=S.TimeToApproveNormalChange_Cycles,ProlongCase_Elapsed=S.ProlongCase_Elapsed,ProlongCase_Goal=S.ProlongCase_Goal,ProlongCase_Breached=S.ProlongCase_Breached,ProlongCase_Cycles=S.ProlongCase_Cycles,TimeToCloseAfterResolution_Elapsed=S.TimeToCloseAfterResolution_Elapsed,TimeToCloseAfterResolution_Goal=S.TimeToCloseAfterResolution_Goal,TimeToCloseAfterResolution_Breached=S.TimeToCloseAfterResolution_Breached,TimeToCloseAfterResolution_Cycles=S.TimeToCloseAfterResolution_Cycles,AppSupEscalation=S.AppSupEscalation WHEN NOT MATCHED THEN INSERT (T,Project,Key,Summary,Status,Created,Updated,Resolved,Reporter,Assignee,Component,RemedyTicketNumber,Links,{SR_REF_BQ_NAME},SyncTime,TimeToFirstResponse_Elapsed,TimeToFirstResponse_Goal,TimeToFirstResponse_Breached,TimeToFirstResponse_Cycles,TimeToResolve_Elapsed,TimeToResolve_Goal,TimeToResolve_Breached,TimeToResolve_Cycles,TimeToResolution_Elapsed,TimeToResolution_Goal,TimeToResolution_Breached,TimeToResolution_Cycles,TimeToApproveNormalChange_Elapsed,TimeToApproveNormalChange_Goal,TimeToApproveNormalChange_Breached,TimeToApproveNormalChange_Cycles,ProlongCase_Elapsed,ProlongCase_Goal,ProlongCase_Breached,ProlongCase_Cycles,TimeToCloseAfterResolution_Elapsed,TimeToCloseAfterResolution_Goal,TimeToCloseAfterResolution_Breached,TimeToCloseAfterResolution_Cycles,AppSupEscalation) VALUES (S.T,S.Project,S.Key,S.Summary,S.Status,S.Created,S.Updated,S.Resolved,S.Reporter,S.Assignee,S.Component,S.RemedyTicketNumber,S.Links,S.{SR_REF_BQ_NAME},S.SyncTime,S.TimeToFirstResponse_Elapsed,S.TimeToFirstResponse_Goal,S.TimeToFirstResponse_Breached,S.TimeToFirstResponse_Cycles,S.TimeToResolve_Elapsed,S.TimeToResolve_Goal,S.TimeToResolve_Breached,S.TimeToResolve_Cycles,S.TimeToResolution_Elapsed,S.TimeToResolution_Goal,S.TimeToResolution_Breached,S.TimeToResolution_Cycles,S.TimeToApproveNormalChange_Elapsed,S.TimeToApproveNormalChange_Goal,S.TimeToApproveNormalChange_Breached,S.TimeToApproveNormalChange_Cycles,S.ProlongCase_Elapsed,S.ProlongCase_Goal,S.ProlongCase_Breached,S.ProlongCase_Cycles,S.TimeToCloseAfterResolution_Elapsed,S.TimeToCloseAfterResolution_Goal,S.TimeToCloseAfterResolution_Breached,S.TimeToCloseAfterResolution_Cycles,S.AppSupEscalation)"""
+    try:
+        client.query(merge).result()
     except Exception as e:
         delete_table_quiet(client,dataset,temp); logging.exception(f'Merge failed: {e}'); return False,inserted
     delete_table_quiet(client,dataset,temp); return True,inserted
@@ -342,13 +448,19 @@ def log_buf(pipeline,run_id,level,msg,fn=None,details=None):
 
 def flush_logs(client,dataset,table):
     if not LOG_BUFFER: return
-    temp='PipelineLogs_temp_tickets'
+    temp=f"PipelineLogs_temp_tickets_{str(uuid.uuid4())[:8]}"
     schema=[bigquery.SchemaField(n,t) for n,t in [
         ('Timestamp','TIMESTAMP'),('PipelineName','STRING'),('RunID','STRING'),('LogLevel','STRING'),('Message','STRING'),('FunctionName','STRING'),('Details','STRING')]]
     if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp): return
     if not insert_rows_with_retry(client,dataset,temp,LOG_BUFFER,schema): return
     merge=f"MERGE `{dataset}.{table}` T USING (SELECT * FROM `{dataset}.{temp}`) S ON T.Timestamp=S.Timestamp AND T.RunID=S.RunID AND T.Message=S.Message WHEN MATCHED THEN UPDATE SET T.PipelineName=S.PipelineName,T.LogLevel=S.LogLevel,T.FunctionName=S.FunctionName,T.Details=S.Details WHEN NOT MATCHED THEN INSERT (Timestamp,PipelineName,RunID,LogLevel,Message,FunctionName,Details) VALUES (S.Timestamp,S.PipelineName,S.RunID,S.LogLevel,S.Message,S.FunctionName,S.Details)"
     client.query(merge).result(); delete_table_quiet(client,dataset,temp)
+    # Clear buffer after successful flush
+    try:
+        LOG_BUFFER.clear()
+    except Exception:
+        # Fallback reassign if clear not available
+        globals()['LOG_BUFFER'] = []
 
 # ---------------- Main ----------------
 def main():
@@ -356,11 +468,16 @@ def main():
     if not cfg: return
     dataset='GSO'; table='JiraTickets'; progress=f'{table}_progress'; log_table='PipelineLogs'; pipeline='jira_tickets'; run_id=str(uuid.uuid4())
     base_days=7; min_start=datetime(2024,7,1); client=bigquery.Client()
+    logging.info('Starting tickets pipeline')
     prog_schema=[bigquery.SchemaField(n,t) for n,t in [
         ('WindowStart','TIMESTAMP'),('WindowEnd','TIMESTAMP'),('Status','STRING'),('LastRun','TIMESTAMP'),('Projects','STRING'),('Project','STRING'),('RowCount','INT64')]]
     if not table_exists(client,dataset,progress): create_or_replace_table(client,dataset,progress,prog_schema)
     else:
         for col,ctype in [('Project','STRING'),('RowCount','INT64')]:
+            try: client.query(f"ALTER TABLE `{dataset}.{progress}` ADD COLUMN IF NOT EXISTS {col} {ctype}").result()
+            except Exception: pass
+        # Ensure 429 metrics columns exist for alignment
+        for col,ctype in [('Search429','INT64'),('Detail429','INT64')]:
             try: client.query(f"ALTER TABLE `{dataset}.{progress}` ADD COLUMN IF NOT EXISTS {col} {ctype}").result()
             except Exception: pass
     default_projects=[
@@ -390,13 +507,42 @@ def main():
     if not token: logging.error('jira_api_token missing'); return
     auth=(user,token)
     for proj in projects:
-        logging.info(f'Project {proj} start')
+        logging.info(f'Starting backfill for project {proj}')
+        log_buf(pipeline,run_id,'INFO',f'Starting backfill for project {proj}','main')
+        # Cleanup: mark tiny leftover progress windows as degraded so we don't churn on 10-30s windows
+        try:
+            cleanup_cfg=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter('p','STRING',proj),
+                bigquery.ScalarQueryParameter('minsec','INT64',MIN_PROGRESS_WINDOW_SEC)
+            ])
+            cleanup_sql=(
+                f"UPDATE `{dataset}.{progress}` "
+                "SET Status='degraded', LastRun=CURRENT_TIMESTAMP() "
+                "WHERE Project=@p AND Status NOT IN ('complete','degraded') "
+                "AND TIMESTAMP_DIFF(WindowEnd, WindowStart, SECOND) < @minsec"
+            )
+            job=client.query(cleanup_sql,job_config=cleanup_cfg); job.result()
+            affected=getattr(job,'num_dml_affected_rows',None)
+            if affected:
+                logging.info(f'Project {proj}: cleaned up {affected} tiny progress windows (<{MIN_PROGRESS_WINDOW_SEC}s)')
+        except Exception:
+            pass
         last_completed_start=None
         while True:
-            cfgq=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter('p','STRING',proj)])
+            cfgq=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter('p','STRING',proj),
+            ])
+            cfgq_with_min=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter('p','STRING',proj),
+                bigquery.ScalarQueryParameter('minsec','INT64',MIN_PROGRESS_WINDOW_SEC)
+            ])
             ws=None; we=None
             try:
-                res=client.query(f"SELECT WindowStart,WindowEnd FROM `{dataset}.{progress}` WHERE Project=@p AND Status NOT IN ('complete','degraded') ORDER BY WindowStart ASC LIMIT 1",job_config=cfgq).result()
+                # Only pick outstanding windows that are not tiny; tiny ones are ignored (or cleaned up above)
+                res=client.query(
+                    f"SELECT WindowStart,WindowEnd FROM `{dataset}.{progress}` WHERE Project=@p AND Status NOT IN ('complete','degraded') AND TIMESTAMP_DIFF(WindowEnd, WindowStart, SECOND) >= @minsec ORDER BY WindowStart ASC LIMIT 1",
+                    job_config=cfgq_with_min
+                ).result()
                 for r in res: ws=r.WindowStart; we=r.WindowEnd; break
             except Exception: pass
             adaptive=base_days
@@ -430,6 +576,15 @@ def main():
                     overlap=timedelta(minutes=OVERLAP_MINUTES)
                     latest_naive=latest.replace(tzinfo=None) if getattr(latest,'tzinfo',None) else latest
                     last_completed_naive=last_completed_start.replace(tzinfo=None) if (last_completed_start and getattr(last_completed_start,'tzinfo',None)) else last_completed_start
+                    # If we're too close to now, skip making a tiny window and move to next project
+                    try:
+                        if (datetime.utcnow() - latest_naive).total_seconds() < MIN_PROGRESS_WINDOW_SEC:
+                            logging.info(f'Project {proj}: latest completed window end is too recent; skipping tiny near-now window and moving on')
+                            # Flush logs for visibility and exit project loop
+                            flush_logs(client,dataset,log_table)
+                            break
+                    except Exception:
+                        pass
                     cand_start=latest_naive-overlap
                     if last_completed_naive and cand_start<=last_completed_naive: cand_start=latest_naive
                     if last_completed_naive and (latest_naive-last_completed_naive)<=overlap*2: cand_start=latest_naive
@@ -442,16 +597,33 @@ def main():
             now=datetime.utcnow()
             cand_end=cand_end.replace(tzinfo=None) if getattr(cand_end,'tzinfo',None) else cand_end
             we=min(cand_end, now)
+            # Enforce a minimum window length to avoid thrashing on tiny windows
+            try:
+                if (we - ws).total_seconds() < MIN_PROGRESS_WINDOW_SEC:
+                    min_ws = we - timedelta(seconds=MIN_PROGRESS_WINDOW_SEC)
+                    # Respect min_start and last_completed_start
+                    if min_ws < min_start:
+                        min_ws = min_start
+                    if last_completed_start and min_ws < last_completed_start:
+                        min_ws = last_completed_start
+                    # Ensure ws < we after adjustments
+                    if min_ws >= we:
+                        min_ws = we - timedelta(seconds=MIN_PROGRESS_WINDOW_SEC)
+                    ws = min_ws
+            except Exception:
+                pass
             if ws>=now: break
             proj_clause=f'project = "{proj}"' if any(ch in proj for ch in [' ','&']) else f'project = {proj}'
             jql=f"({proj_clause}) AND updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
             try:
                 merge=(
-                    f"MERGE `{dataset}.{progress}` T USING (SELECT TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S')}') AS WindowStart, TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS WindowEnd, '{proj}' AS Project) S "
+                    f"MERGE `{dataset}.{progress}` T USING (SELECT TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS WindowStart, TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS WindowEnd, '{proj}' AS Project) S "
                     "ON T.WindowStart=S.WindowStart AND T.WindowEnd=S.WindowEnd AND T.Project=S.Project "
                     "WHEN MATCHED THEN UPDATE SET Status='in_progress', LastRun=CURRENT_TIMESTAMP(), Project=S.Project "
                     "WHEN NOT MATCHED THEN INSERT (WindowStart,WindowEnd,Status,LastRun,Project) VALUES (S.WindowStart,S.WindowEnd,'in_progress',CURRENT_TIMESTAMP(),S.Project)"
                 ); client.query(merge).result()
+                logging.info(f'Project {proj} window {ws} -> {we} marked in_progress')
+                log_buf(pipeline,run_id,'INFO',f'Project {proj} window {ws} -> {we} marked in_progress','main')
             except Exception:
                 break
             success=False; rc=0
@@ -465,16 +637,21 @@ def main():
                 if ratio>FAILURE_RATIO_DEGRADED: degraded=True
             status='degraded' if degraded else ('complete' if success else 'failed')
             upd=(
-                f"UPDATE `{dataset}.{progress}` SET Status='{status}', LastRun=CURRENT_TIMESTAMP(), RowCount={rc}, Search429={SEARCH_429_COUNT}, Detail429={DETAIL_429_COUNT} WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND Status!='complete'"
+                f"UPDATE `{dataset}.{progress}` SET Status='{status}', LastRun=CURRENT_TIMESTAMP(), RowCount={rc}, Search429={SEARCH_429_COUNT}, Detail429={DETAIL_429_COUNT} "
+                f"WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND Status!='complete'"
             ); client.query(upd).result()
+            logging.info(f'Project {proj} window {ws}->{we} {"complete" if success else status} rows={rc} 429_search={SEARCH_429_COUNT} 429_detail={DETAIL_429_COUNT}')
+            log_buf(pipeline,run_id,'INFO',f'Project {proj} window {ws}->{we} {status} rows={rc} 429_search={SEARCH_429_COUNT} 429_detail={DETAIL_429_COUNT}','main')
             if status in ('complete','degraded'):
                 last_completed_start=ws
                 if (SEARCH_429_COUNT>0 or DETAIL_429_COUNT>0):
                     CURRENT_TICKET_WORKERS=max(TICKET_MIN_WORKERS,int(CURRENT_TICKET_WORKERS*TICKET_SCALE_DOWN_FACTOR)); _NO429_STREAK=0
+                    logging.info(f'Scaling down detail workers to {CURRENT_TICKET_WORKERS}')
                 else:
                     _NO429_STREAK+=1
                     if _NO429_STREAK>=TICKET_SCALE_UP_NO429_WINDOWS and CURRENT_TICKET_WORKERS<TICKET_MAX_WORKERS:
                         CURRENT_TICKET_WORKERS=min(TICKET_MAX_WORKERS,max(CURRENT_TICKET_WORKERS+1,int(CURRENT_TICKET_WORKERS*TICKET_SCALE_UP_FACTOR))); _NO429_STREAK=0
+                        logging.info(f'Scaling up detail workers to {CURRENT_TICKET_WORKERS}')
             if not success:
                 try: span_hours=(we-ws).total_seconds()/3600.0
                 except Exception: span_hours=0
@@ -482,17 +659,21 @@ def main():
                     new_span=max(MIN_SHRINK_HOURS,span_hours*RATE_SHRINK_FACTOR); new_end=ws+timedelta(hours=new_span)
                     try:
                         client.query(
-                            f"UPDATE `{dataset}.{progress}` SET WindowEnd=TIMESTAMP('{new_end.strftime('%Y-%m-%d %H:%M:%S')}'), Status='failed' WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING)"
+                            f"UPDATE `{dataset}.{progress}` SET WindowEnd=TIMESTAMP('{new_end.strftime('%Y-%m-%d %H:%M:%S.%f')}'), Status='failed' "
+                            f"WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING)"
                         ).result();
                         continue
                     except Exception: break
                 else:
                     try:
                         client.query(
-                            f"UPDATE `{dataset}.{progress}` SET Status='degraded' WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S')}') AS STRING) AND Status='failed'"
+                            f"UPDATE `{dataset}.{progress}` SET Status='degraded' WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND Status='failed'"
                         ).result()
                     except Exception: pass
                     break
+            # Flush logs to BigQuery after each window
+            flush_logs(client,dataset,log_table)
+            logging.info('Flushed logs to BigQuery')
         log_buf(pipeline,run_id,'INFO',f'Project {proj} finished','main')
     log_buf(pipeline,run_id,'INFO','Tickets pipeline finished','main'); flush_logs(client,dataset,log_table)
 
