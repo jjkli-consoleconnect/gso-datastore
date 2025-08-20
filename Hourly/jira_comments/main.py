@@ -8,16 +8,26 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bq_logger import log_to_bigquery
 import uuid
+from typing import Optional
 
-# Define DEBUG flag before logging setup
-DEBUG = False
+"""Logging configuration"""
+# DEBUG flag and LOG_LEVEL override
+DEBUG = str(os.environ.get('DEBUG', '')).lower() in ('1', 'true', 'yes')
+_env_level = os.environ.get('LOG_LEVEL', 'DEBUG' if DEBUG else 'INFO').upper()
+_level = getattr(logging, _env_level, logging.INFO)
 
+# Setup logging (allow LOG_LEVEL to override, default INFO; DEBUG -> DEBUG)
+logging.basicConfig(level=_level, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Quiet noisy third-party loggers when not in DEBUG/when level > INFO
+if _level > logging.INFO:
+    logging.getLogger('google').setLevel(logging.WARNING)
+    logging.getLogger('google.cloud').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 # --- Logging Buffer for BigQuery Logs ---
 LOG_BUFFER = []
 
-# Setup logging (reduce verbosity unless DEBUG=True)
-logging.basicConfig(level=logging.INFO if not DEBUG else logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.info("Script startup test log")
 
 def load_config():
@@ -27,6 +37,65 @@ def load_config():
     except FileNotFoundError:
         logging.error("config.json not found. Please create it with your Jira API token.")
         return None
+
+def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
+    """Load base JQL from env (BASE_JQL_B64/BASE_JQL/JQL_FILE/PROJECTS_FILE) or ../JQL.txt.
+    Falls back to provided default_text if nothing is found.
+    """
+    # Highest precedence: direct env injection
+    env_b64 = os.environ.get('BASE_JQL_B64')
+    if env_b64:
+        try:
+            import base64
+            decoded = base64.b64decode(env_b64).decode('utf-8').strip()
+            if DEBUG:
+                logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL_B64 env variable")
+            if decoded:
+                return decoded
+        except Exception as e:
+            logging.warning(f"[JQL_LOAD] Failed decoding BASE_JQL_B64: {e}")
+
+    env_text = os.environ.get('BASE_JQL')
+    if env_text and env_text.strip():
+        if DEBUG:
+            logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL env variable")
+        return env_text.strip()
+
+    env_path = os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
+    candidates = []
+    if env_path:
+        candidates.append(env_path)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Hourly shared JQL.txt (when running locally, not in container)
+    candidates.append(os.path.normpath(os.path.join(script_dir, '..', 'JQL.txt')))
+    # Optional extra fallback: InitialSync/JQL.txt if present
+    candidates.append(os.path.normpath(os.path.join(script_dir, '..', '..', 'InitialSync', 'JQL.txt')))
+    # Container-friendly absolute fallbacks
+    candidates.extend(['/config/JQL.txt', '/data/JQL.txt'])
+
+    if DEBUG:
+        logging.info(f"[JQL_LOAD] Env JQL_FILE={os.environ.get('JQL_FILE')} PROJECTS_FILE={os.environ.get('PROJECTS_FILE')} BASE_JQL=set? {'yes' if os.environ.get('BASE_JQL') else 'no'} BASE_JQL_B64=set? {'yes' if os.environ.get('BASE_JQL_B64') else 'no'}")
+        logging.info(f"[JQL_LOAD] Candidate paths: {candidates}")
+
+    for path in candidates:
+        if not path:
+            continue
+        try:
+            if os.path.isfile(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    jql = f.read().strip()
+                    logging.info(f"Loaded base JQL from: {path}")
+                    return jql
+            else:
+                if DEBUG:
+                    logging.info(f"[JQL_LOAD] Skipping non-file path: {path}")
+        except Exception as e:
+            logging.warning(f"[JQL_LOAD] Failed reading {path}: {e}")
+    if default_text:
+        logging.info("Using embedded default base JQL.")
+        return default_text.strip()
+    logging.error("No base JQL found. Provide Hourly/JQL.txt or set JQL_FILE env var.")
+    return None
 
 def convert_timestamp(timestamp):
     if timestamp:
@@ -559,24 +628,28 @@ def main():
         jira_url = 'https://consoleconnect.atlassian.net'
         username = "jjkli@consoleconnect.com"
         api_token = config.get('jira_api_token')
-        jql_query = (
-            '('
-            'project = "GS&O Data Analytics" OR '
-            'project = "GS&O Tool Automation" OR '
-            'project = "GS&O Knowledge Consolidation" OR '
-            'project = "Google Contact Center AI Solution" OR '
-            'project = TAC OR '
-            'project = "VOICE - CE" OR '
-            'project = "IOT CE" OR '
-            'project = "Console Application Support" OR '
-            'project = "Console Connect Provisioning" OR '
-            'project = "Global Service Delivery Team" OR '
-            'project = "Transmission TX-CE" OR '
-            'project = "Mobility SMS - CE" OR '
-            'project = "Managed Security Services" OR '
+        base_default = (
+            '('\
+            'project = "GS&O Data Analytics" OR '\
+            'project = "GS&O Tool Automation" OR '\
+            'project = "GS&O Knowledge Consolidation" OR '\
+            'project = "Google Contact Center AI Solution" OR '\
+            'project = TAC OR '\
+            'project = "VOICE - CE" OR '\
+            'project = "IOT CE" OR '\
+            'project = "Console Application Support" OR '\
+            'project = "Console Connect Provisioning" OR '\
+            'project = "Global Service Delivery Team" OR '\
+            'project = "Transmission TX-CE" OR '\
+            'project = "Mobility SMS - CE" OR '\
+            'project = "Managed Security Services" OR '\
             'project = "Vendor Management Escalations"'
-            ') AND updated >= -3h'
+            ')'
         )
+        base_jql = load_base_jql(default_text=base_default)
+        if not base_jql:
+            return
+        jql_query = f"{base_jql} AND updated >= -1h"
         try:
             client = bigquery.Client()
         except Exception as e:

@@ -181,7 +181,7 @@ FlattenedJira AS (
 
 SELECT
   -- All Remedy fields
-  hd.* EXCEPT(Product_Family, JoinKey, SRKey),
+  hd.* EXCEPT(Product_Family, JoinKey, SRKey, IncidentKey_alpha, IncidentKey_num, IncidentKey_norm),
 
   -- Remedy-derived aliases
   hd.Status AS hdStatus,
@@ -196,7 +196,7 @@ SELECT
   UPPER(REPLACE(hd.SRno, '"', '')) AS SRno_Norm,
 
   -- All Jira fields with safe aliases for Status/Assignee
-  j.* EXCEPT(Status, Assignee, JoinKey, SRKey),
+  j.* EXCEPT(Status, Assignee, JoinKey, SRKey, IncidentKey_alpha, IncidentKey_num, IncidentKey_norm),
   j.Status AS JiraStatus,
   j.Assignee AS SecondTierAssignee,
 
@@ -454,8 +454,7 @@ SELECT
 
   -- Join diagnostics and unified keys
   CASE
-    WHEN j.RemedyTicketNumber_flat IS NOT NULL AND j.RemedyTicketNumber_flat = hd.Incident_Number THEN 'Incident'
-    WHEN j.SR_Ref IS NOT NULL AND CONCAT('SR', NULLIF(j.SR_Ref, '')) = NULLIF(hd.SRno, '') THEN 'SR'
+  WHEN hd.IncidentKey_norm IS NOT NULL AND j.IncidentKey_norm IS NOT NULL AND hd.IncidentKey_norm = j.IncidentKey_norm THEN 'Incident'
     ELSE NULL
   END AS JoinPath,
   COALESCE(NULLIF(hd.SRno, ''), j.SRKey) AS UnifiedSR,
@@ -465,13 +464,31 @@ SELECT
   CASE WHEN hd.Product_Family IS NULL THEN shr.`Product Family` ELSE hd.Product_Family END AS Product_Family
 
 FROM (
-  SELECT hd.*, COALESCE(NULLIF(hd.SRno, ''), hd.Incident_Number) AS JoinKey, NULLIF(hd.SRno, '') AS SRKey
+  SELECT
+    hd.*,
+    COALESCE(NULLIF(hd.SRno, ''), hd.Incident_Number) AS JoinKey,
+    NULLIF(hd.SRno, '') AS SRKey,
+    UPPER(REGEXP_REPLACE(TRIM(hd.Incident_Number), r'[^A-Z0-9]', '')) AS IncidentKey_alpha,
+    REGEXP_REPLACE(REGEXP_EXTRACT(UPPER(REGEXP_REPLACE(TRIM(hd.Incident_Number), r'[^A-Z0-9]', '')), r'(\d+)'), r'^0+', '') AS IncidentKey_num,
+    COALESCE(
+      NULLIF(UPPER(REGEXP_REPLACE(TRIM(hd.Incident_Number), r'[^A-Z0-9]', '')), ''),
+      NULLIF(REGEXP_REPLACE(REGEXP_EXTRACT(UPPER(REGEXP_REPLACE(TRIM(hd.Incident_Number), r'[^A-Z0-9]', '')), r'(\d+)'), r'^0+', ''), '')
+    ) AS IncidentKey_norm
   FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` AS hd
 ) AS hd
 FULL OUTER JOIN (
-  SELECT j.*, COALESCE(CONCAT('SR', NULLIF(j.SR_Ref, '')), j.RemedyTicketNumber_flat) AS JoinKey, CONCAT('SR', NULLIF(j.SR_Ref, '')) AS SRKey
+  SELECT
+    j.*,
+    COALESCE(CONCAT('SR', NULLIF(j.SR_Ref, '')), j.RemedyTicketNumber_flat) AS JoinKey,
+    CONCAT('SR', NULLIF(j.SR_Ref, '')) AS SRKey,
+    UPPER(REGEXP_REPLACE(TRIM(j.RemedyTicketNumber_flat), r'[^A-Z0-9]', '')) AS IncidentKey_alpha,
+    REGEXP_REPLACE(REGEXP_EXTRACT(UPPER(REGEXP_REPLACE(TRIM(j.RemedyTicketNumber_flat), r'[^A-Z0-9]', '')), r'(\d+)'), r'^0+', '') AS IncidentKey_num,
+    COALESCE(
+      NULLIF(UPPER(REGEXP_REPLACE(TRIM(j.RemedyTicketNumber_flat), r'[^A-Z0-9]', '')), ''),
+      NULLIF(REGEXP_REPLACE(REGEXP_EXTRACT(UPPER(REGEXP_REPLACE(TRIM(j.RemedyTicketNumber_flat), r'[^A-Z0-9]', '')), r'(\d+)'), r'^0+', ''), '')
+    ) AS IncidentKey_norm
   FROM FlattenedJira AS j
 ) AS j
-  ON hd.JoinKey = j.JoinKey
+  ON hd.IncidentKey_norm = j.IncidentKey_norm
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON COALESCE(j.SRKey, hd.SRKey) = shr.SRNo

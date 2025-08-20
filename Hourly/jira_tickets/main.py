@@ -50,9 +50,18 @@ from google.api_core.exceptions import Conflict, NotFound, GoogleAPIError
 import re
 import os
 from bq_logger import log_to_bigquery
+from typing import Optional
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Logging config with LOG_LEVEL env override; default INFO; DEBUG enables DEBUG
+DEBUG = str(os.environ.get('DEBUG', '')).lower() in ('1', 'true', 'yes')
+_env_level = os.environ.get('LOG_LEVEL', 'DEBUG' if DEBUG else 'INFO').upper()
+_level = getattr(logging, _env_level, logging.INFO)
+logging.basicConfig(level=_level, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.Formatter.converter = time.localtime
+if _level > logging.INFO:
+    logging.getLogger('google').setLevel(logging.WARNING)
+    logging.getLogger('google.cloud').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 def load_config():
     try:
@@ -61,6 +70,50 @@ def load_config():
     except FileNotFoundError:
         logging.error("config.json not found. Please create it with your Jira API token.")
         return None
+
+def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
+    """Load base JQL from env (BASE_JQL_B64/BASE_JQL/JQL_FILE/PROJECTS_FILE) or ../JQL.txt next to Hourly."""
+    # Highest precedence: env-provided JQL text/base64
+    env_b64 = os.environ.get('BASE_JQL_B64')
+    if env_b64:
+        try:
+            import base64
+            decoded = base64.b64decode(env_b64).decode('utf-8').strip()
+            logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL_B64 env variable")
+            if decoded:
+                return decoded
+        except Exception as e:
+            logging.warning(f"[JQL_LOAD] Failed decoding BASE_JQL_B64: {e}")
+
+    env_text = os.environ.get('BASE_JQL')
+    if env_text and env_text.strip():
+        logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL env variable")
+        return env_text.strip()
+
+    env_path = os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
+    candidates = []
+    if env_path:
+        candidates.append(env_path)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(os.path.normpath(os.path.join(script_dir, '..', 'JQL.txt')))
+    candidates.append(os.path.normpath(os.path.join(script_dir, '..', '..', 'InitialSync', 'JQL.txt')))
+    candidates.extend(['/config/JQL.txt', '/data/JQL.txt'])
+    for path in candidates:
+        if not path:
+            continue
+        try:
+            if os.path.isfile(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    jql = f.read().strip()
+                    logging.info(f"Loaded base JQL from: {path}")
+                    return jql
+        except Exception as e:
+            logging.warning(f"[JQL_LOAD] Failed reading {path}: {e}")
+    if default_text:
+        logging.info("Using embedded default base JQL.")
+        return default_text.strip()
+    logging.error("No base JQL found. Provide Hourly/JQL.txt or set JQL_FILE env var.")
+    return None
 
 def convert_timestamp(timestamp):
     if timestamp:
@@ -205,26 +258,28 @@ def fetch_and_sync_jira_data():
         project_id = client.project
         dataset_id = 'GSO'
 
-        # Define your JQL here (edit as needed)
-        jql_query = (
-            '('
-            'project = "GS&O Data Analytics" OR '
-            'project = "GS&O Tool Automation" OR '
-            'project = "GS&O Knowledge Consolidation" OR '
-            'project = "Google Contact Center AI Solution" OR '
-            'project = TAC OR '
-            'project = "VOICE - CE" OR '
-            'project = "IOT CE" OR '
-            'project = "Console Application Support" OR '
-            'project = "Console Connect Provisioning" OR '
-            'project = "Global Service Delivery Team" OR '
-            'project = "Transmission TX-CE" OR '
-            'project = "Mobility SMS - CE" OR '
-            'project = "Managed Security Services" OR '
+        base_default = (
+            '('\
+            'project = "GS&O Data Analytics" OR '\
+            'project = "GS&O Tool Automation" OR '\
+            'project = "GS&O Knowledge Consolidation" OR '\
+            'project = "Google Contact Center AI Solution" OR '\
+            'project = TAC OR '\
+            'project = "VOICE - CE" OR '\
+            'project = "IOT CE" OR '\
+            'project = "Console Application Support" OR '\
+            'project = "Console Connect Provisioning" OR '\
+            'project = "Global Service Delivery Team" OR '\
+            'project = "Transmission TX-CE" OR '\
+            'project = "Mobility SMS - CE" OR '\
+            'project = "Managed Security Services" OR '\
             'project = "Vendor Management Escalations"'
             ')'
-            ' AND updated >= -3y'
         )
+        base_jql = load_base_jql(default_text=base_default)
+        if not base_jql:
+            return
+        jql_query = f"{base_jql} AND updated >= -1h"
 
         # --- Log pipeline start ---
         log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Pipeline started")
