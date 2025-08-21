@@ -43,7 +43,7 @@ import requests
 import json
 from google.cloud import bigquery
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 import uuid
 from google.api_core.exceptions import Conflict, NotFound, GoogleAPIError
@@ -51,6 +51,7 @@ import re
 import os
 from bq_logger import log_to_bigquery
 from typing import Optional
+from pipeline_runs_logger import log_pipeline_run
 
 # Logging config with LOG_LEVEL env override; default INFO; DEBUG enables DEBUG
 DEBUG = str(os.environ.get('DEBUG', '')).lower() in ('1', 'true', 'yes')
@@ -252,8 +253,16 @@ def fetch_and_sync_jira_data():
     table_id = 'JiraTickets'
     temp_table_id = 'JiraTickets_temp'
     pipeline_name = "jira_tickets"
+    # Ensure client is defined before any logging that references it
+    try:
+        client  # type: ignore[name-defined]
+    except NameError:
+        client = None
     run_id = str(uuid.uuid4())
     try:
+        # Capture run start (UTC) and mark RUNNING
+        run_started = datetime.now(timezone.utc)
+        log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
         client = bigquery.Client()
         project_id = client.project
         dataset_id = 'GSO'
@@ -280,6 +289,10 @@ def fetch_and_sync_jira_data():
         if not base_jql:
             return
         jql_query = f"{base_jql} AND updated >= -1h"
+
+        # Expected JQL time window (relative -1h): [run_started-1h, run_started]
+        jql_window_start = run_started - timedelta(hours=1)
+        jql_window_end = run_started
 
         # --- Log pipeline start ---
         log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Pipeline started")
@@ -463,6 +476,10 @@ def fetch_and_sync_jira_data():
                 logging.warning(f"Could not fetch full details for issue {issue_key}: {e}")
                 return None
 
+        # Track observed window across fetched rows (by Updated timestamp)
+        observed_min_updated = None
+        observed_max_updated = None
+
         while start_at < total_issues:
             payload = json.dumps({
                 "jql": jql_query,
@@ -486,6 +503,17 @@ def fetch_and_sync_jira_data():
                         row = future.result()
                         if row:
                             rows_to_insert.append(row)
+                            # Update observed min/max based on Updated
+                            try:
+                                upd_str = row.get("Updated")
+                                if upd_str:
+                                    dt = datetime.strptime(upd_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                                    if observed_min_updated is None or dt < observed_min_updated:
+                                        observed_min_updated = dt
+                                    if observed_max_updated is None or dt > observed_max_updated:
+                                        observed_max_updated = dt
+                            except Exception:
+                                pass
                 start_at += len(issues)
                 issues_processed += len(issues)
                 logging.info(f"Fetched and processed {len(issues)} issues (startAt: {start_at}) out of total {total_issues}")
@@ -537,16 +565,34 @@ def fetch_and_sync_jira_data():
 
         # --- Log pipeline end ---
         log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Pipeline finished")
-    except FileNotFoundError:
-        logging.error("config.json not found. Please ensure it exists and contains your Jira API token.")
-    except bigquery.exceptions.NotFound as e:
-        logging.error(f"BigQuery resource not found (e.g., dataset or table): {e}")
+        # After merge completes, record summary
+        # Choose window from observed data if available, else fall back to JQL window
+        window_start_dt = observed_min_updated or jql_window_start
+        window_end_dt = observed_max_updated or jql_window_end
+
+        log_pipeline_run(
+            client,
+            pipeline_name=pipeline_name,
+            run_id=run_id,
+            level="INFO",
+            message="Pipeline finished",
+            status="SUCCESS",
+            window_start=window_start_dt,
+            window_end=window_end_dt,
+            rows_merged=issues_processed,
+        )
     except Exception as e:
-        logging.exception(f"An unexpected error occurred in fetch_and_sync_jira_data: {e}")
-        try:
-            log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "ERROR", f"Exception: {e}", function_name="fetch_and_sync_jira_data", details=str(e))
-        except Exception:
-            pass
+        # On error, record failure with message and error code if available
+        log_pipeline_run(
+            client,
+            pipeline_name=pipeline_name,
+            run_id=run_id,
+            level="ERROR",
+            message=f"Exception: {e}",
+            status="ERROR",
+            error_code=getattr(e, "code", None),
+        )
+        raise
     # Log pipeline end
     try:
         log_to_bigquery(client, dataset_id, "PipelineLogs", pipeline_name, run_id, "INFO", "Pipeline finished")

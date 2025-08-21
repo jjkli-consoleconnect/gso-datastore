@@ -6,6 +6,10 @@ var projectId = "pccw-internal-virt-agent-uat";
 var folderId = "1-CN9TVdXLQlG033djKVG5slzbhADbpdA"; // Make sure this Folder ID is correct and accessible
 var errorNotificationEmails = "jens-vertexai-aaaan3dj2p4fdro72c3fa2l3km@consoleconsole.org.slack.com";
 var archivedLabel = "ArchivedReports"; // Make sure this Gmail Label exists
+// Centralized PipelineRuns logging
+var pipelineRunsDatasetId = 'GSO';
+var pipelineRunsTableId = 'PipelineRuns';
+var currentRunId = null; // Set in main()
 
 const csvTypeConfigurations = [
   {
@@ -80,6 +84,10 @@ function searchForEmailAndAttachments() {
 
   if (threads.length === 0) {
     console.log("No new emails found conforming to search criteria. Exiting.");
+    // Log completion with 0 rows if we had a RUNNING entry
+    if (currentRunId) {
+      logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'No matching emails. Nothing to do.', null, null, 0, null, null);
+    }
     return;
   }
 
@@ -216,18 +224,10 @@ function searchForEmailAndAttachments() {
     console.log("All matching pending emails processed successfully. No warning email sent.");
   }
   console.log("Data pipeline run complete.");
-
-  logToBigQuery(
-    "GSO",
-    "PipelineLogs",
-    scriptName,
-    Utilities.getUuid(),
-    "INFO",
-    "Data pipeline run complete.",
-    "searchForEmailAndAttachments",
-    null,
-    null
-  );
+  // Final SUCCESS log with rows merged = total CSVs loaded
+  if (currentRunId) {
+    logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'Data pipeline run complete.', null, null, totalAttachmentsLoadedToBigQuery, null, null);
+  }
 }
 
 function processAttachmentByType(attachment, message) {
@@ -357,17 +357,9 @@ function loadJsonToBigQueryGeneric(jsonFileId, config) {
       subject: `Error in ${scriptName}: BigQuery Staging Load Failed for ${config.name}`,
       body: `An error occurred while loading JSON into BigQuery staging table ${config.stagingDatasetId}.${config.stagingTableId}: \n\n${error.message}\n\nStack trace:\n${error.stack}`
     });
-    logToBigQuery(
-      "GSO",
-      "PipelineLogs",
-      scriptName,
-      Utilities.getUuid(),
-      "ERROR",
-      "Error loading data: " + error.message,
-      "loadJsonToBigQueryGeneric",
-      null,
-      error.stack
-    );
+    if (currentRunId) {
+      logPipelineRun(scriptName, currentRunId, 'ERROR', 'ERROR', 'Error loading data: ' + error.message, null, null, null, null, null);
+    }
     throw error; 
   } finally {
     try { if (jsonFileId) DriveApp.getFileById(jsonFileId).setTrashed(true); }
@@ -438,59 +430,38 @@ function waitForJobCompletion(job) {
   }
 }
 
-function logToBigQuery(datasetId, tableId, pipelineName, runId, logLevel, message, FunctionName, BatchID, Details) {
-  var projectId = 'pccw-internal-virt-agent-uat';
-  var accessToken = ScriptApp.getOAuthToken();
-  var url = 'https://bigquery.googleapis.com/bigquery/v2/projects/' + projectId +
-            '/datasets/' + datasetId + '/tables/' + tableId + '/insertAll';
+// New centralized PipelineRuns logger using MERGE
+function logPipelineRun(pipelineName, runId, status, logLevel, message, windowStartIso, windowEndIso, rowsMerged, errorCode, contextObj) {
+  try {
+    var wsExpr = windowStartIso ? ("TIMESTAMP('" + windowStartIso + "')") : 'NULL';
+    var weExpr = windowEndIso ? ("TIMESTAMP('" + windowEndIso + "')") : 'NULL';
+    var rmExpr = (rowsMerged === 0 || rowsMerged) ? String(rowsMerged) : 'NULL';
+    var ecExpr = errorCode ? ("'" + escapeSqlLiteral(String(errorCode)) + "'") : 'NULL';
+    var lvl = logLevel ? escapeSqlLiteral(String(logLevel)) : '';
+    var msg = message ? escapeSqlLiteral(String(message)) : '';
+    var pname = escapeSqlLiteral(String(pipelineName));
+    var rid = escapeSqlLiteral(String(runId));
+    var stat = escapeSqlLiteral(String(status));
 
-  var row = {
-    json: {
-      Timestamp: new Date().toISOString(),
-      PipelineName: pipelineName,
-      RunID: runId,
-      LogLevel: logLevel,
-      Message: message,
-      FunctionName: FunctionName,
-      BatchID: BatchID,
-      Details: Details
-    }
-  };
+    var query = "\n      MERGE `" + projectId + "." + pipelineRunsDatasetId + "." + pipelineRunsTableId + "` T\n      USING (SELECT '" + pname + "' AS PipelineName, '" + rid + "' AS RunID) S\n      ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID\n      WHEN MATCHED THEN UPDATE SET\n        RunTime = CURRENT_TIMESTAMP(),\n        WindowStart = " + wsExpr + ",\n        WindowEnd = " + weExpr + ",\n        RowsMerged = " + rmExpr + ",\n        LogLevel = '" + lvl + "',\n        Message = '" + msg + "',\n        Status = '" + stat + "',\n        ErrorCode = " + ecExpr + ",\n        Context = CAST(NULL AS JSON)\n      WHEN NOT MATCHED THEN\n        INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, Context)\n        VALUES (CURRENT_TIMESTAMP(), '" + pname + "', " + wsExpr + ", " + weExpr + ", " + rmExpr + ", '" + lvl + "', '" + msg + "', '" + rid + "', '" + stat + "', " + ecExpr + ", CAST(NULL AS JSON));\n    ";
 
-  var payload = {
-    rows: [row]
-  };
+    var job = BigQuery.Jobs.insert({ configuration: { query: { query: query, useLegacySql: false } } }, projectId);
+    // Best-effort wait, but do not throw if it fails
+    waitForJobCompletion(job);
+  } catch (e) {
+    // Swallow logging errors to avoid breaking main flow
+    console.warn('logPipelineRun failed: ' + e.message);
+  }
+}
 
-  var options = {
-    method: 'post',
-    contentType: 'application/json',
-    headers: {
-      Authorization: 'Bearer ' + accessToken
-    },
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true
-  };
-
-  Logger.log("BigQuery log payload: " + JSON.stringify(payload));
-
-  var response = UrlFetchApp.fetch(url, options);
-  Logger.log("BigQuery log response: " + response.getContentText());
+function escapeSqlLiteral(s) {
+  return s.replace(/'/g, "''");
 }
 
 
 
 function main() {
+  currentRunId = Utilities.getUuid();
+  logPipelineRun(scriptName, currentRunId, 'RUNNING', 'INFO', 'Pipeline run started', null, null, null, null, null);
   searchForEmailAndAttachments();
-
-  logToBigQuery(
-    "GSO",
-    "PipelineLogs",
-    scriptName,
-    Utilities.getUuid(),
-    "INFO",
-    "Data pipeline run complete.",
-    "searchForEmailAndAttachments",
-    null,
-    null
-  );
 }

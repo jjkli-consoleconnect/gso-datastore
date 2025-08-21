@@ -14,30 +14,37 @@ var FILE_IDS = [
 // Your GCP project, BigQuery dataset and table
 var PROJECT_ID = 'pccw-internal-virt-agent-uat';
 var DATASET_ID = 'GSO';
-var TABLE_ID   = 'PipelineLogs';
+var TABLE_ID   = 'PipelineRuns';
+var SCRIPT_PIPELINE_NAME = 'GAS_LogsToBQ';
+var CURRENT_RUN_ID = null;
 
 
 /**
  * Writes a small “heartbeat” row into your BigQuery log table.
  */
 function logScriptEvent(step, status, message) {
-  var row = {
-    // Timestamp intentionally omitted; BigQuery will use its default value
-    PipelineName: 'GAS_LogsToBQ',
-    RunID:        'SCRIPT',
-    LogLevel:     status,
-    Message:      message,
-    FunctionName: step,
-    BatchID:      'SCRIPT',
-    Details:      ''
-  };
-  BigQuery.Tabledata.insertAll(
-    { rows: [{ json: row }] },
-    PROJECT_ID,
-    DATASET_ID,
-    TABLE_ID
-  );
+  if (!CURRENT_RUN_ID) CURRENT_RUN_ID = Utilities.getUuid();
+  logPipelineRun(SCRIPT_PIPELINE_NAME, CURRENT_RUN_ID, status === 'ERROR' ? 'ERROR' : 'INFO', status, step + ': ' + message, null, null, null, null, null);
 }
+
+function logPipelineRun(pipelineName, runId, status, logLevel, message, windowStartIso, windowEndIso, rowsMerged, errorCode, contextObj) {
+  try {
+    var wsExpr = windowStartIso ? ("TIMESTAMP('" + windowStartIso + "')") : 'NULL';
+    var weExpr = windowEndIso ? ("TIMESTAMP('" + windowEndIso + "')") : 'NULL';
+    var rmExpr = (rowsMerged === 0 || rowsMerged) ? String(rowsMerged) : 'NULL';
+    var ecExpr = errorCode ? ("'" + escapeSqlLiteral(String(errorCode)) + "'") : 'NULL';
+    var lvl = logLevel ? escapeSqlLiteral(String(logLevel)) : '';
+    var msg = message ? escapeSqlLiteral(String(message)) : '';
+    var pname = escapeSqlLiteral(String(pipelineName));
+    var rid = escapeSqlLiteral(String(runId));
+    var stat = escapeSqlLiteral(String(status));
+    var query = "\n      MERGE `" + PROJECT_ID + "." + DATASET_ID + "." + TABLE_ID + "` T\n      USING (SELECT '" + pname + "' AS PipelineName, '" + rid + "' AS RunID) S\n      ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID\n      WHEN MATCHED THEN UPDATE SET\n        RunTime = CURRENT_TIMESTAMP(),\n        WindowStart = " + wsExpr + ",\n        WindowEnd = " + weExpr + ",\n        RowsMerged = " + rmExpr + ",\n        LogLevel = '" + lvl + "',\n        Message = '" + msg + "',\n        Status = '" + stat + "',\n        ErrorCode = " + ecExpr + ",\n        Context = CAST(NULL AS JSON)\n      WHEN NOT MATCHED THEN\n        INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, Context)\n        VALUES (CURRENT_TIMESTAMP(), '" + pname + "', " + wsExpr + ", " + weExpr + ", " + rmExpr + ", '" + lvl + "', '" + msg + "', '" + rid + "', '" + stat + "', " + ecExpr + ", CAST(NULL AS JSON));\n    ";
+    var job = BigQuery.Jobs.insert({ configuration: { query: { query: query, useLegacySql: false } } }, PROJECT_ID);
+    waitForJobCompletion(job.jobReference.jobId);
+  } catch (e) { console.warn('logPipelineRun failed: ' + e.message); }
+}
+
+function escapeSqlLiteral(s) { return s.replace(/'/g, "''"); }
 
 
 /**
@@ -80,15 +87,40 @@ function importLogToBigQuery_v2(fileId) {
     waitForJobCompletion(job.jobReference.jobId);
     logScriptEvent('importLogToBigQuery_v2', 'INFO', `Loaded data into ${tempTableId}`);
 
-    // 2) MERGE into target table
+    // 2) MERGE into PipelineRuns (map legacy columns to new schema)
     var mergeQuery = `
       MERGE \`${PROJECT_ID}.${DATASET_ID}.${TABLE_ID}\` T
       USING \`${PROJECT_ID}.${DATASET_ID}.${tempTableId}\` S
-      ON T.BatchID = S.BatchID
-         AND T.RunID = S.RunID
+      ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID
+      WHEN MATCHED THEN UPDATE SET
+        RunTime = CURRENT_TIMESTAMP(),
+        LogLevel = S.LogLevel,
+        Message = S.Message,
+        Status = CASE
+          WHEN UPPER(S.LogLevel) IN ('ERROR','FAIL') THEN 'ERROR'
+          WHEN UPPER(S.LogLevel) = 'SUCCESS' THEN 'SUCCESS'
+          ELSE 'INFO'
+        END,
+        Context = CAST(TO_JSON_STRING(STRUCT(S.FunctionName AS FunctionName, S.BatchID AS BatchID, S.Details AS Details)) AS JSON)
       WHEN NOT MATCHED THEN
-        INSERT (PipelineName, RunID, LogLevel, Message, FunctionName, BatchID, Details)
-        VALUES (S.PipelineName, S.RunID, S.LogLevel, S.Message, S.FunctionName, S.BatchID, S.Details)
+        INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, Context)
+        VALUES (
+          CURRENT_TIMESTAMP(),
+          S.PipelineName,
+          NULL,
+          NULL,
+          NULL,
+          S.LogLevel,
+          S.Message,
+          S.RunID,
+          CASE
+            WHEN UPPER(S.LogLevel) IN ('ERROR','FAIL') THEN 'ERROR'
+            WHEN UPPER(S.LogLevel) = 'SUCCESS' THEN 'SUCCESS'
+            ELSE 'INFO'
+          END,
+          NULL,
+          CAST(TO_JSON_STRING(STRUCT(S.FunctionName AS FunctionName, S.BatchID AS BatchID, S.Details AS Details)) AS JSON)
+        )
     `;
     var mergeJob = {
       configuration: {

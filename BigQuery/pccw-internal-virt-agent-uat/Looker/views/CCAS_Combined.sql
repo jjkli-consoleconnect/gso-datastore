@@ -24,6 +24,7 @@ SELECT
   twk.Status,
   twk.Priority,
   twk.Assignee,
+  twk.Creator AS Ticket_Creator,
   twk.Created AS Ticket_Created,
   twk.Updated AS Ticket_Updated,
   twk.Resolved AS Ticket_Resolved,

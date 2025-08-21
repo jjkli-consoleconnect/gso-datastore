@@ -29,7 +29,27 @@ SELECT
             WHERE LOWER(TRIM(t.Links)) != 'none' AND TRIM(t.Links) != ''
         )
   END AS Links_Clean_Array,
-  -- ...existing code...
+  ARRAY(
+    SELECT DISTINCT REGEXP_EXTRACT(TRIM(link), r'^(\w+)-')
+    FROM UNNEST(SPLIT(t.Links, ',')) AS link
+    WHERE
+      LOWER(TRIM(link)) != 'none'
+      AND TRIM(link) != ''
+      AND REGEXP_EXTRACT(TRIM(link), r'^(\w+)-') IS NOT NULL
+  ) AS LinkedProject,
+  -- Array of all project prefixes from links, excluding self-links
+  ARRAY(
+    SELECT DISTINCT proj
+    FROM (
+      SELECT REGEXP_EXTRACT(TRIM(link), r'^(\w+)-') AS proj
+      FROM UNNEST(SPLIT(t.Links, ',')) AS link
+      WHERE
+        LOWER(TRIM(link)) != 'none'
+        AND TRIM(link) != ''
+        AND REGEXP_EXTRACT(TRIM(link), r'^(\w+)-') IS NOT NULL
+    )
+    WHERE proj != REGEXP_EXTRACT(t.Key, r'^(\w+)-')
+  ) AS LinkedProject_Clean,
   t.SR_Ref,
   TIMESTAMP_DIFF(t.Resolved, t.Created, MINUTE) AS LeadTime_mins,
   TIMESTAMP_DIFF(t.Resolved, t.Created, HOUR) AS LeadTime_hrs,
@@ -90,27 +110,8 @@ SELECT
     WHERE ch.Issue_Key = t.Key
   ) AS Changelogs,
   -- Array of all project prefixes from links
-  ARRAY(
-    SELECT DISTINCT REGEXP_EXTRACT(TRIM(link), r'^(\w+)-')
-    FROM UNNEST(SPLIT(t.Links, ',')) AS link
-    WHERE
-      LOWER(TRIM(link)) != 'none'
-      AND TRIM(link) != ''
-      AND REGEXP_EXTRACT(TRIM(link), r'^(\w+)-') IS NOT NULL
-  ) AS LinkedProject,
-  -- Array of all project prefixes from links, excluding self-links
-  ARRAY(
-    SELECT DISTINCT proj
-    FROM (
-      SELECT REGEXP_EXTRACT(TRIM(link), r'^(\w+)-') AS proj
-      FROM UNNEST(SPLIT(t.Links, ',')) AS link
-      WHERE
-        LOWER(TRIM(link)) != 'none'
-        AND TRIM(link) != ''
-        AND REGEXP_EXTRACT(TRIM(link), r'^(\w+)-') IS NOT NULL
-    )
-    WHERE proj != REGEXP_EXTRACT(t.Key, r'^(\w+)-')
-  ) AS LinkedProject_Clean
+  
 
 FROM
   `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
+

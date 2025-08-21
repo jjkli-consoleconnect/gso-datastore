@@ -2,13 +2,14 @@ import requests
 import json
 from google.cloud import bigquery
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 import os
 from concurrent.futures import ThreadPoolExecutor
 import random
 import uuid
 from typing import Optional
+from pipeline_runs_logger import log_pipeline_run
 
 # --- Logging Buffer for BigQuery Logs ---
 LOG_BUFFER = []
@@ -446,7 +447,7 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
     if rows_inserted > 0:
         run_merge_query(client, dataset_id, table_id, temp_table_id)
     delete_temp_table(client, dataset_id, temp_table_id)
-    return True
+    return int(rows_inserted)
 
 # This function is defined but not used. Consider removing if not planned for use.
 # def run_query_with_retry(client, query, retries=5, delay=5):
@@ -489,6 +490,10 @@ def main():
     if not base_jql:
         return
     jql_query = f"{base_jql} AND status CHANGED DURING (-1h, now())"
+    # Window for CHANGED DURING is last hour relative to run start
+    run_started = datetime.now(timezone.utc)
+    jql_window_start = run_started - timedelta(hours=1)
+    jql_window_end = run_started
 
     username = 'jjkli@consoleconnect.com'
     logging.info(f"Using Jira username: {username}")
@@ -514,17 +519,21 @@ def main():
 
     # Log pipeline start
     log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", FunctionName="main")
-
     try:
-        if sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
+        log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
+        rows_merged = sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client)
+        if rows_merged and rows_merged > 0:
             logging.info("Successfully synced transitions history to BigQuery.")
             log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced transitions history to BigQuery", FunctionName="main")
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", window_start=jql_window_start, window_end=jql_window_end, rows_merged=int(rows_merged))
         else:
             logging.error("Failed to sync transition history to BigQuery.")
             log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync transition history to BigQuery", FunctionName="main")
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Failed to sync transition history to BigQuery", status="ERROR")
     except Exception as e:
         logging.exception(f"Pipeline run failed: {e}")
         log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Pipeline run failed: {e}", FunctionName="main", Details=str(e))
+        log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Exception: {e}", status="ERROR", error_code=getattr(e, "code", None))
 
     # Log pipeline end
     log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", FunctionName="main")

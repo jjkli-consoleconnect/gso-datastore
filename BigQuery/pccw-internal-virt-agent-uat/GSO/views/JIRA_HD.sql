@@ -134,3 +134,4 @@ FULL OUTER JOIN FlattenedTierTwo AS st
   ON hd.Incident_Number = st.RemedyTicketNumber_flat
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON CONCAT('SR', st.SR_Ref) = shr.SRNo
+

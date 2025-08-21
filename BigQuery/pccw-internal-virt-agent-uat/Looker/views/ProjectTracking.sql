@@ -32,7 +32,8 @@ SELECT
       WHEN Project = 'GS&O Tool Automation' THEN 'GTA'
       ELSE NULL
   END AS ProjectCode,
-  Component
+  Component,
+  SyncTime
 
 FROM 
   `pccw-internal-virt-agent-uat.JIRAProjects.ProjectTracking`
@@ -48,3 +49,4 @@ WHERE
   END IS NOT NULL 
 
 ORDER BY updated desc
+

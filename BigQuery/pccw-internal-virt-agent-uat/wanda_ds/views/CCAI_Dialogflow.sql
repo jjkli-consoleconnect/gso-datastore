@@ -3,9 +3,9 @@ WITH UserFirstUse AS (
         JSON_VALUE(df.request, "$.queryParams.payload.data.user_id") AS slack_user_id,
         MIN(cc.startTimestamp) AS first_use_timestamp
     FROM
-        `pccw-internal-virtual-agent.wanda_ds.ccai_insights` cc
+        `pccw-internal-virt-agent-uat.wanda_ds.ccai_insights` cc
     JOIN
-        `pccw-internal-virtual-agent.wanda_ds.dialogflow_bigquery_export_data` df
+        `pccw-internal-virt-agent-uat.wanda_ds.dialogflow_bigquery_export_data` df
     ON REGEXP_EXTRACT(df.conversation_name, r'sessions\/([^\/]+)') = REGEXP_EXTRACT(cc.conversationName, r"conversations\/([a-zA-Z0-9-_]+)$")
     WHERE
         JSON_VALUE(df.request, "$.queryParams.payload.data.user_id") IS NOT NULL
@@ -134,9 +134,9 @@ BaseConversationData AS (
             ELSE 0
         END AS is_event_failed_response
     FROM
-        `pccw-internal-virtual-agent.wanda_ds.ccai_insights` cc
+        `pccw-internal-virt-agent-uat.wanda_ds.ccai_insights` cc
     LEFT JOIN
-        `pccw-internal-virtual-agent.wanda_ds.dialogflow_bigquery_export_data` df
+        `pccw-internal-virt-agent-uat.wanda_ds.dialogflow_bigquery_export_data` df
     ON REGEXP_EXTRACT(df.conversation_name, r'sessions\/([^\/]+)') = REGEXP_EXTRACT(cc.conversationName, r"conversations\/([a-zA-Z0-9-_]+)$")
 )
 SELECT

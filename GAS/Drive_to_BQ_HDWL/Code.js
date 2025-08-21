@@ -8,6 +8,11 @@ var errorNotificationEmails = "jens-vertexai-aaaan3dj2p4fdro72c3fa2l3km@consolec
 var sourceDriveFolderId = "15aWB6BmkjbySqHb5NWkaOn6fMQIZ5an0";
 var archiveDriveFolderId = "16RazUSdV7klL8ZAqNqVNUx7mWtpKkZi-";
 
+// Centralized PipelineRuns logging config
+var pipelineRunsDatasetId = 'GSO';
+var pipelineRunsTableId = 'PipelineRuns';
+var currentRunId = null; // set in main()
+
 
 // --- CONFIGURATIONS FOR EACH CSV TYPE ---
 const csvTypeConfigurations = [
@@ -80,6 +85,10 @@ const csvTypeConfigurations = [
  */
 function processDriveFiles() {
   console.log(`Starting data pipeline run from Google Drive folder: ${sourceDriveFolderId}`);
+  if (!currentRunId) {
+    currentRunId = Utilities.getUuid();
+    logPipelineRun(scriptName, currentRunId, 'RUNNING', 'INFO', 'Pipeline run started', null, null, null, null, null);
+  }
 
   let sourceFolder;
   let archiveFolder;
@@ -116,6 +125,8 @@ function processDriveFiles() {
 
   if (totalFilesFound === 0) {
     console.log("No new files found for processing. Exiting.");
+  // Finalize run with success and 0 rows
+  logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'No files to process', null, null, 0, null, null);
     return;
   }
 
@@ -175,18 +186,8 @@ function processDriveFiles() {
     console.log("All matching pending files processed successfully. No warning email sent.");
   }
   console.log("Data pipeline run complete.");
-
-  logToBigQuery(
-    "GSO",
-    "PipelineLogs",
-    scriptName,
-    Utilities.getUuid(),
-    "INFO",
-    "Data pipeline run complete.",
-    "processDriveFiles",
-    null,
-    null
-  );
+  // SUCCESS log with rows merged equal to total CSV loads
+  logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'Data pipeline run complete.', null, null, totalCSVsLoadedToBigQuery, null, null);
 }
 
 /**
@@ -350,6 +351,10 @@ function loadJsonToBigQueryGeneric(jsonFileId, config) {
       subject: `Error in ${scriptName}: BigQuery Staging Load Failed for ${config.name}`,
       body: `An error occurred while loading JSON into BigQuery staging table ${config.stagingDatasetId}.${config.stagingTableId}: \n\n${error.message}\n\nStack trace:\n${error.stack}`
     });
+    // Log error to PipelineRuns (best effort)
+    if (currentRunId) {
+      logPipelineRun(scriptName, currentRunId, 'ERROR', 'ERROR', 'Error loading data: ' + error.message, null, null, null, null, null);
+    }
     throw error; // Re-throw to propagate error to message-level handler
   } finally {
     try { if (jsonFileId) DriveApp.getFileById(jsonFileId).setTrashed(true); }
@@ -435,9 +440,37 @@ function waitForJobCompletion(job) {
   }
 }
 
+// Central PipelineRuns MERGE-based logger
+function logPipelineRun(pipelineName, runId, status, logLevel, message, windowStartIso, windowEndIso, rowsMerged, errorCode, contextObj) {
+  try {
+    var wsExpr = windowStartIso ? ("TIMESTAMP('" + windowStartIso + "')") : 'NULL';
+    var weExpr = windowEndIso ? ("TIMESTAMP('" + windowEndIso + "')") : 'NULL';
+    var rmExpr = (rowsMerged === 0 || rowsMerged) ? String(rowsMerged) : 'NULL';
+    var ecExpr = errorCode ? ("'" + escapeSqlLiteral(String(errorCode)) + "'") : 'NULL';
+    var lvl = logLevel ? escapeSqlLiteral(String(logLevel)) : '';
+    var msg = message ? escapeSqlLiteral(String(message)) : '';
+    var pname = escapeSqlLiteral(String(pipelineName));
+    var rid = escapeSqlLiteral(String(runId));
+    var stat = escapeSqlLiteral(String(status));
+
+    var query = "\n      MERGE `" + projectId + "." + pipelineRunsDatasetId + "." + pipelineRunsTableId + "` T\n      USING (SELECT '" + pname + "' AS PipelineName, '" + rid + "' AS RunID) S\n      ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID\n      WHEN MATCHED THEN UPDATE SET\n        RunTime = CURRENT_TIMESTAMP(),\n        WindowStart = " + wsExpr + ",\n        WindowEnd = " + weExpr + ",\n        RowsMerged = " + rmExpr + ",\n        LogLevel = '" + lvl + "',\n        Message = '" + msg + "',\n        Status = '" + stat + "',\n        ErrorCode = " + ecExpr + ",\n        Context = CAST(NULL AS JSON)\n      WHEN NOT MATCHED THEN\n        INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, Context)\n        VALUES (CURRENT_TIMESTAMP(), '" + pname + "', " + wsExpr + ", " + weExpr + ", " + rmExpr + ", '" + lvl + "', '" + msg + "', '" + rid + "', '" + stat + "', " + ecExpr + ", CAST(NULL AS JSON));\n    ";
+
+    var job = BigQuery.Jobs.insert({ configuration: { query: { query: query, useLegacySql: false } } }, projectId);
+    waitForJobCompletion(job);
+  } catch (e) {
+    console.warn('logPipelineRun failed: ' + e.message);
+  }
+}
+
+function escapeSqlLiteral(s) {
+  return s.replace(/'/g, "''");
+}
+
 /**
  * The entry point for the Google Apps Script execution.
  */
 function main() {
+  currentRunId = Utilities.getUuid();
+  logPipelineRun(scriptName, currentRunId, 'RUNNING', 'INFO', 'Pipeline run started', null, null, null, null, null);
   processDriveFiles();
 }

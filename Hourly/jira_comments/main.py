@@ -2,13 +2,14 @@ import requests
 import json
 from google.cloud import bigquery
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bq_logger import log_to_bigquery
 import uuid
 from typing import Optional
+from pipeline_runs_logger import log_pipeline_run
 
 """Logging configuration"""
 # DEBUG flag and LOG_LEVEL override
@@ -330,10 +331,10 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
 
     if not create_or_replace_temp_table(client, dataset_id, temp_table_id, schema):
         logging.error("Setup failed: Could not create temp table.")
-        return False
+        return -1
     if not wait_for_table(client, dataset_id, temp_table_id):
         logging.error("Setup failed: Temp table not available.")
-        return False
+        return -1
 
     # --- Jira Search and Data Extraction ---
     total_issues = float('inf')
@@ -393,7 +394,7 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
                 else:
                     logging.error("Failed to search issues after multiple attempts.")
                     delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-                    return False # Give up after retries
+                    return -1 # Give up after retries
 
         if response is None: # If loop finished without a successful response
             logging.error("Jira search failed after multiple retries.")
@@ -432,7 +433,7 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
                 logging.exception(f"Error running merge query: {e}")
             delete_temp_table(client, dataset_id, temp_table_id)
             # No window to mark as failed; skip progress table update
-            return False
+            return -1
 
         # --- Process Search Results ---
         try:
@@ -457,7 +458,7 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
                     if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
                         logging.error(f"Failed to insert batch of {len(rows_to_insert)} rows into temp table. Stopping processing.")
                         delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-                        return False
+                        return -1
                     total_rows_inserted_to_temp += len(rows_to_insert)
                     rows_to_insert = []
 
@@ -466,7 +467,7 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
                 if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
                     logging.error(f"Failed to insert remaining {len(rows_to_insert)} rows into temp table. Stopping processing.")
                     delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-                    return False
+                    return -1
                 total_rows_inserted_to_temp += len(rows_to_insert)
 
 
@@ -480,11 +481,11 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
         except json.JSONDecodeError as e:
             logging.error(f"Error decoding JSON response for search issues: {e}. Response text: {response.text if response else 'N/A'}")
             delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-            return False
+            return -1
         except Exception as e:
             logging.exception(f"An unexpected error occurred during issue processing: {e}")
             delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-            return False
+            return -1
 
 
     logging.info(f"Finished fetching and inserting data into temporary table '{temp_table_id}'. Total rows inserted: {total_rows_inserted_to_temp}")
@@ -523,14 +524,14 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
         logging.info("Data merged successfully into final table.")
     except Exception as e:
         logging.exception(f"Error running merge query: {e}")
-        return False
+        return -1
 
     logging.info(f"Sync process completed for JQL: {jql_query}")
 
     # Drop temp table after merge
     delete_temp_table(client, dataset_id, temp_table_id)
 
-    return True
+    return int(total_rows_inserted_to_temp)
 
 def wait_for_streaming_buffer_empty(client, project, dataset, table, max_wait=300, poll_interval=10):
     table_ref = f"{project}.{dataset}.{table}"
@@ -650,6 +651,10 @@ def main():
         if not base_jql:
             return
         jql_query = f"{base_jql} AND updated >= -1h"
+        # Compute JQL window: last hour relative to run start
+        run_started = datetime.now(timezone.utc)
+        jql_window_start = run_started - timedelta(hours=1)
+        jql_window_end = run_started
         try:
             client = bigquery.Client()
         except Exception as e:
@@ -657,15 +662,20 @@ def main():
             return
         log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", function_name="main")
         try:
-            if sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client):
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
+            rows_merged = sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client)
+            if rows_merged and rows_merged > -1:
                 logging.info("Successfully synced comments to BigQuery.")
                 log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced comments to BigQuery", function_name="main")
+                log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", window_start=jql_window_start, window_end=jql_window_end, rows_merged=int(rows_merged))
             else:
                 logging.error("Failed to sync comments to BigQuery.")
                 log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync comments to BigQuery", function_name="main")
+                log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Failed to sync comments to BigQuery", status="ERROR")
         except Exception as e:
             logging.exception(f"Pipeline run failed: {e}")
             log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Pipeline run failed: {e}", function_name="main", details=str(e))
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Pipeline run failed: {e}", status="ERROR", error_code=getattr(e, "code", None))
         log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", function_name="main")
         flush_logs_to_bigquery(client, dataset_id, log_table_id)
     except Exception as e:
