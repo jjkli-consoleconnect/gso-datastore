@@ -70,9 +70,31 @@ def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
         try:
             if os.path.isfile(path):
                 with open(path, 'r', encoding='utf-8') as f:
-                    jql = f.read().strip()
+                    raw = f.read()
+                    text = raw.strip('\n\r ')
+                    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+                    filtered = []
+                    for ln in lines:
+                        u = ln.lstrip()
+                        if u.startswith('#') or u.startswith('//') or u.startswith('--'):
+                            continue
+                        filtered.append(ln)
+                    rebuilt = '\n'.join(filtered)
+                    if filtered and not any('project ' in ln.lower() for ln in filtered):
+                        clauses = []
+                        for p in filtered:
+                            if p in ('*','ALL'):
+                                continue
+                            if p.isupper() and ' ' not in p and '-' not in p:
+                                clauses.append(f'project = {p}')
+                            else:
+                                clauses.append(f'project = "{p}"')
+                        if clauses:
+                            rebuilt = '(' + ' OR '.join(clauses) + ')'
+                        else:
+                            rebuilt = ''
                     logging.info(f"Loaded base JQL from: {path}")
-                    return jql
+                    return rebuilt.strip() if rebuilt else text
             else:
                 if DEBUG:
                     logging.info(f"[JQL_LOAD] Skipping non-file path: {path}")

@@ -1,14 +1,13 @@
-GS&O Data Analytics
-GS&O Tool Automation
+# GS&O Data Analytics
+# GS&O Tool Automation
 GS&O Knowledge Consolidation
-Google Contact Center AI Solution
-TAC
-VOICE - CE
-IOT CE
-Console Application Support
-Console Connect Provisioning
-Global Service Delivery Team
-Transmission TX-CE
-Mobility SMS - CE
-Managed Security Services
-Vendor Management Escalations
+# Google Contact Center AI Solution
+# TAC
+# VOICE - CE
+# IOT CE
+# Console Application Support
+# Console Connect Provisioning
+# Global Service Delivery Team
+# Transmission TX-CE
+# Mobility SMS - CE
+# Managed Security Services

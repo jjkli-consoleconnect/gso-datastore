@@ -1,6 +1,6 @@
 import requests
 import json
-import os
+import os, sys, pathlib
 from google.cloud import bigquery
 import logging
 from datetime import datetime, timedelta
@@ -9,13 +9,30 @@ import uuid
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Ensure repository root (parent of InitialSync/) in sys.path for shared imports
+_script_dir = pathlib.Path(__file__).resolve().parent
+_root_dir = _script_dir.parent.parent
+if str(_root_dir) not in sys.path:
+    sys.path.insert(0, str(_root_dir))
+
+# Auto GOOGLE_APPLICATION_CREDENTIALS if not set
+if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
+    for cand in ('service-account.json','jira-bigquery-key.json'):
+        p=_root_dir / cand
+        if p.exists():
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS']=str(p)
+            break
+
+from shared.pipeline_runs_logger import log_pipeline_run
+
 # ----------------- CONFIG -----------------
 DEBUG = False
 logging.basicConfig(level=logging.INFO if not DEBUG else logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 logging.info("Changelog initial sync starting up")
 
-LOG_BUFFER = []  # buffered logs for batch write
+LOG_BUFFER = []  # buffered logs for batch write (legacy; PipelineRuns used instead)
+PIPELINE_NAME = 'jira_changelog_initialsync'
 
 # -------- Data completeness / rate-limit resiliency settings --------
 MAX_HISTORY_ATTEMPTS = 5              # per-issue history retries
@@ -87,12 +104,37 @@ RATE_SHRINK_FACTOR = 0.5       # multiply previous window span by this when rate
 
 # ----------------- UTIL -----------------
 def load_config():
-    try:
-        with open('config.json') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logging.error("config.json not found. Please provide Jira credentials.")
-        return None
+    """Layered Jira config load with fallbacks.
+    1. Env JIRA_CONFIG_JSON (JSON)
+    2. Local config.json (script dir)
+    3. Repo root config.json
+    4. Hourly/jira_tickets/config.json (reuse working long token)
+    """
+    env_cfg=os.environ.get('JIRA_CONFIG_JSON')
+    if env_cfg:
+        try:
+            data=json.loads(env_cfg)
+            logging.info('Loaded Jira config from env JIRA_CONFIG_JSON')
+            return data
+        except Exception:
+            logging.warning('Failed to parse JIRA_CONFIG_JSON env var')
+    candidates=[str(_script_dir/'config.json'), str(_root_dir/'config.json'), str(_root_dir/'Hourly'/'jira_tickets'/'config.json')]
+    for path in candidates:
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path,'r',encoding='utf-8') as f:
+                data=json.load(f)
+            token=data.get('jira_api_token')
+            if token and len(token)<40:
+                logging.warning(f'Loaded very short jira_api_token (len={len(token)}) from {path}; may be invalid')
+            else:
+                logging.info(f'Loaded Jira config from {path} (token length {len(token) if token else 0})')
+            return data
+        except Exception as e:
+            logging.debug(f'Config read fail {path}: {e}')
+    logging.error('No Jira config found in expected locations')
+    return None
 
 
 def convert_timestamp(ts: str):
@@ -119,42 +161,78 @@ def convert_timestamp(ts: str):
     return None
 
 def load_projects_from_file(defaults):
-    """Load project names from external file for Docker/local usage.
-    Resolution order:
-      1) Env JQL_FILE (explicit path)
-      2) ../JQL.txt relative to this script
-      3) Common container mount paths: /app/InitialSync/JQL.txt, /config/JQL.txt, /data/JQL.txt
-      Fallback to defaults if none found or empty.
+    """Load project names from external file for Docker/local usage with extended comment support.
+    Supports:
+      - Full-line comments starting with #, //, --
+      - Inline comments after space + marker ( #, //, -- )
+      - Blank line ignoring
+    Resolution order unchanged.
     """
     candidates = []
     try:
-        # 1) Env override
         env_path = os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
         if env_path:
             candidates.append(env_path)
-        # 2) Relative to script
         script_dir = os.path.dirname(__file__)
         candidates.append(os.path.normpath(os.path.join(script_dir, '..', 'JQL.txt')))
-        # 3) Common container paths
         candidates.extend([
             '/app/InitialSync/JQL.txt',
             '/config/JQL.txt',
             '/data/JQL.txt',
         ])
+        comment_starts = ('#','//','--')
+        inline_markers = [' #',' //',' -- ']
         for p in candidates:
             try:
-                if p and os.path.exists(p):
-                    with open(p, 'r', encoding='utf-8') as f:
-                        lines = [ln.strip() for ln in f.readlines()]
-                    items = [ln for ln in lines if ln and not ln.startswith('#')]
-                    if items:
-                        logging.info(f"Loaded project list from {p} ({len(items)} entries)")
-                        return items
+                if not p or not os.path.exists(p):
+                    continue
+                with open(p, 'r', encoding='utf-8') as f:
+                    raw_lines = f.readlines()
+                items = []
+                for ln in raw_lines:
+                    ln = ln.rstrip('\r\n')
+                    stripped = ln.strip()
+                    if not stripped:
+                        continue
+                    if stripped.startswith(comment_starts):
+                        continue
+                    work = stripped
+                    for marker in inline_markers:
+                        idx = work.find(marker)
+                        if idx > 0:
+                            work = work[:idx].strip()
+                            break
+                    if work:
+                        items.append(work)
+                if items:
+                    logging.info(f"Loaded project list from {p} ({len(items)} entries)")
+                    return items
             except Exception as ie:
                 logging.debug(f"Project list read failed for {p}: {ie}")
     except Exception as e:
         logging.debug(f"Could not resolve external project list: {e}")
     return defaults
+
+def preflight_validate_project(auth, project_name, base_url='https://consoleconnect.atlassian.net'):
+    """Lightweight visibility check before heavy backfill. Returns (ok, status_code, message)."""
+    search_url=f'{base_url}/rest/api/2/search'
+    test_jql=f'project = "{project_name}"'
+    payload=json.dumps({'jql':test_jql,'startAt':0,'maxResults':0,'fields':['key']})
+    headers={'Accept':'application/json','Content-Type':'application/json'}
+    try:
+        r=requests.post(search_url,headers=headers,auth=auth,data=payload,timeout=30)
+        if r.status_code==200:
+            return True, r.status_code, 'ok'
+        snippet=(r.text or '')[:300].replace('\n',' ')
+        if r.status_code in (400,404):
+            return False, r.status_code, f'Not visible/invalid: {snippet}'
+        if r.status_code==401:
+            return False, r.status_code, 'Unauthorized'
+        if r.status_code==403:
+            return False, r.status_code, 'Forbidden'
+        return False, r.status_code, snippet
+    except Exception as e:
+        return False, -1, f'Exception: {e}'
 
 # -------------- BigQuery helpers --------------
 
@@ -488,39 +566,8 @@ def log_to_bigquery_buffer(pipeline_name, run_id, level, message, function_name=
     })
 
 def flush_logs(client, dataset_id, log_table):
-    if not LOG_BUFFER:
-        return
-    temp = 'PipelineLogs_temp'
-    schema = [
-        bigquery.SchemaField('Timestamp', 'TIMESTAMP'),
-        bigquery.SchemaField('PipelineName', 'STRING'),
-        bigquery.SchemaField('RunID', 'STRING'),
-        bigquery.SchemaField('LogLevel', 'STRING'),
-        bigquery.SchemaField('Message', 'STRING'),
-        bigquery.SchemaField('FunctionName', 'STRING'),
-        bigquery.SchemaField('Details', 'STRING'),
-    ]
-    if not create_or_replace_table(client, dataset_id, temp, schema) or not wait_for_table(client, dataset_id, temp):
-        logging.error("Could not create temp logs table")
-        return
-    if not insert_rows_with_retry(client, dataset_id, temp, LOG_BUFFER, schema, retries=10, delay=5):
-        logging.error("Inserting logs failed")
-        return
-    merge = f"""
-        MERGE `{dataset_id}.{log_table}` T
-        USING (SELECT * FROM `{dataset_id}.{temp}`) S
-        ON T.Timestamp = S.Timestamp AND T.RunID = S.RunID AND T.Message = S.Message
-        WHEN MATCHED THEN UPDATE SET
-            T.PipelineName = S.PipelineName,
-            T.LogLevel = S.LogLevel,
-            T.FunctionName = S.FunctionName,
-            T.Details = S.Details
-        WHEN NOT MATCHED THEN INSERT (Timestamp, PipelineName, RunID, LogLevel, Message, FunctionName, Details)
-        VALUES (S.Timestamp, S.PipelineName, S.RunID, S.LogLevel, S.Message, S.FunctionName, S.Details)
-    """
-    client.query(merge).result()
-    delete_table_quiet(client, dataset_id, temp)
-    logging.info("Flushed logs to BigQuery")
+    # Legacy PipelineLogs flush disabled (no-op). Use PipelineRuns table instead.
+    return
 
 # -------------- Main orchestration --------------
 
@@ -531,7 +578,7 @@ def main():
 
     dataset_id = 'GSO'
     table_id = 'JiraChangelog'
-    log_table_id = 'PipelineLogs'
+    # Legacy PipelineLogs table unused after migration
     pipeline_name = 'jira_changelog'
     run_id = str(uuid.uuid4())
     jira_url = 'https://consoleconnect.atlassian.net'
@@ -600,8 +647,8 @@ def main():
         logging.error('No valid projects resolved from arguments; exiting')
         return
 
-    username = config.get('jira_username') or 'jjkli@consoleconnect.com'
-    api_token = config.get('jira_api_token')
+    username = os.environ.get('JIRA_USERNAME') or config.get('jira_username') or 'jjkli@consoleconnect.com'
+    api_token = os.environ.get('JIRA_API_TOKEN') or config.get('jira_api_token')
     if not api_token:
         logging.error('Missing jira_api_token in config.json')
         return
@@ -609,7 +656,13 @@ def main():
 
     # Process each project sequentially
     for project in project_list:
+        ok, sc, msg = preflight_validate_project(auth, project, jira_url)
+        if not ok:
+            logging.error(f'Preflight failed project "{project}" status={sc} detail={msg}; skipping')
+            log_pipeline_run(None, pipeline_name=PIPELINE_NAME, run_id=run_id, level='ERROR', message=f'Preflight failed {project}: {msg}', status='ERROR')
+            continue
         logging.info(f"Starting backfill for project {project}")
+        log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level='INFO', message=f'Starting backfill for project {project}', status='RUNNING')
         last_completed_start = None
         while True:
             # Determine next window for this project
@@ -759,7 +812,7 @@ def main():
                 logging.warning(f"Could not mark window in_progress for project {project}: {e}")
                 break
 
-            log_to_bigquery_buffer(pipeline_name, run_id, 'INFO', f'Window sync started for {project} {ws_naive}->{window_end}', 'main')
+            log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level='INFO', message='Window in_progress', status='RUNNING', window_start=ws_naive.strftime('%Y-%m-%d %H:%M:%S'), window_end=window_end.strftime('%Y-%m-%d %H:%M:%S'))
             success = False
             row_count = 0
             # reset per-window counters
@@ -770,7 +823,7 @@ def main():
                 success, row_count = sync_changelog_window(jira_url, jql_query, auth, client, dataset_id, table_id, ws_naive, window_end)
             except Exception as e:
                 logging.exception(f"Window sync fatal error for {project}: {e}")
-                log_to_bigquery_buffer(pipeline_name, run_id, 'ERROR', f'Window sync failed {project}: {e}', 'main', details=str(e))
+                log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level='ERROR', message=f'Window sync failed {project}: {e}', status='ERROR')
 
             if success:
                 # Determine degraded vs complete
@@ -810,7 +863,7 @@ def main():
                     """
                     client.query(upd).result()
                     logging.info(f"Project {project} window {ws_naive}->{window_end} {status_final} rows={row_count} 429_search={SEARCH_429_COUNT} 429_history={HISTORY_429_COUNT}")
-                    log_to_bigquery_buffer(pipeline_name, run_id, 'INFO', f'Window {status_final} {project} rows={row_count} search429={SEARCH_429_COUNT} history429={HISTORY_429_COUNT}', 'main')
+                    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level='INFO', message=f'Window {status_final} {project}', status='SUCCESS', window_start=ws_naive.strftime('%Y-%m-%d %H:%M:%S'), window_end=window_end.strftime('%Y-%m-%d %H:%M:%S'), rows_merged=int(row_count))
                     if status_final in ('complete','degraded'):
                         last_completed_start = ws_naive
                     # Dynamic concurrency scaling
@@ -841,7 +894,7 @@ def main():
                     """
                     client.query(fail).result()
                     logging.info(f"Project {project} window {ws_naive}->{window_end} failed rows={row_count}")
-                    log_to_bigquery_buffer(pipeline_name, run_id, 'ERROR', f'Window failed {project} rows={row_count}', 'main')
+                    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level='ERROR', message=f'Window failed {project} rows={row_count}', status='ERROR', window_start=ws_naive.strftime('%Y-%m-%d %H:%M:%S'), window_end=window_end.strftime('%Y-%m-%d %H:%M:%S'), rows_merged=int(row_count))
                 except Exception as e:
                     logging.warning(f"Failed to mark window failed for {project}: {e}")
 
@@ -888,8 +941,7 @@ def main():
 
             # Continue loop to process next window
 
-    log_to_bigquery_buffer(pipeline_name, run_id, 'INFO', 'Pipeline finished (all projects processed)', 'main')
-    flush_logs(client, dataset_id, log_table_id)
+    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level='INFO', message='Pipeline finished (all projects processed)', status='SUCCESS')
 
 if __name__ == '__main__':
     main()

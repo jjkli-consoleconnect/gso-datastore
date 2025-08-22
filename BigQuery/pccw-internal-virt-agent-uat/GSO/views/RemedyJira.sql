@@ -209,6 +209,30 @@ SELECT
     ELSE 'Center Operations'
   END AS Team,
 
+  -- GSOTeam: priority 1 = Remedy Assigned Group; priority 2 = Jira ProjectCode (from j.Key)
+  CASE
+    -- Assigned Group -> Team mappings
+    WHEN UPPER(TRIM(hd.Assigned_Group)) IN (
+      'ASOC','FMC','GSOC','SOFT SWITCH MANAGEMENT','HKNOC','PHSOC','VAS NOC','USNOC',
+      'GSOC TX - US','CONSOLE CONNECT','SES','ICX','PLANNED EVENT MGT','BEL NOC',
+      'GSOC TX - HK','GSOC TX - PH','GLOBAL HELPDESK'
+  ) THEN 'Center Operations'
+  WHEN UPPER(TRIM(hd.Assigned_Group)) = 'IT HELPDESK' THEN 'IT Operations'
+  WHEN UPPER(TRIM(hd.Assigned_Group)) = 'QUALITY ASSURANCE' THEN 'Quality Assurance'
+
+    -- Fallback to ProjectCode (extracted from j.Key) -> Team mappings
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('GDA','GTA','GKC','CCAI') THEN 'Automation & Analytics'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('TAC','CCAS','VOICECE','IOTCE','TXCE','SMSCE') THEN 'Customer Engineering'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('MSS') THEN 'Center Operations'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('CCPROV','GSDT') THEN 'Global Service Delivery'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'VIM' THEN 'Vendor Verification'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'ITOPS' THEN 'IT Operations'
+    ELSE NULL
+  END AS GSOTeam,
+
+  -- Headcount: number of Engineers in StaffListCleaned for this GSOTeam
+  se.Engineer_Count AS GSOTeam_Engineer_Count,
+
   -- Jira ticket URL (set data type to URL in Looker Studio)
   CASE WHEN j.Key IS NOT NULL THEN CONCAT('https://consoleconnect.atlassian.net/browse/', j.Key) ELSE NULL END AS JiraURL,
 
@@ -492,3 +516,31 @@ FULL OUTER JOIN (
   ON hd.IncidentKey_norm = j.IncidentKey_norm
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON COALESCE(j.SRKey, hd.SRKey) = shr.SRNo
+LEFT JOIN (
+  SELECT
+    Team_Name,
+    COUNTIF(UPPER(Classify) = 'ENGINEER') AS Engineer_Count
+  FROM `pccw-internal-virt-agent-uat.GSO.StaffListCleaned`
+  GROUP BY Team_Name
+) AS se
+ON se.Team_Name = (
+  CASE
+    -- Assigned Group -> Team mappings (priority 1)
+    WHEN UPPER(TRIM(hd.Assigned_Group)) IN (
+      'ASOC','FMC','GSOC','SOFT SWITCH MANAGEMENT','HKNOC','PHSOC','VAS NOC','USNOC',
+      'GSOC TX - US','CONSOLE CONNECT','SES','ICX','PLANNED EVENT MGT','BEL NOC',
+      'GSOC TX - HK','GSOC TX - PH','GLOBAL HELPDESK'
+    ) THEN 'Center Operations'
+    WHEN UPPER(TRIM(hd.Assigned_Group)) = 'IT HELPDESK' THEN 'IT Operations'
+    WHEN UPPER(TRIM(hd.Assigned_Group)) = 'QUALITY ASSURANCE' THEN 'Quality Assurance'
+
+    -- Fallback to ProjectCode (priority 2)
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('GDA','GTA','GKC','CCAI') THEN 'Automation & Analytics'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('TAC','CCAS') THEN 'Customer Engineering'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('VOICECE','IOTCE','TXCE','SMSCE','MSS') THEN 'Center Operations'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('CCPROV','GSDT') THEN 'Global Service Delivery'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'VIM' THEN 'Vendor Verification'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'ITOPS' THEN 'IT Operations'
+    ELSE NULL
+  END
+)

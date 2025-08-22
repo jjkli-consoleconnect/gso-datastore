@@ -11,6 +11,5 @@ project = "Console Connect Provisioning" OR
 project = "Global Service Delivery Team" OR
 project = "Transmission TX-CE" OR
 project = "Mobility SMS - CE" OR
-project = "Managed Security Services" OR
-project = "Vendor Management Escalations"
+project = "Managed Security Services"
 )

@@ -6,21 +6,9 @@ import base64
 import uuid
 from datetime import datetime, timezone
 from google.cloud import bigquery
+from shared.pipeline_runs_logger import log_pipeline_run
 
-# Resilient import for log_to_bigquery (supports shared.bq_logger or bq_logger, with a safe fallback)
-try:
-    import importlib
-    try:
-        log_to_bigquery = importlib.import_module('shared.bq_logger').log_to_bigquery
-    except ModuleNotFoundError:
-        try:
-            log_to_bigquery = importlib.import_module('bq_logger').log_to_bigquery
-        except ModuleNotFoundError:
-            raise
-except ModuleNotFoundError:
-    def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, message, function_name=None, details=None):
-        levelno = getattr(logging, str(level).upper(), logging.INFO)
-        logging.log(levelno, f"[{pipeline_name}][{run_id}] {level}: {message} (fn={function_name}) details={details}")
+# Legacy log_to_bigquery removed; using PipelineRuns unified logger
 
 
 # Setup logging
@@ -164,7 +152,6 @@ def fetch_and_sync_jira_data():
 
     dataset_id = 'JIRAProjects'
     table_id = 'CCAS'
-    log_table_id = 'PipelineLogs'
     pipeline_name = "jira_ccas"
     run_id = str(uuid.uuid4())
 
@@ -173,10 +160,13 @@ def fetch_and_sync_jira_data():
         client = bigquery.Client()
     except Exception as e:
         logging.error(f"Failed to initialize BigQuery client: {e}")
-        log_to_bigquery(None, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Failed to initialize BigQuery client: {e}", function_name="fetch_and_sync_jira_data")
+        # Log to PipelineRuns
+        try:
+            log_pipeline_run(None, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Failed to initialize BigQuery client: {e}", status="ERROR")
+        except Exception:
+            pass
         return
-
-    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", function_name="fetch_and_sync_jira_data")
+    log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
 
     try:
         # Query and paging settings
@@ -240,7 +230,7 @@ def fetch_and_sync_jira_data():
 
         while True:
             logging.info(f"Fetching data from Jira using JQL, startAt: {start_at}, maxResults: {max_results}")
-            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", f"Fetching data from Jira, startAt: {start_at}", function_name="fetch_and_sync_jira_data")
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message=f"Fetching data from Jira, startAt: {start_at}", status="RUNNING")
 
             try:
                 request_headers = {
@@ -447,7 +437,7 @@ def fetch_and_sync_jira_data():
             merge_job = client.query(merge_query)
             merge_job.result()
             logging.info(f"Data merged successfully into {dataset_id}.{table_id}.")
-            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", f"Data merged successfully into {dataset_id}.{table_id}", function_name="fetch_and_sync_jira_data")
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message=f"Data merged successfully into {dataset_id}.{table_id}", status="SUCCESS")
             if hasattr(merge_job, 'num_dml_affected_rows') and merge_job.num_dml_affected_rows is not None:
                 logging.info(f"Number of rows affected by MERGE: {merge_job.num_dml_affected_rows}")
             else:
@@ -474,14 +464,14 @@ def fetch_and_sync_jira_data():
 
     except Exception as e:
         logging.exception(f"An unexpected error occurred in fetch_and_sync_jira_data: {e}")
-        log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Exception: {e}", function_name="fetch_and_sync_jira_data", details=str(e))
+        log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Exception: {e}", status="ERROR")
         if 'client' in locals() and 'dataset_id' in locals() and 'temp_table_id' in locals():
             if table_exists(client, dataset_id, temp_table_id):
                 logging.info("Attempting to clean up temporary table due to error in main function.")
                 delete_temp_table(client, dataset_id, temp_table_id)
 
     # Log pipeline end
-    log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", function_name="fetch_and_sync_jira_data")
+    log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS")
 
 
 if __name__ == '__main__':

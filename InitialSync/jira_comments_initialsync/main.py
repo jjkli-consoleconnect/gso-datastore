@@ -1,8 +1,31 @@
-"""Unified comments pipeline with changelog-aligned resiliency (rate limiting, adaptive sizing, degraded status) and logging."""
-import argparse, json, logging, time, uuid, requests, random, threading, os
+"""Unified comments initial sync pipeline.
+Enhancements added:
+ - Robust multi-location Jira config search (env JSON -> script dir -> repo root -> hourly jira_tickets config)
+ - Environment variable overrides (JIRA_USERNAME / JIRA_API_TOKEN)
+ - Token length warning for suspicious short tokens
+ - Project visibility preflight (maxResults=0) to fail fast on bad credentials
+ - Automatic GOOGLE_APPLICATION_CREDENTIALS discovery (service-account.json / jira-bigquery-key.json at repo root)
+ - Repository root added to sys.path for reliable shared/ imports
+"""
+import argparse, json, logging, time, uuid, requests, random, threading, os, sys, pathlib
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery
+"""Path setup so 'shared' package imports work when executed from subfolder / container workdir."""
+_script_dir = pathlib.Path(__file__).resolve().parent
+_root_dir = _script_dir.parent.parent  # InitialSync/ -> repo root
+if str(_root_dir) not in sys.path:
+    sys.path.insert(0, str(_root_dir))
+
+# Auto-set GOOGLE_APPLICATION_CREDENTIALS if not already set and a known key exists
+if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
+    for cand in ('service-account.json','jira-bigquery-key.json'):
+        p = _root_dir / cand
+        if p.exists():
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(p)
+            break
+
+from shared.pipeline_runs_logger import log_pipeline_run
 
 DEBUG=False
 # Allow runtime log level override via env (LOG_LEVEL=DEBUG|INFO|WARNING|ERROR)
@@ -44,6 +67,7 @@ DETAIL_429_COUNT=0
 _NO429_STREAK=0
 
 LOG_BUFFER=[]
+PIPELINE_NAME='jira_comments_initialsync'
 
 class TokenBucket:
     def __init__(self, capacity, refill_per_sec):
@@ -63,13 +87,75 @@ class TokenBucket:
 RATE_LIMITER=TokenBucket(RATE_BUCKET_CAPACITY,RATE_BUCKET_REFILL_PER_SEC)
 
 def load_config():
+    """Load Jira configuration with layered fallback.
+    Order:
+      1. Env var JIRA_CONFIG_JSON (JSON string)
+      2. Local config (same directory)
+      3. Repo root config.json
+      4. Hourly jira_tickets config.json (reuse known-good long token)
+    Returns dict or None.
+    """
+    # 1. Env JSON
+    env_cfg = os.environ.get('JIRA_CONFIG_JSON')
+    if env_cfg:
+        try:
+            data = json.loads(env_cfg)
+            logging.info('Loaded Jira config from JIRA_CONFIG_JSON env var')
+            return data
+        except Exception:
+            logging.warning('Failed to parse JIRA_CONFIG_JSON env var')
+    candidates = []
     try:
-        with open('config.json') as f: return json.load(f)
-    except FileNotFoundError:
-        logging.error('config.json not found'); return None
+        candidates.append(str(_script_dir / 'config.json'))
+        candidates.append(str(_root_dir / 'config.json'))
+        candidates.append(str(_root_dir / 'Hourly' / 'jira_tickets' / 'config.json'))
+    except Exception:
+        pass
+    for path in candidates:
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            token = data.get('jira_api_token')
+            if token and len(token) < 40:
+                logging.warning(f'Loaded very short jira_api_token (len={len(token)}) from {path}; may be invalid')
+            else:
+                logging.info(f'Loaded Jira config from {path} (token length {len(token) if token else 0})')
+            return data
+        except Exception as e:
+            logging.debug(f'Could not load config from {path}: {e}')
+    logging.error('No Jira config found in expected locations')
+    return None
+
+def preflight_validate_project(auth, project_name, base_url='https://consoleconnect.atlassian.net'):
+    """Run lightweight maxResults=0 search to confirm visibility to project.
+    Returns (ok, status_code, message)."""
+    search_url = f'{base_url}/rest/api/2/search'
+    test_jql = f'project = "{project_name}"'
+    payload = json.dumps({'jql': test_jql, 'startAt':0, 'maxResults':0, 'fields':['key']})
+    headers={'Accept':'application/json','Content-Type':'application/json'}
+    try:
+        r = requests.post(search_url, headers=headers, auth=auth, data=payload, timeout=30)
+        if r.status_code == 200:
+            return True, r.status_code, 'ok'
+        snippet = (r.text or '')[:300].replace('\n',' ')
+        if r.status_code in (400,404):
+            return False, r.status_code, f'Not visible/invalid: {snippet}'
+        if r.status_code == 401:
+            return False, r.status_code, 'Unauthorized'
+        if r.status_code == 403:
+            return False, r.status_code, 'Forbidden'
+        return False, r.status_code, snippet
+    except Exception as e:
+        return False, -1, f'Exception: {e}'
 
 def load_projects_from_file(defaults):
-    """Load project names for Docker/local. Order: env JQL_FILE -> ../JQL.txt -> /app/InitialSync/JQL.txt -> /config/JQL.txt -> /data/JQL.txt."""
+    """Load project names for Docker/local.
+    Order: env JQL_FILE -> ../JQL.txt -> /app/InitialSync/JQL.txt -> /config/JQL.txt -> /data/JQL.txt.
+    Supports comments: lines starting with #, //, --, and inline markers after a space ( #, //, -- ).
+    Blank lines ignored. Returns list of cleaned project names in file order (first match wins).
+    """
     candidates=[]
     try:
         env_path=os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
@@ -77,15 +163,35 @@ def load_projects_from_file(defaults):
         script_dir=os.path.dirname(__file__)
         candidates.append(os.path.normpath(os.path.join(script_dir,'..','JQL.txt')))
         candidates.extend(['/app/InitialSync/JQL.txt','/config/JQL.txt','/data/JQL.txt'])
+        comment_starts = ('#','//','--')
+        inline_markers = [' #',' //',' -- ']
         for p in candidates:
             try:
-                if p and os.path.exists(p):
-                    with open(p,'r',encoding='utf-8') as f:
-                        lines=[ln.strip() for ln in f.readlines()]
-                    items=[ln for ln in lines if ln and not ln.startswith('#')]
-                    if items:
-                        logging.info(f'Loaded project list from {p} ({len(items)})')
-                        return items
+                if not p or not os.path.exists(p):
+                    continue
+                with open(p,'r',encoding='utf-8') as f:
+                    raw_lines=f.readlines()
+                items=[]
+                for ln in raw_lines:
+                    ln = ln.rstrip('\r\n')
+                    stripped = ln.strip()
+                    if not stripped:
+                        continue
+                    if stripped.startswith(comment_starts):
+                        continue
+                    # Inline comment trimming (only if marker appears with leading space to avoid cutting project codes containing '-')
+                    work = stripped
+                    lower = work.lower()
+                    for marker in inline_markers:
+                        idx = work.find(marker)
+                        if idx > 0:  # ensure not at position 0 (already handled)
+                            work = work[:idx].strip()
+                            break
+                    if work:
+                        items.append(work)
+                if items:
+                    logging.info(f'Loaded project list from {p} ({len(items)})')
+                    return items
             except Exception as ie:
                 logging.debug(f'Project list read failed for {p}: {ie}')
     except Exception as e:
@@ -272,22 +378,17 @@ def log_buf(pipeline,run_id,level,msg,fn=None,details=None):
 
 # Alias aligned with changelog script naming
 def log_to_bigquery_buffer(pipeline, run_id, level, message, function_name=None, details=None):
-    log_buf(pipeline, run_id, level, message, function_name, details)
+    # Legacy buffer logging retained as no-op alias; PipelineRuns logger is used instead.
+    return
 
 def flush_logs(client,dataset,table):
-    if not LOG_BUFFER: return
-    # Use unique temp to avoid collisions with other pipelines flushing concurrently
-    temp=f"PipelineLogs_temp_comments_{uuid.uuid4().hex[:8]}"
-    schema=[bigquery.SchemaField(n,t) for n,t in [('Timestamp','TIMESTAMP'),('PipelineName','STRING'),('RunID','STRING'),('LogLevel','STRING'),('Message','STRING'),('FunctionName','STRING'),('Details','STRING')]]
-    if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp): return
-    if not insert_rows_with_retry(client,dataset,temp,LOG_BUFFER,schema,retries=10,delay=5): return
-    merge=f"MERGE `{dataset}.{table}` T USING (SELECT * FROM `{dataset}.{temp}`) S ON T.Timestamp=S.Timestamp AND T.RunID=S.RunID AND T.Message=S.Message WHEN MATCHED THEN UPDATE SET T.PipelineName=S.PipelineName,T.LogLevel=S.LogLevel,T.FunctionName=S.FunctionName,T.Details=S.Details WHEN NOT MATCHED THEN INSERT (Timestamp,PipelineName,RunID,LogLevel,Message,FunctionName,Details) VALUES (S.Timestamp,S.PipelineName,S.RunID,S.LogLevel,S.Message,S.FunctionName,S.Details)"
-    client.query(merge).result(); delete_table_quiet(client,dataset,temp); logging.info("Flushed logs to BigQuery")
+    # Legacy PipelineLogs flush disabled (no-op)
+    return
 
 def main():
     cfg=load_config();
     if not cfg: return
-    dataset='GSO'; table='JiraComments'; progress=f'{table}_progress'; log_table='PipelineLogs'; pipeline='jira_comments'; run_id=str(uuid.uuid4()); base_days=7
+    dataset='GSO'; table='JiraComments'; progress=f'{table}_progress'; pipeline='jira_comments'; run_id=str(uuid.uuid4()); base_days=7
     min_start=datetime(2024,7,1); client=bigquery.Client(); now=datetime.utcnow()
     prog_schema=[bigquery.SchemaField(n,t) for n,t in [ ('WindowStart','TIMESTAMP'),('WindowEnd','TIMESTAMP'),('Status','STRING'),('LastRun','TIMESTAMP'),('Projects','STRING'),('Project','STRING'),('RowCount','INT64'),('Search429','INT64'),('Detail429','INT64')]]
     if not table_exists(client,dataset,progress): create_or_replace_table(client,dataset,progress,prog_schema)
@@ -317,11 +418,19 @@ def main():
     elif args.project: projects=[p for p in default_projects if p==args.project]
     else: projects=default_projects
     if not projects: return
-    user=cfg.get('jira_username') or 'jjkli@consoleconnect.com'; token=cfg.get('jira_api_token')
-    if not token: logging.error('jira_api_token missing'); return
+    user = os.environ.get('JIRA_USERNAME') or cfg.get('jira_username') or 'jjkli@consoleconnect.com'
+    token = os.environ.get('JIRA_API_TOKEN') or cfg.get('jira_api_token')
+    if not token:
+        logging.error('jira_api_token missing'); return
     auth=(user,token); base_url='https://consoleconnect.atlassian.net'
     for proj in projects:
         logging.info(f"Starting backfill for project {proj}")
+        ok, sc, msg = preflight_validate_project(auth, proj, base_url)
+        if not ok:
+            logging.error(f'Preflight failed for project "{proj}" status={sc} detail={msg}; skipping')
+            log_pipeline_run(None, pipeline_name=PIPELINE_NAME, run_id=run_id, level='ERROR', message=f'Preflight failed {proj}: {msg}', status='ERROR')
+            continue
+        log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message=f"Starting backfill for project {proj}", status="RUNNING")
         last_completed_start=None
         while True:
             ws=None; we=None
@@ -403,14 +512,16 @@ def main():
                     "WHEN MATCHED THEN UPDATE SET Status='in_progress', LastRun=CURRENT_TIMESTAMP(), Project=S.Project "
                     "WHEN NOT MATCHED THEN INSERT (WindowStart,WindowEnd,Status,LastRun,Project) VALUES (S.WindowStart,S.WindowEnd,'in_progress',CURRENT_TIMESTAMP(),S.Project)"
                 ); client.query(merge).result(); logging.info(f"Project {proj} window {ws_naive} -> {we} marked in_progress")
-                log_to_bigquery_buffer(pipeline, run_id, 'INFO', f'Window sync started for {proj} {ws_naive}->{we}', 'main')
+                log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Window in_progress", status="RUNNING", window_start=ws_naive.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'))
             except Exception:
                 break
             SUCCESS=False; rc=0
             global SEARCH_429_COUNT, DETAIL_429_COUNT, CURRENT_DETAIL_WORKERS, _NO429_STREAK
             SEARCH_429_COUNT=0; DETAIL_429_COUNT=0
             try: SUCCESS,rc=sync_window(base_url,jql,auth,client,dataset,table,ws_naive,we)
-            except Exception as e: logging.exception(f"Window sync fatal error for {proj}: {e}"); log_buf(pipeline,run_id,'ERROR',f'Fatal {proj} {ws_naive}->{we} {e}','main',str(e))
+            except Exception as e:
+                logging.exception(f"Window sync fatal error for {proj}: {e}")
+                log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="ERROR", message=f"Fatal {proj} {ws_naive}->{we} {e}", status="ERROR")
             degraded=False
             if SUCCESS:
                 ratio=DETAIL_429_COUNT/max(1,rc)
@@ -421,7 +532,7 @@ def main():
                 f"WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND Status!='complete'"
             ); client.query(upd).result()
             logging.info(f"Project {proj} window {ws_naive}->{we} {status} rows={rc} 429_search={SEARCH_429_COUNT} 429_detail={DETAIL_429_COUNT}")
-            log_to_bigquery_buffer(pipeline, run_id, 'INFO' if SUCCESS else 'ERROR', f"Window {status} {proj} rows={rc} search429={SEARCH_429_COUNT} detail429={DETAIL_429_COUNT}", 'main')
+            log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level=("INFO" if SUCCESS else "ERROR"), message=f"Window {status} {proj}", status=("SUCCESS" if SUCCESS else "ERROR"), window_start=ws_naive.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'), rows_merged=int(rc))
             if status in ('complete','degraded'):
                 last_completed_start=ws_naive
                 if (SEARCH_429_COUNT>0 or DETAIL_429_COUNT>0):
@@ -432,8 +543,7 @@ def main():
                     if _NO429_STREAK>=DETAIL_SCALE_UP_NO429_WINDOWS and CURRENT_DETAIL_WORKERS<DETAIL_MAX_WORKERS:
                         CURRENT_DETAIL_WORKERS=min(DETAIL_MAX_WORKERS,max(CURRENT_DETAIL_WORKERS+1,int(CURRENT_DETAIL_WORKERS*DETAIL_SCALE_UP_FACTOR))); _NO429_STREAK=0
                         logging.info(f"Scaling up comment workers to {CURRENT_DETAIL_WORKERS} (no 429 streak)")
-            # Flush logs after each window for quicker visibility
-            flush_logs(client,dataset,log_table)
+            # Legacy flush disabled
             if not SUCCESS:
                 try: span_hours=(we-ws_naive).total_seconds()/3600.0
                 except Exception: span_hours=0
@@ -454,7 +564,7 @@ def main():
                         ).result()
                     except Exception: pass
                     break
-    log_buf(pipeline,run_id,'INFO','Comments pipeline finished','main'); flush_logs(client,dataset,log_table)
+    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Comments pipeline finished", status="SUCCESS")
 
 if __name__=='__main__':
     main()
