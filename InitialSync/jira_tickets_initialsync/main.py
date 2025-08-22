@@ -553,7 +553,74 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         if temp_created:
             delete_table_quiet(client,dataset,temp)
         return True,0
-    merge=f"""MERGE `{dataset}.{table}` T USING (SELECT * FROM `{dataset}.{temp}`) S ON T.Key=S.Key AND (T.Updated=S.Updated OR (T.Updated IS NULL AND S.Updated IS NULL)) WHEN MATCHED THEN UPDATE SET T.T=S.T, Project=S.Project,Summary=S.Summary,Status=S.Status,Created=S.Created,Updated=S.Updated,Resolved=S.Resolved,Reporter=S.Reporter,Assignee=S.Assignee,Component=S.Component,RemedyTicketNumber=S.RemedyTicketNumber,Links=S.Links,{SR_REF_BQ_NAME}=S.{SR_REF_BQ_NAME},SyncTime=S.SyncTime,TimeToFirstResponse_Elapsed=S.TimeToFirstResponse_Elapsed,TimeToFirstResponse_Goal=S.TimeToFirstResponse_Goal,TimeToFirstResponse_Breached=S.TimeToFirstResponse_Breached,TimeToFirstResponse_Cycles=S.TimeToFirstResponse_Cycles,TimeToResolve_Elapsed=S.TimeToResolve_Elapsed,TimeToResolve_Goal=S.TimeToResolve_Goal,TimeToResolve_Breached=S.TimeToResolve_Breached,TimeToResolve_Cycles=S.TimeToResolve_Cycles,TimeToResolution_Elapsed=S.TimeToResolution_Elapsed,TimeToResolution_Goal=S.TimeToResolution_Goal,TimeToResolution_Breached=S.TimeToResolution_Breached,TimeToResolution_Cycles=S.TimeToResolution_Cycles,TimeToApproveNormalChange_Elapsed=S.TimeToApproveNormalChange_Elapsed,TimeToApproveNormalChange_Goal=S.TimeToApproveNormalChange_Goal,TimeToApproveNormalChange_Breached=S.TimeToApproveNormalChange_Breached,TimeToApproveNormalChange_Cycles=S.TimeToApproveNormalChange_Cycles,ProlongCase_Elapsed=S.ProlongCase_Elapsed,ProlongCase_Goal=S.ProlongCase_Goal,ProlongCase_Breached=S.ProlongCase_Breached,ProlongCase_Cycles=S.ProlongCase_Cycles,TimeToCloseAfterResolution_Elapsed=S.TimeToCloseAfterResolution_Elapsed,TimeToCloseAfterResolution_Goal=S.TimeToCloseAfterResolution_Goal,TimeToCloseAfterResolution_Breached=S.TimeToCloseAfterResolution_Breached,TimeToCloseAfterResolution_Cycles=S.TimeToCloseAfterResolution_Cycles,AppSupEscalation=S.AppSupEscalation WHEN NOT MATCHED THEN INSERT (T,Project,Key,Summary,Status,Created,Updated,Resolved,Reporter,Assignee,Component,RemedyTicketNumber,Links,{SR_REF_BQ_NAME},SyncTime,TimeToFirstResponse_Elapsed,TimeToFirstResponse_Goal,TimeToFirstResponse_Breached,TimeToFirstResponse_Cycles,TimeToResolve_Elapsed,TimeToResolve_Goal,TimeToResolve_Breached,TimeToResolve_Cycles,TimeToResolution_Elapsed,TimeToResolution_Goal,TimeToResolution_Breached,TimeToResolution_Cycles,TimeToApproveNormalChange_Elapsed,TimeToApproveNormalChange_Goal,TimeToApproveNormalChange_Breached,TimeToApproveNormalChange_Cycles,ProlongCase_Elapsed,ProlongCase_Goal,ProlongCase_Breached,ProlongCase_Cycles,TimeToCloseAfterResolution_Elapsed,TimeToCloseAfterResolution_Goal,TimeToCloseAfterResolution_Breached,TimeToCloseAfterResolution_Cycles,AppSupEscalation) VALUES (S.T,S.Project,S.Key,S.Summary,S.Status,S.Created,S.Updated,S.Resolved,S.Reporter,S.Assignee,S.Component,S.RemedyTicketNumber,S.Links,S.{SR_REF_BQ_NAME},S.SyncTime,S.TimeToFirstResponse_Elapsed,S.TimeToFirstResponse_Goal,S.TimeToFirstResponse_Breached,S.TimeToFirstResponse_Cycles,S.TimeToResolve_Elapsed,S.TimeToResolve_Goal,S.TimeToResolve_Breached,S.TimeToResolve_Cycles,S.TimeToResolution_Elapsed,S.TimeToResolution_Goal,S.TimeToResolution_Breached,S.TimeToResolution_Cycles,S.TimeToApproveNormalChange_Elapsed,S.TimeToApproveNormalChange_Goal,S.TimeToApproveNormalChange_Breached,S.TimeToApproveNormalChange_Cycles,S.ProlongCase_Elapsed,S.ProlongCase_Goal,S.ProlongCase_Breached,S.ProlongCase_Cycles,S.TimeToCloseAfterResolution_Elapsed,S.TimeToCloseAfterResolution_Goal,S.TimeToCloseAfterResolution_Breached,S.TimeToCloseAfterResolution_Cycles,S.AppSupEscalation)"""
+    merge=f"""
+    MERGE `{dataset}.{table}` T
+    USING (
+        SELECT * EXCEPT(rownum) FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY Key ORDER BY Updated DESC) AS rownum FROM `{dataset}.{temp}`
+        ) WHERE rownum = 1
+    ) S
+    ON T.Key = S.Key
+    WHEN MATCHED THEN UPDATE SET
+        T.T = S.T,
+        Project = S.Project,
+        Summary = S.Summary,
+        Status = S.Status,
+        Created = S.Created,
+        Updated = S.Updated,
+        Resolved = S.Resolved,
+        Reporter = S.Reporter,
+        Assignee = S.Assignee,
+        Component = S.Component,
+        RemedyTicketNumber = S.RemedyTicketNumber,
+        Links = S.Links,
+        {SR_REF_BQ_NAME} = S.{SR_REF_BQ_NAME},
+        SyncTime = S.SyncTime,
+        TimeToFirstResponse_Elapsed = S.TimeToFirstResponse_Elapsed,
+        TimeToFirstResponse_Goal = S.TimeToFirstResponse_Goal,
+        TimeToFirstResponse_Breached = S.TimeToFirstResponse_Breached,
+        TimeToFirstResponse_Cycles = S.TimeToFirstResponse_Cycles,
+        TimeToResolve_Elapsed = S.TimeToResolve_Elapsed,
+        TimeToResolve_Goal = S.TimeToResolve_Goal,
+        TimeToResolve_Breached = S.TimeToResolve_Breached,
+        TimeToResolve_Cycles = S.TimeToResolve_Cycles,
+        TimeToResolution_Elapsed = S.TimeToResolution_Elapsed,
+        TimeToResolution_Goal = S.TimeToResolution_Goal,
+        TimeToResolution_Breached = S.TimeToResolution_Breached,
+        TimeToResolution_Cycles = S.TimeToResolution_Cycles,
+        TimeToApproveNormalChange_Elapsed = S.TimeToApproveNormalChange_Elapsed,
+        TimeToApproveNormalChange_Goal = S.TimeToApproveNormalChange_Goal,
+        TimeToApproveNormalChange_Breached = S.TimeToApproveNormalChange_Breached,
+        TimeToApproveNormalChange_Cycles = S.TimeToApproveNormalChange_Cycles,
+        ProlongCase_Elapsed = S.ProlongCase_Elapsed,
+        ProlongCase_Goal = S.ProlongCase_Goal,
+        ProlongCase_Breached = S.ProlongCase_Breached,
+        ProlongCase_Cycles = S.ProlongCase_Cycles,
+        TimeToCloseAfterResolution_Elapsed = S.TimeToCloseAfterResolution_Elapsed,
+        TimeToCloseAfterResolution_Goal = S.TimeToCloseAfterResolution_Goal,
+        TimeToCloseAfterResolution_Breached = S.TimeToCloseAfterResolution_Breached,
+        TimeToCloseAfterResolution_Cycles = S.TimeToCloseAfterResolution_Cycles,
+        AppSupEscalation = S.AppSupEscalation
+    WHEN NOT MATCHED THEN INSERT (
+        T, Project, Key, Summary, Status, Created, Updated, Resolved, Reporter, Assignee, Component, RemedyTicketNumber, Links, {SR_REF_BQ_NAME}, SyncTime,
+        TimeToFirstResponse_Elapsed, TimeToFirstResponse_Goal, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles,
+        TimeToResolve_Elapsed, TimeToResolve_Goal, TimeToResolve_Breached, TimeToResolve_Cycles,
+        TimeToResolution_Elapsed, TimeToResolution_Goal, TimeToResolution_Breached, TimeToResolution_Cycles,
+        TimeToApproveNormalChange_Elapsed, TimeToApproveNormalChange_Goal, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles,
+        ProlongCase_Elapsed, ProlongCase_Goal, ProlongCase_Breached, ProlongCase_Cycles,
+        TimeToCloseAfterResolution_Elapsed, TimeToCloseAfterResolution_Goal, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles,
+        AppSupEscalation
+    ) VALUES (
+        S.T, S.Project, S.Key, S.Summary, S.Status, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, S.Component, S.RemedyTicketNumber, S.Links, S.{SR_REF_BQ_NAME}, S.SyncTime,
+        S.TimeToFirstResponse_Elapsed, S.TimeToFirstResponse_Goal, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles,
+        S.TimeToResolve_Elapsed, S.TimeToResolve_Goal, S.TimeToResolve_Breached, S.TimeToResolve_Cycles,
+        S.TimeToResolution_Elapsed, S.TimeToResolution_Goal, S.TimeToResolution_Breached, S.TimeToResolution_Cycles,
+        S.TimeToApproveNormalChange_Elapsed, S.TimeToApproveNormalChange_Goal, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles,
+        S.ProlongCase_Elapsed, S.ProlongCase_Goal, S.ProlongCase_Breached, S.ProlongCase_Cycles,
+        S.TimeToCloseAfterResolution_Elapsed, S.TimeToCloseAfterResolution_Goal, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles,
+        S.AppSupEscalation
+    )
+    """
     try:
         client.query(merge).result()
     except Exception as e:
