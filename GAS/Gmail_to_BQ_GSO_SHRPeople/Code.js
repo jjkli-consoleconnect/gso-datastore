@@ -147,14 +147,11 @@ function processAttachment(attachment) {
           row[1],  // CustName
           row[2],  // SRNo
           row[3],  // Product Family
-          row[4],  // SiteA
-          row[5],  // SiteB
-          row[6],  // Region A
-          row[7],  // Region B
-          row[8],  // Product ID
-          row[9],  // Insight Circuit ID
-          row[10], // Circuit Owner
-          row[11]  // ProductDescription
+          row[4],  // Product ID
+          row[5],  // Insight Circuit ID
+          row[6],  // Circuit Owner
+          row[7],  // ProductDescription
+          row[8]   // SR Status
         ];
       });
 
@@ -250,18 +247,15 @@ function escapeSqlLiteral(s) { return s.replace(/'/g, "''"); }
 // === Helpers ===
 function getSchemaFields() {
   return [
-    { name: 'CustID', type: 'STRING' },
-    { name: 'CustName', type: 'STRING' },
-    { name: 'SRNo', type: 'STRING' },
-    { name: 'Product Family', type: 'STRING' },
-    { name: 'SiteA', type: 'STRING' },
-    { name: 'SiteB', type: 'STRING' },
-    { name: 'Region A', type: 'STRING' },
-    { name: 'Region B', type: 'STRING' },
-    { name: 'Product ID', type: 'STRING' },
-    { name: 'Insight Circuit ID', type: 'STRING' },
-    { name: 'Circuit Owner', type: 'STRING' },
-    { name: 'ProductDescription', type: 'STRING' }
+  { name: 'CustID', type: 'STRING' },
+  { name: 'CustName', type: 'STRING' },
+  { name: 'SRNo', type: 'STRING' },
+  { name: 'Product Family', type: 'STRING' },
+  { name: 'Product ID', type: 'STRING' },
+  { name: 'Insight Circuit ID', type: 'STRING' },
+  { name: 'Circuit Owner', type: 'STRING' },
+  { name: 'ProductDescription', type: 'STRING' },
+  { name: 'SR Status', type: 'STRING' }
   ];
 }
 
@@ -294,20 +288,17 @@ function loadAttachmentToTemp(attachment, tempTableId, isFirst) {
   if (looksLikeHeader) csvData.shift();
   var filtered = csvData.filter(function(row){ return row && row.some(function(c){ return c !== ''; }); });
   var rows = filtered.map(function(row){
-    var norm = normalizeRowLength(row, 12);
+    var norm = normalizeRowLength(row, 9);
     return [
       norm[0],  // CustID
       norm[1],  // CustName
       norm[2],  // SRNo
       norm[3],  // Product Family
-      norm[4],  // SiteA
-      norm[5],  // SiteB
-      norm[6],  // Region A
-      norm[7],  // Region B
-      norm[8],  // Product ID
-      norm[9],  // Insight Circuit ID
-      norm[10], // Circuit Owner
-      norm[11]  // ProductDescription
+      norm[4],  // Product ID
+      norm[5],  // Insight Circuit ID
+      norm[6],  // Circuit Owner
+      norm[7],  // ProductDescription
+      norm[8]   // SR Status
     ];
   });
   if (rows.length === 0) return 0;
@@ -347,19 +338,16 @@ function runMergeTempIntoTarget(tempTableId) {
     'USING (',
     '  SELECT * FROM (',
     '    SELECT',
-    '      CAST(CustID AS STRING) AS CustID,',
-    '      CAST(CustName AS STRING) AS CustName,',
-    '      CAST(SRNo AS STRING) AS SRNo,',
-    '      CAST(`Product Family` AS STRING) AS `Product Family`,',
-    '      CAST(SiteA AS STRING) AS SiteA,',
-    '      CAST(SiteB AS STRING) AS SiteB,',
-    '      CAST(`Region A` AS STRING) AS `Region A`,',
-    '      CAST(`Region B` AS STRING) AS `Region B`,',
-    '      CAST(`Product ID` AS STRING) AS `Product ID`,',
-    '      CAST(`Insight Circuit ID` AS STRING) AS `Insight Circuit ID`,',
-    '      CAST(`Circuit Owner` AS STRING) AS `Circuit Owner`,',
-    '      CAST(ProductDescription AS STRING) AS ProductDescription,',
-    '      ROW_NUMBER() OVER (PARTITION BY SRNo ORDER BY SRNo) AS rn',
+  '      CAST(CustID AS STRING) AS CustID,',
+  '      CAST(CustName AS STRING) AS CustName,',
+  '      CAST(SRNo AS STRING) AS SRNo,',
+  '      CAST(`Product Family` AS STRING) AS `Product Family`,',
+  '      CAST(`Product ID` AS STRING) AS `Product ID`,',
+  '      CAST(`Insight Circuit ID` AS STRING) AS `Insight Circuit ID`,',
+  '      CAST(`Circuit Owner` AS STRING) AS `Circuit Owner`,',
+  '      CAST(ProductDescription AS STRING) AS ProductDescription,',
+  '      CAST(`SR Status` AS STRING) AS `SR Status`,',
+  '      ROW_NUMBER() OVER (PARTITION BY SRNo ORDER BY SRNo) AS rn',
     '    FROM ' + fqTemp,
     '    WHERE SRNo IS NOT NULL AND SRNo != ""',
     '  ) WHERE rn = 1',
@@ -369,17 +357,14 @@ function runMergeTempIntoTarget(tempTableId) {
     '  T.CustID = S.CustID,',
     '  T.CustName = S.CustName,',
     '  T.`Product Family` = S.`Product Family`,',
-    '  T.SiteA = S.SiteA,',
-    '  T.SiteB = S.SiteB,',
-    '  T.`Region A` = S.`Region A`,',
-    '  T.`Region B` = S.`Region B`,',
-    '  T.`Product ID` = S.`Product ID`,',
-    '  T.`Insight Circuit ID` = S.`Insight Circuit ID`,',
-    '  T.`Circuit Owner` = S.`Circuit Owner`,',
-    '  T.ProductDescription = S.ProductDescription',
+  '  T.`Product ID` = S.`Product ID`,',
+  '  T.`Insight Circuit ID` = S.`Insight Circuit ID`,',
+  '  T.`Circuit Owner` = S.`Circuit Owner`,',
+  '  T.ProductDescription = S.ProductDescription,',
+  '  T.`SR Status` = S.`SR Status`',
     'WHEN NOT MATCHED THEN',
-    '  INSERT (SRNo, CustID, CustName, `Product Family`, SiteA, SiteB, `Region A`, `Region B`, `Product ID`, `Insight Circuit ID`, `Circuit Owner`, ProductDescription)',
-    '  VALUES (S.SRNo, S.CustID, S.CustName, S.`Product Family`, S.SiteA, S.SiteB, S.`Region A`, S.`Region B`, S.`Product ID`, S.`Insight Circuit ID`, S.`Circuit Owner`, S.ProductDescription)'
+  '  INSERT (SRNo, CustID, CustName, `Product Family`, `Product ID`, `Insight Circuit ID`, `Circuit Owner`, ProductDescription, `SR Status`)',
+  '  VALUES (S.SRNo, S.CustID, S.CustName, S.`Product Family`, S.`Product ID`, S.`Insight Circuit ID`, S.`Circuit Owner`, S.ProductDescription, S.`SR Status` )'
   ].join('\n');
 
   var request = {
