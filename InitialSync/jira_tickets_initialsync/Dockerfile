@@ -2,11 +2,15 @@ FROM python:3.9
 
 WORKDIR /app
 
-COPY jira_tickets_initialsync/requirements.txt ./
+# Copy requirements from local folder
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY jira_tickets_initialsync/. .
+# Copy this subfolder into the image
+COPY . .
+
+# JQL is present in this folder
 COPY JQL.txt /app/JQL.txt
-COPY jira_tickets_initialsync/entrypoint.sh /app/entrypoint.sh
+COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 ENTRYPOINT ["/app/entrypoint.sh"]
