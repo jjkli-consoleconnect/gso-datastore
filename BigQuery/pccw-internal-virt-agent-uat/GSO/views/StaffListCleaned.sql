@@ -12,9 +12,6 @@ Title,
 Remark, 
 Classify
 
-
-
-
-
 FROM `pccw-internal-virt-agent-uat.GSO.StaffList` 
+
 

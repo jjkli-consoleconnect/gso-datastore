@@ -114,4 +114,3 @@ SELECT
 
 FROM
   `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
-

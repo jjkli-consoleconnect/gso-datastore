@@ -440,6 +440,20 @@ SELECT
     ELSE NULL
   END AS SolvedByProject,
 
+  -- Array of all project prefixes from links, excluding the ticket's own project prefix
+  ARRAY(
+    SELECT DISTINCT proj
+    FROM (
+      SELECT REGEXP_EXTRACT(TRIM(link), r'^(\w+)-') AS proj
+      FROM UNNEST(SPLIT(COALESCE(j.Links, ''), ',')) AS link
+      WHERE
+        LOWER(TRIM(link)) != 'none'
+        AND TRIM(link) != ''
+        AND REGEXP_EXTRACT(TRIM(link), r'^(\w+)-') IS NOT NULL
+    )
+    WHERE proj != REGEXP_EXTRACT(COALESCE(j.Key, ''), r'^(\w+)-')
+  ) AS LinkedProject_Clean,
+
   -- T1 Solved By classification (prefer T3 by Links, else T2 by Key, else T1)
   CASE
     WHEN REGEXP_CONTAINS(COALESCE(j.Links, ''), r'AS3491') THEN 'T3-AS3491'
@@ -544,3 +558,4 @@ ON se.Team_Name = (
     ELSE NULL
   END
 )
+
