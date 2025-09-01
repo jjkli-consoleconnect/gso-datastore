@@ -326,6 +326,8 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("Key", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("Summary", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Status", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("Priority", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("Resolution", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Created", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("Updated", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("Resolved", "TIMESTAMP", mode="NULLABLE"),
@@ -464,6 +466,8 @@ def fetch_and_sync_jira_data():
                     "RemedyTicketNumber": remedy_numbers,
                     "Links": extract_issue_links(fields.get('issuelinks')),
                     SR_REF_BQ_NAME: get_field_value(fields.get(SR_REF_JIRA_ID)),
+                    "Priority": get_field_value(fields.get('priority')),
+                    "Resolution": get_field_value(fields.get('resolution')),
                     "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
                     # SLA fields
                     "TimeToFirstResponse_Elapsed": sla_metrics['TimeToFirstResponse_Elapsed'],
@@ -557,7 +561,7 @@ def fetch_and_sync_jira_data():
         # --- Merge temp table into final table ---
         try:
             merge_fields = [
-                "T", "Project", "Key", "Summary", "Status", "Created", "Updated", "Resolved", "Reporter", "Assignee", "Component", "RemedyTicketNumber", "Links", SR_REF_BQ_NAME, "SyncTime",
+                "T", "Project", "Key", "Summary", "Status", "Priority", "Resolution", "Created", "Updated", "Resolved", "Reporter", "Assignee", "Component", "RemedyTicketNumber", "Links", SR_REF_BQ_NAME, "SyncTime",
                 "TimeToFirstResponse_Elapsed", "TimeToFirstResponse_Goal", "TimeToFirstResponse_Breached", "TimeToFirstResponse_Cycles",
                 "TimeToResolve_Elapsed", "TimeToResolve_Goal", "TimeToResolve_Breached", "TimeToResolve_Cycles",
                 "TimeToResolution_Elapsed", "TimeToResolution_Goal", "TimeToResolution_Breached", "TimeToResolution_Cycles",

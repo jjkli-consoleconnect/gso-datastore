@@ -1,10 +1,16 @@
 WITH FlattenedTierTwo AS (
-  SELECT
-    t.*,
-    remedy_incident AS RemedyTicketNumber_flat
-  FROM
-    `pccw-internal-virt-agent-uat.GSO.TierTwo` t
-    LEFT JOIN UNNEST(t.RemedyTicketNumber) AS remedy_incident
+  -- Dedupe flattened Jira rows per RemedyTicketNumber (keep latest Created)
+  SELECT * EXCEPT(rn)
+  FROM (
+    SELECT
+      t.* EXCEPT(rn),
+      remedy_incident AS RemedyTicketNumber_flat,
+      ROW_NUMBER() OVER (PARTITION BY remedy_incident ORDER BY t.Created DESC NULLS LAST) AS rn
+    FROM `pccw-internal-virt-agent-uat.GSO.JiraTickets` t,
+    UNNEST(t.RemedyTicketNumber) AS remedy_incident
+    WHERE NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC)')
+  )
+  WHERE rn = 1
 )
 
 SELECT
@@ -130,8 +136,9 @@ SELECT
   st.SyncTime
 
 FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` AS hd
-FULL OUTER JOIN FlattenedTierTwo AS st
+LEFT JOIN FlattenedTierTwo AS st
   ON hd.Incident_Number = st.RemedyTicketNumber_flat
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON CONCAT('SR', st.SR_Ref) = shr.SRNo
+
 

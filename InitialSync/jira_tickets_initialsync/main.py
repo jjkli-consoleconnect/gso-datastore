@@ -112,7 +112,7 @@ SLA_FIELDS_MAP={
 
 # Fields to request from Jira search to avoid per-issue detail calls
 FIELDS_FOR_SEARCH=[
-    'key','issuetype','summary','status','created','updated','resolutiondate','project','reporter','assignee','components','issuelinks',
+    'key','issuetype','summary','status','priority','resolution','created','updated','resolutiondate','project','reporter','assignee','components','issuelinks',
     SR_REF_JIRA_ID, ESCALATION_FIELD,
     # SLA custom fields
     *list(SLA_FIELDS_MAP.values())
@@ -440,6 +440,8 @@ def generate_ticket_rows(issues,ws,we):
             'Key': k,
             'Summary': fields.get('summary'),
             'Status': fields.get('status',{}).get('name'),
+            'Priority': get_field_value(fields.get('priority')),
+            'Resolution': get_field_value(fields.get('resolution')),
             'Created': created,
             'Updated': updated,
             'Resolved': convert_ts(fields.get('resolutiondate')),
@@ -465,7 +467,9 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         ('Project','STRING','NULLABLE'),
         ('Key','STRING','REQUIRED'),
         ('Summary','STRING','NULLABLE'),
-        ('Status','STRING','NULLABLE'),
+    ('Status','STRING','NULLABLE'),
+    ('Priority','STRING','NULLABLE'),
+    ('Resolution','STRING','NULLABLE'),
         ('Created','TIMESTAMP','NULLABLE'),
         ('Updated','TIMESTAMP','NULLABLE'),
         ('Resolved','TIMESTAMP','NULLABLE'),
@@ -565,7 +569,9 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         T.T = S.T,
         Project = S.Project,
         Summary = S.Summary,
-        Status = S.Status,
+    Status = S.Status,
+    Priority = S.Priority,
+    Resolution = S.Resolution,
         Created = S.Created,
         Updated = S.Updated,
         Resolved = S.Resolved,
@@ -602,7 +608,7 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         TimeToCloseAfterResolution_Cycles = S.TimeToCloseAfterResolution_Cycles,
         AppSupEscalation = S.AppSupEscalation
     WHEN NOT MATCHED THEN INSERT (
-        T, Project, Key, Summary, Status, Created, Updated, Resolved, Reporter, Assignee, Component, RemedyTicketNumber, Links, {SR_REF_BQ_NAME}, SyncTime,
+    T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, RemedyTicketNumber, Links, {SR_REF_BQ_NAME}, SyncTime,
         TimeToFirstResponse_Elapsed, TimeToFirstResponse_Goal, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles,
         TimeToResolve_Elapsed, TimeToResolve_Goal, TimeToResolve_Breached, TimeToResolve_Cycles,
         TimeToResolution_Elapsed, TimeToResolution_Goal, TimeToResolution_Breached, TimeToResolution_Cycles,
@@ -611,7 +617,7 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         TimeToCloseAfterResolution_Elapsed, TimeToCloseAfterResolution_Goal, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles,
         AppSupEscalation
     ) VALUES (
-        S.T, S.Project, S.Key, S.Summary, S.Status, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, S.Component, S.RemedyTicketNumber, S.Links, S.{SR_REF_BQ_NAME}, S.SyncTime,
+    S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, S.Component, S.RemedyTicketNumber, S.Links, S.{SR_REF_BQ_NAME}, S.SyncTime,
         S.TimeToFirstResponse_Elapsed, S.TimeToFirstResponse_Goal, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles,
         S.TimeToResolve_Elapsed, S.TimeToResolve_Goal, S.TimeToResolve_Breached, S.TimeToResolve_Cycles,
         S.TimeToResolution_Elapsed, S.TimeToResolution_Goal, S.TimeToResolution_Breached, S.TimeToResolution_Cycles,

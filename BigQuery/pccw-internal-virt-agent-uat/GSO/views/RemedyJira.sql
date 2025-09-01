@@ -205,7 +205,7 @@ SELECT
 
   -- Project group (Service Delivery vs Center Operations)
   CASE
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('GSDT','CCPROV') THEN 'Service Delivery'
+    WHEN REGEXP_EXTRACT(COALESCE(j.Key, ''), r'^([A-Z]+)') IN ('GSDT','CCPROV') THEN 'Service Delivery'
     ELSE 'Center Operations'
   END AS Team,
 
@@ -558,4 +558,9 @@ ON se.Team_Name = (
     ELSE NULL
   END
 )
+
+-- Exclude Jira project keys for automation/analytics/internal projects
+WHERE NOT REGEXP_CONTAINS(COALESCE(j.Key, ''), r'(CCAI|GTA|GDA|GKC)')
+
+
 
