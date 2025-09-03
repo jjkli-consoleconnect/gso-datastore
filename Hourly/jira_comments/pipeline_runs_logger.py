@@ -3,8 +3,6 @@ import time
 from typing import Any, Optional
 
 from google.cloud import bigquery
-from service_account_env import ensure as _ensure_sa
-_ensure_sa()
 from google.api_core.exceptions import Forbidden
 import logging
 

@@ -13,8 +13,6 @@ _script_dir = pathlib.Path(__file__).resolve().parent
 _repo_root = str(_script_dir.parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
-from service_account_env import ensure as _ensure_sa
-_ensure_sa()
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery

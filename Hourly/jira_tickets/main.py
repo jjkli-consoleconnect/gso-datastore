@@ -3,8 +3,6 @@ _script_dir = pathlib.Path(__file__).resolve().parent
 _repo_root = str(_script_dir.parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
-from service_account_env import ensure as _ensure_sa
-_ensure_sa()
 
 # --- Comments-style wait_for_table and insert_rows_with_retry ---
 def table_exists(client, dataset_id, table_id):
