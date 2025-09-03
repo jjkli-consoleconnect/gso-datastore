@@ -1,0 +1,190 @@
+import requests
+import json
+            start_at += len(comments) # Use actual number of comments returned in case max_results is ignored/capped                                                
+import requests
+import json
+from google.cloud import bigquery
+import logging
+from datetime import datetime, timedelta, timezone
+import time
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from bq_logger import log_to_bigquery
+import uuid
+from typing import Optional
+from pipeline_runs_logger import log_pipeline_run
+
+"""Logging configuration"""
+# DEBUG flag and LOG_LEVEL override
+DEBUG = str(os.environ.get('DEBUG', '')).lower() in ('1', 'true', 'yes')
+_env_level = os.environ.get('LOG_LEVEL', 'DEBUG' if DEBUG else 'INFO').upper()    
+_level = getattr(logging, _env_level, logging.INFO)
+
+# Setup logging (allow LOG_LEVEL to override, default INFO; DEBUG -> DEBUG)       
+logging.basicConfig(level=_level, format='%(asctime)s - %(levelname)s - %(message)s')
+# Quiet noisy third-party loggers when not in DEBUG/when level > INFO
+if _level > logging.INFO:
+    logging.getLogger('google').setLevel(logging.WARNING)
+    logging.getLogger('google.cloud').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+
+# --- Logging Buffer for BigQuery Logs ---
+LOG_BUFFER = []
+
+logging.info("Script startup test log")
+
+def load_config():
+    try:
+        with open('config.json') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logging.error('config.json not found')
+        return None
+
+
+def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
+    env = os.environ.get('BASE_JQL')
+    if env:
+        return env
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidate = os.path.join(script_dir, 'JQL.txt')
+    if os.path.isfile(candidate):
+        with open(candidate, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    return default_text
+
+
+def convert_timestamp(ts: Optional[str]) -> Optional[str]:
+    if not ts:
+        return None
+    for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S.%f%z'):
+        try:
+            return datetime.strptime(ts, fmt).strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            continue
+    return None
+
+
+def create_or_replace_temp_table(client: bigquery.Client, dataset_id: str, table_id: str, schema):
+    cols = ', '.join(f'`{f.name}` {f.field_type}' for f in schema)
+    q = f'CREATE OR REPLACE TABLE `{client.project}.{dataset_id}.{table_id}` ({cols})'
+    try:
+        client.query(q).result()
+        logging.info('Temp table created: %s.%s', dataset_id, table_id)
+        return True
+    except Exception:
+        logging.exception('Failed to create temp table %s.%s', dataset_id, table_id)
+        return False
+
+
+def delete_temp_table(client: bigquery.Client, dataset_id: str, table_id: str):
+    try:
+        client.delete_table(f'{client.project}.{dataset_id}.{table_id}', not_found_ok=True)
+    except Exception:
+        try:
+            client.delete_table(f'{client.project}.{dataset_id}.{table_id}')
+        except Exception:
+            logging.debug('Delete temp table failed but continuing')
+
+
+def insert_rows_with_retry(client: bigquery.Client, dataset_id: str, table_id: str, rows: list, retries=5, delay=5):
+    if not rows:
+        return True
+    table_ref = f'{client.project}.{dataset_id}.{table_id}'
+    for _ in range(retries):
+        try:
+            errors = client.insert_rows_json(table_ref, rows)
+            if not errors:
+                return True
+            logging.error('Insert returned errors: %s', errors)
+        except Exception:
+            logging.exception('Insert failed to %s', table_ref)
+        time.sleep(delay)
+    return False
+
+
+def fetch_comments_for_issue(jira_base: str, issue_key: str, username: str, api_token: str):
+    url = f'{jira_base}/rest/api/2/issue/{issue_key}/comment'
+    auth = (username, api_token)
+    comments = []
+    start_at = 0
+    max_results = 100
+    while True:
+        params = {'startAt': start_at, 'maxResults': max_results}
+        try:
+            r = requests.get(url, auth=auth, params=params, timeout=120)
+            r.raise_for_status()
+            data = r.json()
+            chunk = data.get('comments', [])
+            comments.extend(chunk)
+            total = data.get('total', 0)
+            if start_at + len(chunk) >= total:
+                break
+            start_at += len(chunk)
+        except Exception:
+            logging.exception('Failed fetch comments for %s', issue_key)
+            return None
+    return comments
+
+
+def fetch_comments_batch(jira_base: str, issue_keys: list, username: str, api_token: str):
+    def worker(k):
+        return k, fetch_comments_for_issue(jira_base, k, username, api_token)
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(worker, k): k for k in issue_keys}
+        for fut in as_completed(futures):
+            k = futures[fut]
+            try:
+                key, comments = fut.result()
+                results[key] = comments
+            except Exception:
+                logging.exception('Worker failed for %s', k)
+                results[k] = None
+    return results
+
+
+def generate_rows(issues: list, jira_base: str, username: str, api_token: str):
+    keys = [i.get('key') for i in issues if i.get('key')]
+    if not keys:
+        return
+    cmap = fetch_comments_batch(jira_base, keys, username, api_token)
+    now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    for k in keys:
+        comments = cmap.get(k)
+        if not comments:
+            continue
+        for c in comments:
+            yield {
+                'Issue_Key': k,
+                'Comment_ID': str(c.get('id')),
+                'Author_Account_ID': c.get('author', {}).get('accountId'),
+                'Author_Display_Name': c.get('author', {}).get('displayName'),
+                'Created': convert_timestamp(c.get('created')),
+                'Updated': convert_timestamp(c.get('updated')),
+                'Body': c.get('body'),
+                'Visibility_Type': c.get('visibility', {}).get('type'),
+                'Visibility_Value': c.get('visibility', {}).get('value'),
+                'SyncTime': now,
+                'InsertedAt': now,
+            }
+
+
+def wait_for_table(client: bigquery.Client, dataset_id: str, table_id: str, retries=10, delay=3):
+    for _ in range(retries):
+        try:
+            client.get_table(f'{client.project}.{dataset_id}.{table_id}')
+            return True
+        except Exception:
+            time.sleep(delay)
+    return False
+
+
+def sync_comments_to_bigquery(jira_base: str, jql: str, username: str, api_token: str, dataset_id: str, table_id: str, client: bigquery.Client):
+    temp = 'JiraComments_temp'
+    schema = [
+        bigquery.SchemaField('Issue_Key', 'STRING'),
+        bigquery.SchemaField('Comment_ID', 'STRING'),
+        bigquery.SchemaField('Author_Account_ID', 'STRING'),
+        bigquery.SchemaField('Author_Display_NAME', 'STRING'),

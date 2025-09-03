@@ -1,4 +1,12 @@
 import requests
+import sys, pathlib
+# Ensure repo root is on sys.path so service_account_env can be imported when running this script directly
+_script_dir = pathlib.Path(__file__).resolve().parent
+_repo_root = str(_script_dir.parent.parent)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+from service_account_env import ensure as _ensure_sa
+_ensure_sa()
 import json
 from google.cloud import bigquery
 import logging
@@ -40,88 +48,15 @@ def load_config():
         return None
 
 def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
-    """Load base JQL from env (BASE_JQL_B64/BASE_JQL/JQL_FILE/PROJECTS_FILE) or ../JQL.txt.
-    Falls back to provided default_text if nothing is found.
+    """Use the embedded default JQL from the script only.
+
+    This intentionally ignores any external files or environment-based JQL so the
+    script behavior matches the Docker image which embeds the JQL.
     """
-    # Highest precedence: direct env injection
-    env_b64 = os.environ.get('BASE_JQL_B64')
-    if env_b64:
-        try:
-            import base64
-            decoded = base64.b64decode(env_b64).decode('utf-8').strip()
-            if DEBUG:
-                logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL_B64 env variable")
-            if decoded:
-                return decoded
-        except Exception as e:
-            logging.warning(f"[JQL_LOAD] Failed decoding BASE_JQL_B64: {e}")
-
-    env_text = os.environ.get('BASE_JQL')
-    if env_text and env_text.strip():
-        if DEBUG:
-            logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL env variable")
-        return env_text.strip()
-
-    env_path = os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
-    candidates = []
-    if env_path:
-        candidates.append(env_path)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # Hourly shared JQL.txt (when running locally, not in container)
-    candidates.append(os.path.normpath(os.path.join(script_dir, '..', 'JQL.txt')))
-    # Optional extra fallback: InitialSync/JQL.txt if present
-    candidates.append(os.path.normpath(os.path.join(script_dir, '..', '..', 'InitialSync', 'JQL.txt')))
-    # Container-friendly absolute fallbacks
-    candidates.extend(['/config/JQL.txt', '/data/JQL.txt'])
-
-    if DEBUG:
-        logging.info(f"[JQL_LOAD] Env JQL_FILE={os.environ.get('JQL_FILE')} PROJECTS_FILE={os.environ.get('PROJECTS_FILE')} BASE_JQL=set? {'yes' if os.environ.get('BASE_JQL') else 'no'} BASE_JQL_B64=set? {'yes' if os.environ.get('BASE_JQL_B64') else 'no'}")
-        logging.info(f"[JQL_LOAD] Candidate paths: {candidates}")
-
-    for path in candidates:
-        if not path:
-            continue
-        try:
-            if os.path.isfile(path):
-                with open(path, 'r', encoding='utf-8') as f:
-                    raw = f.read()
-                    text = raw.strip('\n\r ')
-                    # Support comment lines (#, //, --) and plain project list (one per line) -> build OR chain
-                    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-                    filtered = []
-                    for ln in lines:
-                        u = ln.lstrip()
-                        if u.startswith('#') or u.startswith('//') or u.startswith('--'):
-                            continue
-                        filtered.append(ln)
-                    rebuilt = '\n'.join(filtered)
-                    # Decide if it's already JQL (contains 'project =') or a bare list of project names
-                    if filtered and not any('project ' in ln.lower() for ln in filtered):
-                        # Treat each line as a project name literal unless it is ALL / * sentinel
-                        clauses = []
-                        for p in filtered:
-                            if p in ('*','ALL'):  # allow sentinel -> match everything (leave base part empty parenthesis)
-                                continue
-                            if p.isupper() and ' ' not in p and '-' not in p:
-                                # Likely an unquoted key (e.g., TAC)
-                                clauses.append(f'project = {p}')
-                            else:
-                                clauses.append(f'project = "{p}"')
-                        if clauses:
-                            rebuilt = '(' + ' OR '.join(clauses) + ')'
-                        else:
-                            rebuilt = ''
-                    logging.info(f"Loaded base JQL from: {path}")
-                    return rebuilt.strip() if rebuilt else text
-            else:
-                if DEBUG:
-                    logging.info(f"[JQL_LOAD] Skipping non-file path: {path}")
-        except Exception as e:
-            logging.warning(f"[JQL_LOAD] Failed reading {path}: {e}")
     if default_text:
-        logging.info("Using embedded default base JQL.")
+        logging.info("Using embedded default base JQL from script.")
         return default_text.strip()
-    logging.error("No base JQL found. Provide Hourly/JQL.txt or set JQL_FILE env var.")
+    logging.error("No embedded base JQL provided in the script.")
     return None
 
 def convert_timestamp(timestamp):
@@ -355,12 +290,20 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
         bigquery.SchemaField("InsertedAt", "TIMESTAMP", mode="NULLABLE"),
     ]
 
-    if not create_or_replace_temp_table(client, dataset_id, temp_table_id, schema):
-        logging.error("Setup failed: Could not create temp table.")
-        return -1
-    if not wait_for_table(client, dataset_id, temp_table_id):
-        logging.error("Setup failed: Temp table not available.")
-        return -1
+    temp_table_created = create_or_replace_temp_table(client, dataset_id, temp_table_id, schema)
+    if not temp_table_created:
+        logging.error("Setup failed: Could not create temp table. Falling back to local JSON output to avoid data loss.")
+        # Ensure output dir exists
+        out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output')
+        os.makedirs(out_dir, exist_ok=True)
+        local_rows = []
+        # We'll still fetch data and append to local_rows, then write to file at the end.
+        fallback_to_local = True
+    else:
+        fallback_to_local = False
+        if not wait_for_table(client, dataset_id, temp_table_id):
+            logging.error("Setup failed: Temp table not available.")
+            return -1
 
     # --- Jira Search and Data Extraction ---
     total_issues = float('inf')
@@ -481,20 +424,26 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
             for row in generate_rows(issues, jira_base_url, username, api_token):
                 rows_to_insert.append(row)
                 if len(rows_to_insert) >= batch_size:
-                    if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
-                        logging.error(f"Failed to insert batch of {len(rows_to_insert)} rows into temp table. Stopping processing.")
-                        delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-                        return -1
-                    total_rows_inserted_to_temp += len(rows_to_insert)
+                    if fallback_to_local:
+                        local_rows.extend(rows_to_insert)
+                    else:
+                        if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
+                            logging.error(f"Failed to insert batch of {len(rows_to_insert)} rows into temp table. Stopping processing.")
+                            delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
+                            return -1
+                        total_rows_inserted_to_temp += len(rows_to_insert)
                     rows_to_insert = []
 
             # Insert any remaining rows in the last batch
             if rows_to_insert:
-                if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
-                    logging.error(f"Failed to insert remaining {len(rows_to_insert)} rows into temp table. Stopping processing.")
-                    delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-                    return -1
-                total_rows_inserted_to_temp += len(rows_to_insert)
+                if fallback_to_local:
+                    local_rows.extend(rows_to_insert)
+                else:
+                    if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, schema):
+                        logging.error(f"Failed to insert remaining {len(rows_to_insert)} rows into temp table. Stopping processing.")
+                        delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
+                        return -1
+                    total_rows_inserted_to_temp += len(rows_to_insert)
 
 
             start_at += len(issues) # Increment start_at by the number of issues *actually* returned
@@ -515,6 +464,18 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
 
 
     logging.info(f"Finished fetching and inserting data into temporary table '{temp_table_id}'. Total rows inserted: {total_rows_inserted_to_temp}")
+    if fallback_to_local:
+        # Write local_rows to timestamped JSON file
+        ts = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+        out_path = os.path.join(out_dir, f'jira_comments_{ts}.json')
+        try:
+            with open(out_path, 'w', encoding='utf-8') as out_f:
+                json.dump(local_rows, out_f, ensure_ascii=False, indent=2)
+            logging.info(f'Wrote {len(local_rows)} rows to local fallback file: {out_path}')
+        except Exception as e:
+            logging.exception(f'Failed to write local fallback file: {e}')
+        # Skip merge and deletion since we never created temp table
+        return len(local_rows)
 
     # --- Merge Data into Final Table ---
     logging.info(f"Starting merge operation from '{dataset_id}.{temp_table_id}' to '{dataset_id}.{table_id}'...")

@@ -1,8 +1,10 @@
 import json
 import time
+import logging
 from typing import Any, Optional
 
 from google.cloud import bigquery
+from google.api_core.exceptions import Forbidden
 
 
 def log_pipeline_run(
@@ -80,7 +82,11 @@ def log_pipeline_run(
             job = client.query(sql, job_config=job_config)
             job.result()
             return
-        except Exception:
+        except Exception as e:
+            # If access is forbidden, log and continue (don't hard-fail the pipeline)
+            if isinstance(e, Forbidden) or 'Permission' in str(e):
+                logging.warning('Permission denied when writing pipeline run to BigQuery (%s.%s.%s): %s', project, dataset, table, e)
+                return
             if attempt == max_retries:
                 raise
             time.sleep(delay)

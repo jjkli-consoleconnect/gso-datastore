@@ -14,22 +14,23 @@ WITH TicketWithLinkedKeys AS (
       )
     ) AS linkedkeys
   FROM
-    `pccw-internal-virt-agent-uat.JIRAProjects.CCAS` t
+    `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
+  WHERE REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAS)')
 )
 
 SELECT
   twk.Key AS Issue_Key,
-  twk.Type,
+  twk.T AS Type,
   twk.Summary,
   twk.Status,
   twk.Priority,
   twk.Assignee,
-  twk.Creator AS Ticket_Creator,
   twk.Created AS Ticket_Created,
   twk.Updated AS Ticket_Updated,
   twk.Resolved AS Ticket_Resolved,
-  twk.Resolution,
   twk.linkedkeys,
+  twk.AppSupEscalation,
+  twk.Resolution,
 
   -- Resolution SLA calculation (in hours)
   TIMESTAMP_DIFF(twk.Resolved, twk.Created, HOUR) AS Resolution_hrs,
@@ -37,8 +38,8 @@ SELECT
 
   -- SLA target (example: 24h for most, 8h for Incident, 1d for Service Request)
   CASE
-    WHEN twk.Type = 'Incident' THEN 8
-    WHEN twk.Type = 'Service Request' THEN 24
+    WHEN twk.T = 'Incident' THEN 8
+    WHEN twk.T = 'Service Request' THEN 24
     ELSE 24
   END AS SLA_Resolution_Target_hrs,
 
@@ -46,8 +47,8 @@ SELECT
   CASE
     WHEN twk.Resolved IS NULL THEN NULL
     WHEN TIMESTAMP_DIFF(twk.Resolved, twk.Created, MINUTE) / 60.0 <= 
-         CASE WHEN twk.Type = 'Incident' THEN 8
-              WHEN twk.Type = 'Service Request' THEN 24
+         CASE WHEN twk.T = 'Incident' THEN 8
+              WHEN twk.T = 'Service Request' THEN 24
               ELSE 24 END
     THEN 'Met'
     ELSE 'Breached'
@@ -55,8 +56,8 @@ SELECT
 
   -- CCASSolved logic using linkedkeys
   CASE
-    WHEN twk.linkedkeys IS NULL OR twk.linkedkeys = '' THEN twk.Key
-    WHEN NOT REGEXP_CONTAINS(twk.linkedkeys, r'(CCSUP|SLSUP|CCONB|COPS|CSCM|CCT4|SH|AS3491)(-\d+)?') THEN twk.Key
+    WHEN twk.Links IS NULL OR twk.Links = '' THEN twk.Key
+    WHEN NOT REGEXP_CONTAINS(twk.Links, r'(CCSUP|SLSUP|CCONB|COPS|CSCM|CCT4|SH|AS3491)(-\d+)?') THEN twk.Key
     ELSE NULL
   END AS CCASSolved,
 

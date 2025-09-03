@@ -8,7 +8,14 @@ Enhancements added:
  - Repository root added to sys.path for reliable shared/ imports
 """
 import argparse, json, logging, time, uuid, requests, random, threading, os, sys, pathlib
-from datetime import datetime, timedelta
+# Ensure repository root is on sys.path for importing local helper modules
+_script_dir = pathlib.Path(__file__).resolve().parent
+_repo_root = str(_script_dir.parent.parent)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+from service_account_env import ensure as _ensure_sa
+_ensure_sa()
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery
 """Path setup so 'shared' package imports work when executed from subfolder / container workdir."""
@@ -20,10 +27,18 @@ if str(_root_dir) not in sys.path:
 # Auto-set GOOGLE_APPLICATION_CREDENTIALS if not already set and a known key exists
 if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
     for cand in ('service-account.json','jira-bigquery-key.json'):
-        p = _root_dir / cand
+        # Check in script dir first (for container)
+        p = _script_dir / cand
         if p.exists():
             os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(p)
             break
+    else:
+        # Fallback to repo root (for local runs)
+        for cand in ('service-account.json','jira-bigquery-key.json'):
+            p = _root_dir / cand
+            if p.exists():
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(p)
+                break
 
 from shared.pipeline_runs_logger import log_pipeline_run
 
@@ -42,7 +57,7 @@ ADAPT_GROW_CONSECUTIVE=3
 MIN_SHRINK_HOURS=6
 MAX_GROW_DAYS=7
 
-OVERLAP_MINUTES=10
+OVERLAP_MINUTES=60
 FAILURE_RATIO_DEGRADED=0.02
 
 RATE_BUCKET_CAPACITY=120
@@ -203,10 +218,17 @@ def convert_ts(ts):
     fmts=['%Y-%m-%dT%H:%M:%S.%fZ','%Y-%m-%dT%H:%M:%S.%f%z','%Y-%m-%dT%H:%M:%SZ','%Y-%m-%dT%H:%M:%S%z','%Y-%m-%dT%H:%M:%S']
     for fmt in fmts:
         try:
-            dt=datetime.strptime(ts,fmt)
-            if dt.tzinfo: dt=dt.replace(tzinfo=None)
+            # Parse the timestamp according to format. Some formats use a literal 'Z' (UTC)
+            dt = datetime.strptime(ts, fmt)
+            # If format contained a literal Z (ISO UTC), set tzinfo to UTC
+            if fmt.endswith('Z') and '%z' not in fmt:
+                dt = dt.replace(tzinfo=timezone.utc)
+            # If dt has tzinfo, convert to UTC and produce a naive UTC datetime for storage/comparison
+            if getattr(dt, 'tzinfo', None) is not None:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
             return dt.strftime('%Y-%m-%d %H:%M:%S')
-        except Exception: continue
+        except Exception:
+            continue
     return None
 
 def create_or_replace_table(client,dataset,table,schema):
@@ -343,7 +365,12 @@ def sync_window(base_url,jql,auth,client,dataset,table,ws,we):
         if not issues: break
         keys=[i.get('key') for i in issues if i.get('key')]
         cmap=fetch_comments_batch(base_url,keys,auth)
-        logging.debug(f"Fetched comments for {len(keys)} keys; non-empty maps={sum(1 for v in cmap.values() if v)}")
+        total_comments = sum(len(v) for v in cmap.values())
+        nonzero_items = [(k,len(v)) for k,v in cmap.items() if v]
+        logging.debug(f"Fetched comments for {len(keys)} keys; non-empty maps={len(nonzero_items)}")
+        if nonzero_items:
+            sample = nonzero_items[:20]
+            logging.info(f"Comments fetched total={total_comments} non_empty_keys={len(nonzero_items)} sample={sample}")
         rows_page = 0
         for row in generate_rows(issues,cmap,ws,we):
             buf.append(row)
@@ -400,8 +427,9 @@ def main():
         'GS&O Data Analytics',
         'GS&O Tool Automation',
         'GS&O Knowledge Consolidation',
+        'Google Contact Center AI Solution', 
         'TAC',
-        'VOICE - CE',
+        'VOICE - CE', 
         'IOT CE',
         'Console Application Support',
         'Console Connect Provisioning',
@@ -409,7 +437,7 @@ def main():
         'Transmission TX-CE',
         'Mobility SMS - CE',
         'Managed Security Services',
-        'Vendor Management Escalations'
+        'Customer Success Management'
     ]
     # External file override (InitialSync/JQL.txt)
     default_projects = load_projects_from_file(default_projects)
@@ -472,10 +500,19 @@ def main():
                 if latest:
                     overlap=timedelta(minutes=OVERLAP_MINUTES)
                     latest_naive=latest.replace(tzinfo=None) if getattr(latest,'tzinfo',None) else latest
+                    now_naive = now.replace(tzinfo=None)
+                    # If there have been no updates since the last recorded WindowEnd (within the overlap window),
+                    # skip this project to avoid creating tiny windows (seconds/minutes) and move on.
+                    if (now_naive - latest_naive) <= overlap:
+                        logging.info(f"No new updates for {proj} since last window end {latest_naive}; skipping")
+                        break
                     last_completed_naive=last_completed_start.replace(tzinfo=None) if (last_completed_start and getattr(last_completed_start,'tzinfo',None)) else last_completed_start
+                    # Start just before the last recorded end to keep a small overlap, but avoid reprocessing too-old ranges
                     cand_start=latest_naive-overlap
-                    if last_completed_naive and cand_start<=last_completed_naive: cand_start=latest_naive
-                    if last_completed_naive and (latest_naive-last_completed_naive)<=overlap*2: cand_start=latest_naive
+                    if last_completed_naive and cand_start<=last_completed_naive:
+                        cand_start=latest_naive
+                    if last_completed_naive and (latest_naive-last_completed_naive)<=overlap*2:
+                        cand_start=latest_naive
                     if cand_start<min_start: cand_start=min_start
                     ws=cand_start
                 else: ws=min_start

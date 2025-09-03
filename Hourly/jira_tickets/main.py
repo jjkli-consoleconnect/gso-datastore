@@ -1,3 +1,11 @@
+import sys, pathlib
+_script_dir = pathlib.Path(__file__).resolve().parent
+_repo_root = str(_script_dir.parent.parent)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+from service_account_env import ensure as _ensure_sa
+_ensure_sa()
+
 # --- Comments-style wait_for_table and insert_rows_with_retry ---
 def table_exists(client, dataset_id, table_id):
     try:
@@ -308,6 +316,7 @@ def fetch_and_sync_jira_data():
             ')'
         )
         base_jql = load_base_jql(default_text=base_default)
+        logging.info(f"Resolved base_jql for hourly tickets job: {base_jql}")
         if not base_jql:
             return
         jql_query = f"{base_jql} AND updated >= -1h"

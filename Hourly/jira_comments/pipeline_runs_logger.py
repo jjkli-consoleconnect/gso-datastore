@@ -3,6 +3,10 @@ import time
 from typing import Any, Optional
 
 from google.cloud import bigquery
+from service_account_env import ensure as _ensure_sa
+_ensure_sa()
+from google.api_core.exceptions import Forbidden
+import logging
 
 
 def log_pipeline_run(
@@ -25,6 +29,13 @@ def log_pipeline_run(
 ) -> None:
     if client is None:
         client = bigquery.Client(project=project)
+    else:
+        # If a client instance is provided, prefer its project for target table operations
+        try:
+            project = client.project or project
+        except Exception:
+            # Fallback to provided project param if client doesn't expose project
+            pass
 
     sql = f"""
         MERGE `{project}.{dataset}.{table}` T
@@ -79,6 +90,11 @@ def log_pipeline_run(
         try:
             job = client.query(sql, job_config=job_config)
             job.result()
+            return
+        except Forbidden as fe:
+            # Do not raise on permission errors for pipeline logging; log and continue.
+            # This mirrors behavior in other hourly scripts where logging failures shouldn't stop the pipeline.
+            logging.warning(f"Permission denied when writing pipeline run to BigQuery ({project}.{dataset}.{table}): {fe}")
             return
         except Exception:
             if attempt == max_retries:

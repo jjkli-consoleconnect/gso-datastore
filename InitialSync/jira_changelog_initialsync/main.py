@@ -1,4 +1,11 @@
 import requests
+import sys, pathlib
+_script_dir = pathlib.Path(__file__).resolve().parent
+_repo_root = str(_script_dir.parent.parent.parent)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+from service_account_env import ensure as _ensure_sa
+_ensure_sa()
 import json
 import os, sys, pathlib
 from google.cloud import bigquery
@@ -621,12 +628,20 @@ def main():
 
     # User-specified project list (order determines processing sequence); can be filtered by CLI args
     project_list_default = [
-        'Transmission TX-CE',
-        'Console Application Support',
+        'GS&O Data Analytics',
+        'GS&O Tool Automation',
+        'GS&O Knowledge Consolidation',
+        'Google Contact Center AI Solution',
         'TAC',
+        'VOICE - CE',
+        'IOT CE',
+        'Console Application Support',
         'Console Connect Provisioning',
         'Global Service Delivery Team',
-        'Vendor Management Escalations'
+        'Transmission TX-CE',
+        'Mobility SMS - CE',
+        'Managed Security Services',
+        'Customer Success Management'
     ]
     # Try external file override (InitialSync/JQL.txt)
     project_list_default = load_projects_from_file(project_list_default)

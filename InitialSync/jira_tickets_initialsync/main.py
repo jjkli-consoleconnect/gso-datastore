@@ -3,6 +3,13 @@ Per-project adaptive window backfill (base 7d, shrink to 6h, regrow) aligned wit
 Temp staging + MERGE, progress ledger (Project, RowCount), buffered logging, SLA metrics extraction.
 """
 import json, logging, time, uuid, requests, argparse, random, threading, os, re, sys, pathlib
+# Ensure repository root is on sys.path for importing local helper modules
+_script_dir = pathlib.Path(__file__).resolve().parent
+_repo_root = str(_script_dir.parent.parent.parent)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+from service_account_env import ensure as _ensure_sa
+_ensure_sa()
 
 # Ensure repository root (sibling of InitialSync/) is on sys.path so we can import 'shared'
 _script_dir = pathlib.Path(__file__).resolve().parent
