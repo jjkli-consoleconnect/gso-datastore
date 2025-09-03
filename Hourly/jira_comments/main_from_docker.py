@@ -597,49 +597,17 @@ def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, 
 
 # At the end of the pipeline, flush all logs to BigQuery in a batch
 def flush_logs_to_bigquery(client, dataset_id, table_id):
-    if not LOG_BUFFER:
-        return
-    temp_log_table = "PipelineLogs_temp"
-    log_schema = [
-        bigquery.SchemaField("Timestamp", "TIMESTAMP", mode="NULLABLE"),
-        bigquery.SchemaField("PipelineName", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("RunID", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("LogLevel", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Message", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("FunctionName", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("BatchID", "STRING", mode="NULLABLE"),
-        bigquery.SchemaField("Details", "STRING", mode="NULLABLE"),
-    ]
-    if not create_or_replace_temp_table(client, dataset_id, temp_log_table, log_schema):
-        logging.error("Setup failed: Could not create temp logs table.")
-        return
-    if not wait_for_table(client, dataset_id, temp_log_table, retries=20, delay=5):
-        logging.error("Setup failed: Temp logs table not available.")
-        return
-    if not insert_rows_with_retry(client, dataset_id, temp_log_table, LOG_BUFFER, log_schema, retries=20, delay=10):
-        logging.error("Failed to insert log entries into temp logs table after retries.")
-        return
-    merge_query = f"""
-        MERGE `{client.project}.{dataset_id}.PipelineLogs` T
-        USING (
-            SELECT DISTINCT * FROM `{client.project}.{dataset_id}.{temp_log_table}`
-        ) S
-        ON T.Timestamp = S.Timestamp AND T.RunID = S.RunID
-        WHEN MATCHED THEN
-            UPDATE SET
-                T.PipelineName = S.PipelineName,
-                T.LogLevel = S.LogLevel,
-                T.Message = S.Message,
-                T.FunctionName = S.FunctionName,
-                T.BatchID = S.BatchID,
-                T.Details = S.Details
-        WHEN NOT MATCHED THEN
-            INSERT (PipelineName, RunID, LogLevel, Message, FunctionName, BatchID, Details)
-            VALUES (S.PipelineName, S.RunID, S.LogLevel, S.Message, S.FunctionName, S.BatchID, S.Details)
-    """
-    client.query(merge_query).result()
-    client.delete_table(f"{dataset_id}.{temp_log_table}")
-    logging.info("All log entries successfully merged into BigQuery logs table.")
+    for log in LOG_BUFFER:
+        context = {}
+        if log.get('FunctionName'):
+            context['FunctionName'] = log['FunctionName']
+        if log.get('BatchID'):
+            context['BatchID'] = log['BatchID']
+        if log.get('Details'):
+            context['Details'] = log['Details']
+        log_pipeline_run(client, pipeline_name=log['PipelineName'], run_id=log['RunID'], level=log['LogLevel'], message=log['Message'], status='INFO', context=context if context else None)
+    LOG_BUFFER.clear()
+    logging.info("All log entries successfully logged to PipelineRuns.")
 
 def main():
     # Removed troubleshooting debugging logs
@@ -649,7 +617,7 @@ def main():
             return
         dataset_id = 'GSO'
         table_id = 'JiraComments'
-        log_table_id = 'PipelineLogs'
+        log_table_id = 'PipelineRuns'
         pipeline_name = "jira_comments"
         run_id = str(uuid.uuid4())
         jira_url = 'https://consoleconnect.atlassian.net'

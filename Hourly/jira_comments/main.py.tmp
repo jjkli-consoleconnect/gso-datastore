@@ -287,41 +287,17 @@ def log_to_bigquery(client: bigquery.Client, dataset_id: str, table_id: str, pip
 
 
 def flush_logs_to_bigquery(client: bigquery.Client, dataset_id: str, table_id: str):
-    if not LOG_BUFFER:
-        return
-    temp = f'PipelineLogs_temp_{str(uuid.uuid4()).replace("-", "")}'
-    schema = [
-        bigquery.SchemaField('Timestamp', 'TIMESTAMP'),
-        bigquery.SchemaField('PipelineName', 'STRING'),
-        bigquery.SchemaField('RunID', 'STRING'),
-        bigquery.SchemaField('LogLevel', 'STRING'),
-        bigquery.SchemaField('Message', 'STRING'),
-        bigquery.SchemaField('FunctionName', 'STRING'),
-        bigquery.SchemaField('BatchID', 'STRING'),
-        bigquery.SchemaField('Details', 'STRING'),
-    ]
-    if not create_or_replace_temp_table(client, dataset_id, temp, schema):
-        logging.error('Failed to create temp log table')
-        return
-    if not insert_rows_with_retry(client, dataset_id, temp, LOG_BUFFER):
-        logging.error('Failed to insert logs into temp')
-        return
-    merge_q = f'''
-        MERGE `{client.project}.{dataset_id}.{table_id}` T
-        USING (SELECT * FROM `{client.project}.{dataset_id}.{temp}`) S
-        ON T.RunID = S.RunID AND T.Message = S.Message
-        WHEN NOT MATCHED THEN
-            INSERT (Timestamp, PipelineName, RunID, LogLevel, Message, FunctionName, BatchID, Details)
-            VALUES (S.Timestamp, S.PipelineName, S.RunID, S.LogLevel, S.Message, S.FunctionName, S.BATCHID, S.Details)
-    '''
-    try:
-        client.query(merge_q).result()
-    except Exception:
-        logging.exception('Failed to merge logs')
-    try:
-        client.delete_table(f'{client.project}.{dataset_id}.{temp}', not_found_ok=True)
-    except Exception:
-        pass
+    for log in LOG_BUFFER:
+        context = {}
+        if log.get('FunctionName'):
+            context['FunctionName'] = log['FunctionName']
+        if log.get('BatchID'):
+            context['BatchID'] = log['BatchID']
+        if log.get('Details'):
+            context['Details'] = log['Details']
+        log_pipeline_run(client, pipeline_name=log['PipelineName'], run_id=log['RunID'], level=log['LogLevel'], message=log['Message'], status='INFO', context=context if context else None)
+    LOG_BUFFER.clear()
+    logging.info("All log entries successfully logged to PipelineRuns.")
 
 
 def main():
@@ -337,7 +313,7 @@ def main():
 
     dataset = 'GSO'
     table = 'JiraComments'
-    logs = 'PipelineLogs'
+    logs = 'PipelineRuns'
     pipeline = 'jira_comments'
     run_id = str(uuid.uuid4())
 

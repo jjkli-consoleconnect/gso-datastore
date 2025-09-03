@@ -1,22 +1,14 @@
+import json
 from datetime import datetime
 import logging
+from pipeline_runs_logger import log_pipeline_run
 
 def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, log_level, message, FunctionName=None, BatchID=None, Details=None):
-    row = {
-        "Timestamp": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-        "PipelineName": pipeline_name,
-        "RunID": run_id,
-        "LogLevel": log_level,
-        "Message": message,
-        "FunctionName": FunctionName,
-        "BatchID": BatchID,
-        "Details": Details
-    }
-    if client:
-        errors = client.insert_rows_json(f"{dataset_id}.{table_id}", [row])
-        if errors:
-            logging.error(f"Failed to log to BigQuery: {errors}")
-        else:
-            logging.info("Log entry successfully written to BigQuery.")
-    else:
-        logging.error("BigQuery client not initialized; log entry not sent to BigQuery.")
+    context = {}
+    if FunctionName:
+        context["FunctionName"] = FunctionName
+    if BatchID:
+        context["BatchID"] = BatchID
+    if Details:
+        context["Details"] = Details
+    log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level=log_level, message=message, status="INFO", context=context if context else None)
