@@ -437,7 +437,8 @@ def main():
         'Transmission TX-CE',
         'Mobility SMS - CE',
         'Managed Security Services',
-        'Customer Success Management'
+        'Customer Success Management',
+        'Sherbet'
     ]
     # External file override (InitialSync/JQL.txt)
     default_projects = load_projects_from_file(default_projects)

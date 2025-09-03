@@ -597,7 +597,8 @@ def main():
             'project = "Transmission TX-CE" OR '\
             'project = "Mobility SMS - CE" OR '\
             'project = "Managed Security Services" OR '\
-            'project = "Customer Success Management" '
+            'project = "Customer Success Management" OR '\
+            'project = Sherbet '
             ')'
         )
         base_jql = load_base_jql(default_text=base_default)

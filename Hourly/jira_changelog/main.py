@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 import random
 import uuid
 from typing import Optional
-from pipeline_runs_logger import log_pipeline_run
+from shared.pipeline_runs_logger import log_pipeline_run
 
 # --- Logging Buffer for BigQuery Logs ---
 LOG_BUFFER = []
@@ -478,8 +478,9 @@ def main():
         'project = "Transmission TX-CE" OR '\
         'project = "Mobility SMS - CE" OR '\
         'project = "Managed Security Services" OR '\
-        'project = "Vendor Management Escalations" OR '
-        'project = "Customer Success Management" '
+        'project = "Vendor Management Escalations" OR '\
+        'project = "Customer Success Management" OR '
+        'project = Sherbet '
         ')'
     )
     base_jql = load_base_jql(default_text=base_default)

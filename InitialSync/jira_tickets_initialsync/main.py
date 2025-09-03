@@ -689,7 +689,8 @@ def main():
         'Global Service Delivery Team',
         'Transmission TX-CE',
         'Mobility SMS - CE',
-        'Managed Security Services'
+        'Managed Security Services',
+        'Sherbet'
     ]
     # External file override (InitialSync/JQL.txt)
     default_projects = load_projects_from_file(default_projects)
