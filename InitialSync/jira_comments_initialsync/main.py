@@ -68,6 +68,8 @@ RATE_SHRINK_DETAIL_429=25
 RATE_SHRINK_SEARCH_429=8
 RATE_SHRINK_FACTOR=0.5
 
+MIN_WINDOW_MINUTES=30         # minimum window size in minutes to prevent tiny windows
+
 DETAIL_MIN_WORKERS=4
 DETAIL_MAX_WORKERS=24
 CURRENT_DETAIL_WORKERS=16
@@ -519,6 +521,12 @@ def main():
             now_naive=now.replace(tzinfo=None)
             cand_naive=cand.replace(tzinfo=None) if getattr(cand,'tzinfo',None) else cand
             we=min(cand_naive,now_naive)
+
+            # Check if window is too small (less than minimum threshold)
+            window_span_minutes = (we - ws_naive).total_seconds() / 60
+            if window_span_minutes < MIN_WINDOW_MINUTES:
+                logging.info(f"Window for {proj} is too small ({window_span_minutes:.1f} minutes < {MIN_WINDOW_MINUTES} minutes); moving to next project")
+                break
 
             # Clamp oversized existing window spans to base_days (align with changelog behavior)
             try:

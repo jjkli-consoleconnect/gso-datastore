@@ -107,6 +107,8 @@ RATE_SHRINK_HISTORY_429 = 25   # if previous window had >= this many history 429
 RATE_SHRINK_SEARCH_429 = 8     # if previous window had >= this many search 429s, shrink next window
 RATE_SHRINK_FACTOR = 0.5       # multiply previous window span by this when rate-shrink triggered
 
+MIN_WINDOW_MINUTES = 30         # minimum window size in minutes to prevent tiny windows
+
 # ----------------- UTIL -----------------
 def load_config():
     """Layered Jira config load with fallbacks.
@@ -780,6 +782,12 @@ def main():
             now_naive = now.replace(tzinfo=None) if getattr(now, 'tzinfo', None) else now
             candidate_end_naive = candidate_end.replace(tzinfo=None) if getattr(candidate_end, 'tzinfo', None) else candidate_end
             window_end = min(candidate_end_naive, now_naive)
+
+            # Check if window is too small (less than minimum threshold)
+            window_span_minutes = (window_end - ws_naive).total_seconds() / 60
+            if window_span_minutes < MIN_WINDOW_MINUTES:
+                logging.info(f"Window for {project} is too small ({window_span_minutes:.1f} minutes < {MIN_WINDOW_MINUTES} minutes); moving to next project")
+                break
 
             # Guard: clamp any oversized existing window (e.g., legacy 1-year row) down to configured window_days
             span_days = (window_end - ws_naive).days + ((window_end - ws_naive).seconds/86400)
