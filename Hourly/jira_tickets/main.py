@@ -55,7 +55,6 @@ import uuid
 from google.api_core.exceptions import Conflict, NotFound, GoogleAPIError
 import re
 import os
-from bq_logger import log_to_bigquery
 from typing import Optional
 from pipeline_runs_logger import log_pipeline_run
 
@@ -325,7 +324,14 @@ def fetch_and_sync_jira_data():
         jql_window_end = run_started
 
         # --- Log pipeline start ---
-        log_to_bigquery(client, dataset_id, "PipelineRuns", pipeline_name, run_id, "INFO", "Pipeline started")
+        log_pipeline_run(
+            client,
+            pipeline_name=pipeline_name,
+            run_id=run_id,
+            level="INFO",
+            message="Pipeline started",
+            status="RUNNING",
+        )
 
         # Create temp table for this run
         bq_schema = [
@@ -598,7 +604,6 @@ def fetch_and_sync_jira_data():
         delete_temp_table(client, dataset_id, temp_table_id)
 
         # --- Log pipeline end ---
-        log_to_bigquery(client, dataset_id, "PipelineRuns", pipeline_name, run_id, "INFO", "Pipeline finished")
         # After merge completes, record summary
         # Choose window from observed data if available, else fall back to JQL window
         window_start_dt = observed_min_updated or jql_window_start
@@ -629,7 +634,7 @@ def fetch_and_sync_jira_data():
         raise
     # Log pipeline end
     try:
-        log_to_bigquery(client, dataset_id, "PipelineRuns", pipeline_name, run_id, "INFO", "Pipeline finished")
+        pass  # log_pipeline_run already called above
     except Exception:
         pass
 

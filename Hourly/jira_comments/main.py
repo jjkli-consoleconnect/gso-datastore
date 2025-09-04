@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 import time
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from bq_logger import log_to_bigquery
 import uuid
 from typing import Optional
 from pipeline_runs_logger import log_pipeline_run
@@ -614,23 +613,19 @@ def main():
         except Exception as e:
             logging.exception(f"Failed to initialize BigQuery client: {e}. Ensure GCP credentials are set up correctly.")
             return
-        log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline started", function_name="main")
         try:
             log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
             rows_merged = sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client)
             if rows_merged and rows_merged > -1:
                 logging.info("Successfully synced comments to BigQuery.")
-                log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Successfully synced comments to BigQuery", function_name="main")
                 log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", window_start=jql_window_start, window_end=jql_window_end, rows_merged=int(rows_merged))
             else:
                 logging.error("Failed to sync comments to BigQuery.")
-                log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", "Failed to sync comments to BigQuery", function_name="main")
                 log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Failed to sync comments to BigQuery", status="ERROR")
         except Exception as e:
             logging.exception(f"Pipeline run failed: {e}")
-            log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "ERROR", f"Pipeline run failed: {e}", function_name="main", details=str(e))
             log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Pipeline run failed: {e}", status="ERROR", error_code=getattr(e, "code", None))
-        log_to_bigquery(client, dataset_id, log_table_id, pipeline_name, run_id, "INFO", "Pipeline finished", function_name="main")
+        
         flush_logs_to_bigquery(client, dataset_id, log_table_id)
     except Exception as e:
         logging.exception(f"Unhandled exception in main(): {e}")
