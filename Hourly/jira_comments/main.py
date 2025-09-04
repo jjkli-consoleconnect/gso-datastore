@@ -618,13 +618,19 @@ def main():
             rows_merged = sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client)
             if rows_merged and rows_merged > -1:
                 logging.info("Successfully synced comments to BigQuery.")
-                log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", window_start=jql_window_start, window_end=jql_window_end, rows_merged=int(rows_merged))
+                run_ended = datetime.now(timezone.utc)
+                duration_seconds = (run_ended - run_started).total_seconds()
+                log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", window_start=jql_window_start, window_end=jql_window_end, rows_merged=int(rows_merged), duration_seconds=duration_seconds)
             else:
                 logging.error("Failed to sync comments to BigQuery.")
-                log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Failed to sync comments to BigQuery", status="ERROR")
+                run_ended = datetime.now(timezone.utc)
+                duration_seconds = (run_ended - run_started).total_seconds()
+                log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Failed to sync comments to BigQuery", status="ERROR", duration_seconds=duration_seconds)
         except Exception as e:
             logging.exception(f"Pipeline run failed: {e}")
-            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Pipeline run failed: {e}", status="ERROR", error_code=getattr(e, "code", None))
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Pipeline run failed: {e}", status="ERROR", error_code=getattr(e, "code", None), duration_seconds=duration_seconds)
         
         flush_logs_to_bigquery(client, dataset_id, log_table_id)
     except Exception as e:

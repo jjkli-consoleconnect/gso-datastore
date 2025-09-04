@@ -589,6 +589,7 @@ def main():
     pipeline_name = 'jira_changelog'
     run_id = str(uuid.uuid4())
     jira_url = 'https://consoleconnect.atlassian.net'
+    run_started = datetime.utcnow()  # Track overall pipeline start time
 
     window_days = 7
     min_ts = datetime(2024, 7, 1)
@@ -963,7 +964,9 @@ def main():
 
             # Continue loop to process next window
 
-    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level='INFO', message='Pipeline finished (all projects processed)', status='SUCCESS')
+    run_ended = datetime.utcnow()
+    duration_seconds = (run_ended - run_started).total_seconds()
+    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level='INFO', message='Pipeline finished (all projects processed)', status='SUCCESS', duration_seconds=duration_seconds)
 
 if __name__ == '__main__':
     main()

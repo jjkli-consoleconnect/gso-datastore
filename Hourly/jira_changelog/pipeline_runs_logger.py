@@ -1,10 +1,8 @@
 import json
 import time
-import logging
 from typing import Any, Optional
 
 from google.cloud import bigquery
-from google.api_core.exceptions import Forbidden
 
 
 def log_pipeline_run(
@@ -20,46 +18,53 @@ def log_pipeline_run(
     rows_merged: Optional[int] = None,
     error_code: Optional[str] = None,
     context: Optional[dict[str, Any]] = None,
+    duration_seconds: Optional[float] = None,
     project: str = "pccw-internal-virt-agent-uat",
     dataset: str = "GSO",
     table: str = "PipelineRuns",
     max_retries: int = 3,
 ) -> None:
+    """
+    Idempotent run summary write into project.dataset.table using MERGE.
+
+    - Server-side RunTime via CURRENT_TIMESTAMP().
+    - Idempotency by (PipelineName, RunID).
+    - Context currently set to NULL to avoid JSON casting issues across clients.
+    """
     if client is None:
         client = bigquery.Client(project=project)
 
     sql = f"""
         MERGE `{project}.{dataset}.{table}` T
-    USING (
-      SELECT
-        @pipeline AS PipelineName,
-        @ws AS WindowStart,
-        @we AS WindowEnd,
-        @rows AS RowsMerged,
-        @level AS LogLevel,
-        @msg AS Message,
-        @runid AS RunID,
-        @status AS Status,
-    @err AS ErrorCode,
-    CAST(NULL AS JSON) AS Context
-    ) S
-    ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID
-        WHEN MATCHED THEN
-            UPDATE SET
-                T.WindowStart = COALESCE(S.WindowStart, T.WindowStart),
-                T.WindowEnd   = COALESCE(S.WindowEnd,   T.WindowEnd),
-                T.RowsMerged  = COALESCE(S.RowsMerged,  T.RowsMerged),
-                T.LogLevel    = COALESCE(S.LogLevel,    T.LogLevel),
-                T.Message     = COALESCE(S.Message,     T.Message),
-                T.Status      = COALESCE(S.Status,      T.Status),
-                T.ErrorCode   = COALESCE(S.ErrorCode,   T.ErrorCode),
-                T.Context     = COALESCE(S.Context,     T.Context)
-    WHEN NOT MATCHED THEN
-      INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, Context)
-      VALUES (CURRENT_TIMESTAMP(), S.PipelineName, S.WindowStart, S.WindowEnd, S.RowsMerged, S.LogLevel, S.Message, S.RunID, S.Status, S.ErrorCode, S.Context)
+        USING (
+          SELECT
+            @pipeline AS PipelineName,
+            @ws AS WindowStart,
+            @we AS WindowEnd,
+            @rows AS RowsMerged,
+            @level AS LogLevel,
+            @msg AS Message,
+            @runid AS RunID,
+            @status AS Status,
+            @err AS ErrorCode,
+            @duration AS DurationSeconds,
+            CAST(NULL AS JSON) AS Context
+        ) S
+        ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID
+        WHEN MATCHED THEN UPDATE SET
+            T.WindowStart = COALESCE(S.WindowStart, T.WindowStart),
+            T.WindowEnd   = COALESCE(S.WindowEnd,   T.WindowEnd),
+            T.RowsMerged  = COALESCE(S.RowsMerged,  T.RowsMerged),
+            T.LogLevel    = COALESCE(S.LogLevel,    T.LogLevel),
+            T.Message     = COALESCE(S.Message,     T.Message),
+            T.Status      = COALESCE(S.Status,      T.Status),
+            T.ErrorCode   = COALESCE(S.ErrorCode,   T.ErrorCode),
+            T.DurationSeconds = COALESCE(S.DurationSeconds, T.DurationSeconds),
+            T.Context     = COALESCE(S.Context,     T.Context)
+        WHEN NOT MATCHED THEN
+          INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, DurationSeconds, Context)
+          VALUES (CURRENT_TIMESTAMP(), S.PipelineName, S.WindowStart, S.WindowEnd, S.RowsMerged, S.LogLevel, S.Message, S.RunID, S.Status, S.ErrorCode, S.DurationSeconds, S.Context)
     """
-
-    # Context temporarily disabled (set to NULL in SQL) to avoid JSON cast issues
 
     params = [
         bigquery.ScalarQueryParameter("pipeline", "STRING", pipeline_name),
@@ -71,7 +76,7 @@ def log_pipeline_run(
         bigquery.ScalarQueryParameter("runid", "STRING", run_id),
         bigquery.ScalarQueryParameter("status", "STRING", status),
         bigquery.ScalarQueryParameter("err", "STRING", error_code),
-    # no ctx parameter used
+        bigquery.ScalarQueryParameter("duration", "FLOAT64", duration_seconds),
     ]
 
     job_config = bigquery.QueryJobConfig(query_parameters=params)
@@ -82,11 +87,7 @@ def log_pipeline_run(
             job = client.query(sql, job_config=job_config)
             job.result()
             return
-        except Exception as e:
-            # If access is forbidden, log and continue (don't hard-fail the pipeline)
-            if isinstance(e, Forbidden) or 'Permission' in str(e):
-                logging.warning('Permission denied when writing pipeline run to BigQuery (%s.%s.%s): %s', project, dataset, table, e)
-                return
+        except Exception:
             if attempt == max_retries:
                 raise
             time.sleep(delay)

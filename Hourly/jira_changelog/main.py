@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 import random
 import uuid
 from typing import Optional
-from shared.pipeline_runs_logger import log_pipeline_run
+from pipeline_runs_logger import log_pipeline_run
 
 # --- Logging Buffer for BigQuery Logs ---
 LOG_BUFFER = []
@@ -520,13 +520,19 @@ def main():
         rows_merged = sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client)
         if rows_merged and rows_merged > 0:
             logging.info("Successfully synced transitions history to BigQuery.")
-            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", window_start=jql_window_start, window_end=jql_window_end, rows_merged=int(rows_merged))
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", window_start=jql_window_start, window_end=jql_window_end, rows_merged=int(rows_merged), duration_seconds=duration_seconds)
         else:
             logging.error("Failed to sync transition history to BigQuery.")
-            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Failed to sync transition history to BigQuery", status="ERROR")
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Failed to sync transition history to BigQuery", status="ERROR", duration_seconds=duration_seconds)
     except Exception as e:
         logging.exception(f"Pipeline run failed: {e}")
-        log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Exception: {e}", status="ERROR", error_code=getattr(e, "code", None))
+        run_ended = datetime.now(timezone.utc)
+        duration_seconds = (run_ended - run_started).total_seconds()
+        log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Exception: {e}", status="ERROR", error_code=getattr(e, "code", None), duration_seconds=duration_seconds)
 
     # At the end, flush all logs to BigQuery in a batch
     flush_logs_to_bigquery(client, dataset_id, log_table_id)

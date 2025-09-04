@@ -608,6 +608,10 @@ def fetch_and_sync_jira_data():
         # Choose window from observed data if available, else fall back to JQL window
         window_start_dt = observed_min_updated or jql_window_start
         window_end_dt = observed_max_updated or jql_window_end
+        
+        # Calculate duration
+        run_ended = datetime.now(timezone.utc)
+        duration_seconds = (run_ended - run_started).total_seconds()
 
         log_pipeline_run(
             client,
@@ -619,9 +623,13 @@ def fetch_and_sync_jira_data():
             window_start=window_start_dt,
             window_end=window_end_dt,
             rows_merged=issues_processed,
+            duration_seconds=duration_seconds,
         )
     except Exception as e:
         # On error, record failure with message and error code if available
+        run_ended = datetime.now(timezone.utc)
+        duration_seconds = (run_ended - run_started).total_seconds()
+        
         log_pipeline_run(
             client,
             pipeline_name=pipeline_name,
@@ -630,6 +638,7 @@ def fetch_and_sync_jira_data():
             message=f"Exception: {e}",
             status="ERROR",
             error_code=getattr(e, "code", None),
+            duration_seconds=duration_seconds,
         )
         raise
     # Log pipeline end

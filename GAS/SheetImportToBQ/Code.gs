@@ -9,11 +9,11 @@ const KEY_COLUMN = 'staff_id_number';
 const USE_INGESTION_TIMESTAMP = true;
 
 // Main entry: run manually or from a trigger
-function importSheet1ToBigQuery() {
+function importSheetToBigQuery() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('Sheet1');
+  const sheet = ss.getSheetByName('All GS&O Staffs');
   if (!sheet) {
-    console.error('Sheet1 not found');
+    console.error('Sheet not found');
     return;
   }
 
@@ -145,16 +145,39 @@ function importSheet1ToBigQuery() {
 
 // Create table if not exists. Fields are STRING type and named by sanitized headers.
 function ensureTableExists(headers) {
-  // If table exists, do nothing. Otherwise create it with STRING fields.
+  let tableExists = false;
+  let existingFields = [];
   try {
-    BigQuery.Tables.get(PROJECT_ID, DATASET_ID, TABLE_ID);
-    console.log('Table ' + TABLE_ID + ' exists in ' + DATASET_ID);
-    return;
+    const table = BigQuery.Tables.get(PROJECT_ID, DATASET_ID, TABLE_ID);
+    tableExists = true;
+    existingFields = table.schema.fields.map(f => f.name);
+    console.log('Table ' + TABLE_ID + ' exists in ' + DATASET_ID + ' with ' + existingFields.length + ' fields.');
   } catch (e) {
     if (!isNotFoundError(e)) throw e;
   }
 
-  createTable(PROJECT_ID, DATASET_ID, TABLE_ID, headers);
+  if (!tableExists) {
+    createTable(PROJECT_ID, DATASET_ID, TABLE_ID, headers);
+    return;
+  }
+
+  // Check for missing columns and add them
+  const missingFields = headers.filter(h => !existingFields.includes(h));
+  if (missingFields.length > 0) {
+    console.log('Adding missing columns to table: ' + missingFields.join(', '));
+    const alterSql = `ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.${TABLE_ID}\` ` +
+      missingFields.map(col => `ADD COLUMN ${col} STRING`).join(', ');
+    try {
+      const jobId = runQueryJob(alterSql);
+      waitForJob(PROJECT_ID, jobId, 120000); // wait up to 2 minutes
+      console.log('Added columns to table: ' + missingFields.join(', '));
+    } catch (err) {
+      console.error('Failed to alter table: ', err);
+      throw err;
+    }
+  } else {
+    console.log('Table schema matches sheet headers.');
+  }
 }
 
 // Helper to create a table with all STRING columns (fields array of names)

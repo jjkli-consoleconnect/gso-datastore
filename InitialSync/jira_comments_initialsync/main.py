@@ -417,6 +417,7 @@ def main():
     if not cfg: return
     dataset='GSO'; table='JiraComments'; progress=f'{table}_progress'; pipeline='jira_comments'; run_id=str(uuid.uuid4()); base_days=7
     min_start=datetime(2024,7,1); client=bigquery.Client(); now=datetime.utcnow()
+    run_started = datetime.utcnow()  # Track overall pipeline start time
     prog_schema=[bigquery.SchemaField(n,t) for n,t in [ ('WindowStart','TIMESTAMP'),('WindowEnd','TIMESTAMP'),('Status','STRING'),('LastRun','TIMESTAMP'),('Projects','STRING'),('Project','STRING'),('RowCount','INT64'),('Search429','INT64'),('Detail429','INT64')]]
     if not table_exists(client,dataset,progress): create_or_replace_table(client,dataset,progress,prog_schema)
     else:
@@ -560,6 +561,7 @@ def main():
             except Exception:
                 break
             SUCCESS=False; rc=0
+            window_start_time = datetime.utcnow()  # Track window processing start time
             global SEARCH_429_COUNT, DETAIL_429_COUNT, CURRENT_DETAIL_WORKERS, _NO429_STREAK
             SEARCH_429_COUNT=0; DETAIL_429_COUNT=0
             try: SUCCESS,rc=sync_window(base_url,jql,auth,client,dataset,table,ws_naive,we)
@@ -571,12 +573,14 @@ def main():
                 ratio=DETAIL_429_COUNT/max(1,rc)
                 if ratio>FAILURE_RATIO_DEGRADED: degraded=True
             status='degraded' if degraded else ('complete' if SUCCESS else 'failed')
+            window_end_time = datetime.utcnow()
+            window_duration_seconds = (window_end_time - window_start_time).total_seconds()
             upd=(
                 f"UPDATE `{dataset}.{progress}` SET Status='{status}', LastRun=CURRENT_TIMESTAMP(), RowCount={rc}, Search429={SEARCH_429_COUNT}, Detail429={DETAIL_429_COUNT} "
                 f"WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws_naive.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND Status!='complete'"
             ); client.query(upd).result()
             logging.info(f"Project {proj} window {ws_naive}->{we} {status} rows={rc} 429_search={SEARCH_429_COUNT} 429_detail={DETAIL_429_COUNT}")
-            log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level=("INFO" if SUCCESS else "ERROR"), message=f"Window {status} {proj}", status=("SUCCESS" if SUCCESS else "ERROR"), window_start=ws_naive.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'), rows_merged=int(rc))
+            log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level=("INFO" if SUCCESS else "ERROR"), message=f"Window {status} {proj}", status=("SUCCESS" if SUCCESS else "ERROR"), window_start=ws_naive.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'), rows_merged=int(rc), duration_seconds=window_duration_seconds)
             if status in ('complete','degraded'):
                 last_completed_start=ws_naive
                 if (SEARCH_429_COUNT>0 or DETAIL_429_COUNT>0):
@@ -608,7 +612,9 @@ def main():
                         ).result()
                     except Exception: pass
                     break
-    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Comments pipeline finished", status="SUCCESS")
+    run_ended = datetime.utcnow()
+    duration_seconds = (run_ended - run_started).total_seconds()
+    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Comments pipeline finished", status="SUCCESS", duration_seconds=duration_seconds)
 
 if __name__=='__main__':
     main()
