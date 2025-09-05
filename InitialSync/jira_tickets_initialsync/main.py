@@ -2,7 +2,7 @@
 Per-project adaptive window backfill (base 7d, shrink to 6h, regrow) aligned with changelog & comments pipelines.
 Temp staging + MERGE, progress ledger (Project, RowCount), buffered logging, SLA metrics extraction.
 """
-import json, logging, time, uuid, requests, argparse, random, threading, os, re, sys, pathlib
+import json, logging, time, uuid, requests, argparse, random, threading, os, re, sys, inspect, pathlib
 # Ensure repository root is on sys.path for importing local helper modules
 _script_dir = pathlib.Path(__file__).resolve().parent
 _repo_root = str(_script_dir.parent.parent.parent)
@@ -37,6 +37,83 @@ except ModuleNotFoundError:
         def log_pipeline_run(client, *, pipeline_name: str, run_id: str, level: str, message: str, status: str, **kwargs):  # type: ignore
             logging.log(getattr(logging, level.upper(), logging.INFO), f"[fallback-log] {pipeline_name} {status} {message}")
             return
+        # Wrap the imported/logged function to be tolerant of external implementations that
+        # don't accept all keyword arguments (for example some older logger signatures).
+        # We capture the original, then expose a resilient `log_pipeline_run` name that
+        # filters kwargs based on the original callable's signature.
+        try:
+            _original_log_pipeline_run = log_pipeline_run
+            def log_pipeline_run(client, *args, **kwargs):
+                # If the original accepts **kwargs, call it directly.
+                try:
+                    sig = inspect.signature(_original_log_pipeline_run)
+                except Exception:
+                    sig = None
+                accepts_varkw = False
+                accepted_names = set()
+                if sig:
+                    for p in sig.parameters.values():
+                        if p.kind == inspect.Parameter.VAR_KEYWORD:
+                            accepts_varkw = True
+                        accepted_names.add(p.name)
+                if accepts_varkw:
+                    return _original_log_pipeline_run(client, *args, **kwargs)
+                # Filter kwargs to only those accepted by the original function.
+                filtered = {k: v for k, v in kwargs.items() if k in accepted_names}
+                try:
+                    return _original_log_pipeline_run(client, *args, **filtered)
+                except TypeError:
+                    # Last resort: call with minimal required params if present in kwargs
+                    minimal = {}
+                    for key in ('pipeline_name','run_id','level','message','status'):
+                        if key in kwargs:
+                            minimal[key] = kwargs[key]
+                    try:
+                        return _original_log_pipeline_run(client, **minimal)
+                    except Exception:
+                        # Give up and log locally
+                        logging.log(getattr(logging, (kwargs.get('level') or 'INFO').upper(), logging.INFO), f"[safe-log-failed] {kwargs.get('pipeline_name')} {kwargs.get('status')} {kwargs.get('message')}")
+                        return
+        except Exception:
+            # If any error building the wrapper, keep the original in place.
+            pass
+# Ensure the final `log_pipeline_run` binding is tolerant of extra kwargs regardless
+# of whether it came from shared.pipeline_runs_logger or the local fallback above.
+try:
+    _orig_logger = log_pipeline_run
+    # Don't double-wrap
+    if not getattr(_orig_logger, '_is_safe_wrapper', False):
+        def log_pipeline_run(client, *args, **kwargs):
+            try:
+                sig = inspect.signature(_orig_logger)
+            except Exception:
+                sig = None
+            accepts_varkw = False
+            accepted_names = set()
+            if sig:
+                for p in sig.parameters.values():
+                    if p.kind == inspect.Parameter.VAR_KEYWORD:
+                        accepts_varkw = True
+                    accepted_names.add(p.name)
+            if accepts_varkw:
+                return _orig_logger(client, *args, **kwargs)
+            filtered = {k: v for k, v in kwargs.items() if k in accepted_names}
+            try:
+                return _orig_logger(client, *args, **filtered)
+            except TypeError:
+                minimal = {}
+                for key in ('pipeline_name', 'run_id', 'level', 'message', 'status'):
+                    if key in kwargs:
+                        minimal[key] = kwargs[key]
+                try:
+                    return _orig_logger(client, **minimal)
+                except Exception:
+                    logging.log(getattr(logging, (kwargs.get('level') or 'INFO').upper(), logging.INFO), f"[safe-log-failed] {kwargs.get('pipeline_name')} {kwargs.get('status')} {kwargs.get('message')}")
+                    return
+        log_pipeline_run._is_safe_wrapper = True
+except NameError:
+    # log_pipeline_run not defined at all; nothing to wrap
+    pass
 
 DEBUG=False
 # Allow runtime log level override via env (LOG_LEVEL=DEBUG|INFO|WARNING|ERROR)
@@ -168,55 +245,8 @@ def load_config():
     return None
 
 def load_projects_from_file(defaults):
-    """Load project names for Docker/local with comment support.
-    Resolution order: env JQL_FILE -> ../JQL.txt -> /app/InitialSync/JQL.txt -> /config/JQL.txt -> /data/JQL.txt.
-    Ignore lines starting with #, //, -- and trim inline comments after space + marker.
-    """
-    candidates=[]
-    env_path=os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
-    if env_path:
-        candidates.append(env_path)
-    script_dir=os.path.dirname(__file__)
-    # Parent InitialSync/JQL.txt (not available inside image if build context is this folder only)
-    candidates.append(os.path.normpath(os.path.join(script_dir,'..','JQL.txt')))
-    # Local folder JQL.txt (add this so dropping a file beside main.py works in Docker)
-    candidates.append(os.path.join(script_dir,'JQL.txt'))
-    # Common in-container fallback locations (mount or multi-folder copy patterns)
-    candidates.extend(['/app/JQL.txt','/app/InitialSync/JQL.txt','/config/JQL.txt','/data/JQL.txt'])
-    comment_starts = ('#','//','--')
-    inline_markers = [' #',' //',' -- ']
-    found_source = None
-    for p in candidates:
-        try:
-            if not p or not os.path.exists(p):
-                logging.debug(f'Project list candidate not found: {p}')
-                continue
-            with open(p,'r',encoding='utf-8') as f:
-                raw_lines=f.readlines()
-            items=[]
-            for ln in raw_lines:
-                ln = ln.rstrip('\r\n')
-                stripped = ln.strip()
-                if not stripped:
-                    continue
-                if stripped.startswith(comment_starts):
-                    continue
-                work = stripped
-                for marker in inline_markers:
-                    idx = work.find(marker)
-                    if idx > 0:
-                        work = work[:idx].strip()
-                        break
-                if work:
-                    items.append(work)
-            if items:
-                logging.info(f'Loaded project list from {p} ({len(items)})')
-                found_source = p
-                return items
-        except Exception as ie:
-            logging.debug(f'Project list read failed for {p}: {ie}')
-    if not found_source:
-        logging.warning('No JQL project file found; using embedded default project list (set SINGLE_PROJECT / mount JQL.txt to override).')
+    # JQL.txt / external project list loading removed.
+    # This stub returns the provided defaults so the script only ever uses the embedded list.
     return defaults
 
 
@@ -494,7 +524,10 @@ def generate_ticket_rows(issues,ws,we):
         updated=convert_ts(fields.get('updated'))
         ref=updated or created
         if not ref: continue
-        try: ref_dt=datetime.strptime(ref,'%Y-%m-%d %H:%M:%S')
+        try:
+            # Parse the reference timestamp and make it timezone-aware (UTC)
+            ref_dt=datetime.strptime(ref,'%Y-%m-%d %H:%M:%S')
+            ref_dt = to_utc_aware(ref_dt)
         except Exception: continue
         if not (ws <= ref_dt < we): continue
         sla={}
@@ -756,6 +789,7 @@ def main():
         'GS&O Data Analytics',
         'GS&O Tool Automation',
         'GS&O Knowledge Consolidation',
+        'Google Contact Center AI Solution',
         'TAC',
         'VOICE - CE',
         'IOT CE',
@@ -770,34 +804,11 @@ def main():
     # External file override (InitialSync/JQL.txt)
     default_projects = load_projects_from_file(default_projects)
     
-    parser=argparse.ArgumentParser(); parser.add_argument('--project'); parser.add_argument('--projects'); args,_=parser.parse_known_args()
-    # CLI precedence
-    if args.projects:
-        req=[p.strip() for p in args.projects.split(',') if p.strip()]
-        lc_map={p.casefold():p for p in default_projects}
-        projects=[lc_map[r.casefold()] for r in req if r.casefold() in lc_map]
-    elif args.project:
-        target=args.project.strip(); lc_map={p.casefold():p for p in default_projects}
-        projects=[lc_map[target.casefold()]] if target.casefold() in lc_map else []
-    else:
-        projects=default_projects
-    # Env overrides (SINGLE_PROJECT or PROJECTS) apply after CLI only if CLI not used
-    if (not args.project and not args.projects):
-        env_single=os.environ.get('SINGLE_PROJECT')
-        env_projects=os.environ.get('PROJECTS') or os.environ.get('JIRA_PROJECTS')
-    if env_single:
-            target=env_single.strip()
-            lc_map={p.casefold():p for p in default_projects}
-            projects=[lc_map[target.casefold()]] if target.casefold() in lc_map else []
-            logging.info(f'Using SINGLE_PROJECT env override -> {projects}')
-    elif env_projects:
-            req=[p.strip() for p in env_projects.split(',') if p.strip()]
-            lc_map={p.casefold():p for p in default_projects}
-            projects=[lc_map[r.casefold()] for r in req if r.casefold() in lc_map]
-            logging.info(f'Using PROJECTS env override -> {projects}')
+    # Always use the embedded default_projects list. Ignore CLI args and environment overrides.
+    projects = default_projects
+    logging.info('Using embedded default_projects; CLI and ENV overrides ignored')
     # NOTE: TEST_PROJECTS override removed — use the full project list unless
     # overridden by CLI (--project / --projects) or env SINGLE_PROJECT / PROJECTS.
-    if not projects: return
     logging.info(f'Final project list: {projects}')
     # Allow environment variable overrides for credentials
     user=os.environ.get('JIRA_USERNAME') or cfg.get('jira_username') or 'jjkli@consoleconnect.com'

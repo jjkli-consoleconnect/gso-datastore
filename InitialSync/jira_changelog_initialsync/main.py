@@ -656,24 +656,10 @@ def main():
         'Managed Security Services',
         'Sherbet'
     ]
-    # Try external file override (InitialSync/JQL.txt)
+    # Ignore external file override and CLI args; always use embedded defaults
     project_list_default = load_projects_from_file(project_list_default)
-    # Parse CLI args early to filter project list
-    import argparse, sys
-    parser = argparse.ArgumentParser(description='Jira changelog initial sync')
-    parser.add_argument('--project', help='Single project to process')
-    parser.add_argument('--projects', help='Comma separated list of projects to process (overrides --project)')
-    args, unknown = parser.parse_known_args()
-    if args.projects:
-        requested = [p.strip() for p in args.projects.split(',') if p.strip()]
-        project_list = [p for p in project_list_default if p in requested]
-    elif args.project:
-        project_list = [p for p in project_list_default if p == args.project]
-    else:
-        project_list = project_list_default
-    if not project_list:
-        logging.error('No valid projects resolved from arguments; exiting')
-        return
+    project_list = project_list_default
+    logging.info('Using embedded default project list for changelog pipeline; CLI and ENV overrides ignored')
 
     username = os.environ.get('JIRA_USERNAME') or config.get('jira_username') or 'jjkli@consoleconnect.com'
     api_token = os.environ.get('JIRA_API_TOKEN') or config.get('jira_api_token')

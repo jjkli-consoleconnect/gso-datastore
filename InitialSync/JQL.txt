@@ -1,13 +1,2 @@
-GS&O Data Analytics
-GS&O Tool Automation
-GS&O Knowledge Consolidation
-TAC
-VOICE - CE
-IOT CE
-Console Application Support
-Console Connect Provisioning
-Global Service Delivery Team
-Transmission TX-CE
-Mobility SMS - CE
-Managed Security Services
-Sherbet
+# REMOVED: Using embedded default_projects in jira_tickets_initialsync/main.py
+# File retained for history but pipeline will ignore external JQL.txt

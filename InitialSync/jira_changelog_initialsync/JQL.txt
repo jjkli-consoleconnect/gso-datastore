@@ -1,13 +1,1 @@
-GS&O Data Analytics
-GS&O Tool Automation
-GS&O Knowledge Consolidation
-TAC
-VOICE - CE
-IOT CE
-Console Application Support
-Console Connect Provisioning
-Global Service Delivery Team
-Transmission TX-CE
-Mobility SMS - CE
-Managed Security Services
-Sherbet
+# placeholder JQL - using embedded defaults now

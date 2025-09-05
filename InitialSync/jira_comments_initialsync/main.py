@@ -172,46 +172,8 @@ def load_projects_from_file(defaults):
     Supports comments: lines starting with #, //, --, and inline markers after a space ( #, //, -- ).
     Blank lines ignored. Returns list of cleaned project names in file order (first match wins).
     """
-    candidates=[]
-    try:
-        env_path=os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
-        if env_path: candidates.append(env_path)
-        script_dir=os.path.dirname(__file__)
-        candidates.append(os.path.normpath(os.path.join(script_dir,'..','JQL.txt')))
-        candidates.extend(['/app/InitialSync/JQL.txt','/config/JQL.txt','/data/JQL.txt'])
-        comment_starts = ('#','//','--')
-        inline_markers = [' #',' //',' -- ']
-        for p in candidates:
-            try:
-                if not p or not os.path.exists(p):
-                    continue
-                with open(p,'r',encoding='utf-8') as f:
-                    raw_lines=f.readlines()
-                items=[]
-                for ln in raw_lines:
-                    ln = ln.rstrip('\r\n')
-                    stripped = ln.strip()
-                    if not stripped:
-                        continue
-                    if stripped.startswith(comment_starts):
-                        continue
-                    # Inline comment trimming (only if marker appears with leading space to avoid cutting project codes containing '-')
-                    work = stripped
-                    lower = work.lower()
-                    for marker in inline_markers:
-                        idx = work.find(marker)
-                        if idx > 0:  # ensure not at position 0 (already handled)
-                            work = work[:idx].strip()
-                            break
-                    if work:
-                        items.append(work)
-                if items:
-                    logging.info(f'Loaded project list from {p} ({len(items)})')
-                    return items
-            except Exception as ie:
-                logging.debug(f'Project list read failed for {p}: {ie}')
-    except Exception as e:
-        logging.debug(f'Could not resolve external project list: {e}')
+    # External JQL / project-list loading removed for deterministic behavior.
+    # Always return the provided defaults so pipeline uses embedded list only.
     return defaults
 
 
@@ -510,13 +472,10 @@ def main():
     'Managed Security Services',
     'Sherbet'
     ]
-    # External file override (InitialSync/JQL.txt)
+    # External file override removed: always use embedded defaults
     default_projects = load_projects_from_file(default_projects)
-    parser=argparse.ArgumentParser(); parser.add_argument('--project'); parser.add_argument('--projects'); args,_=parser.parse_known_args()
-    if args.projects: req=[p.strip() for p in args.projects.split(',') if p.strip()]; projects=[p for p in default_projects if p in req]
-    elif args.project: projects=[p for p in default_projects if p==args.project]
-    else: projects=default_projects
-    if not projects: return
+    projects = default_projects
+    logging.info('Using embedded default_projects for comments pipeline; CLI and ENV overrides ignored')
     user = os.environ.get('JIRA_USERNAME') or cfg.get('jira_username') or 'jjkli@consoleconnect.com'
     token = os.environ.get('JIRA_API_TOKEN') or cfg.get('jira_api_token')
     if not token:
