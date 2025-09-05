@@ -106,7 +106,7 @@ def fetch_and_sync_jira_data():
     if config is None:
         return
 
-    jira_url = 'https://consoleconnect.atlassian.net/rest/api/latest/search'
+    jira_url = 'https://consoleconnect.atlassian.net/rest/api/3/search/jql'
     
     jql_query = (
         '(project = "Console Application Support" OR project = TAC OR project = "Global Service Delivery Team" OR project = "Console Connect Provisioning" OR project = "VOICE - CE" OR project = "Transmission TX-CE" OR project = "Mobility SMS - CE" OR project = "IOT CE" OR project = "Managed Security Services")'  

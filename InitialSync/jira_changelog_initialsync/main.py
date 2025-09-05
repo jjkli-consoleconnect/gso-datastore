@@ -167,6 +167,23 @@ def convert_timestamp(ts: str):
     logging.warning(f"Could not parse timestamp: {ts}")
     return None
 
+
+def to_utc_aware(dt):
+    """Ensure a datetime is timezone-aware in UTC for safe comparisons."""
+    if dt is None:
+        return None
+    if getattr(dt, 'tzinfo', None) is None:
+        # treat naive as UTC
+        try:
+            return dt.replace(tzinfo=None)
+        except Exception:
+            return dt
+    # If tz-aware, convert to UTC and drop tzinfo for internal comparisons
+    try:
+        return dt.astimezone(tz=None).replace(tzinfo=None)
+    except Exception:
+        return dt
+
 def load_projects_from_file(defaults):
     """Load project names from external file for Docker/local usage with extended comment support.
     Supports:
@@ -222,20 +239,21 @@ def load_projects_from_file(defaults):
 
 def preflight_validate_project(auth, project_name, base_url='https://consoleconnect.atlassian.net'):
     """Lightweight visibility check before heavy backfill. Returns (ok, status_code, message)."""
-    search_url=f'{base_url}/rest/api/2/search'
-    test_jql=f'project = "{project_name}"'
-    payload=json.dumps({'jql':test_jql,'startAt':0,'maxResults':0,'fields':['key']})
-    headers={'Accept':'application/json','Content-Type':'application/json'}
+    # Use tenant-accepted GET /rest/api/3/search/jql with query params
+    search_url = f"{base_url}/rest/api/3/search/jql"
+    test_jql = f'project = "{project_name}"'
+    params = {'jql': test_jql, 'startAt': 0, 'maxResults': 1, 'fields': 'key'}
+    headers = {'Accept': 'application/json'}
     try:
-        r=requests.post(search_url,headers=headers,auth=auth,data=payload,timeout=30)
-        if r.status_code==200:
+        r = requests.get(search_url, headers=headers, auth=auth, params=params, timeout=30)
+        if r.status_code == 200:
             return True, r.status_code, 'ok'
-        snippet=(r.text or '')[:300].replace('\n',' ')
-        if r.status_code in (400,404):
+        snippet = (r.text or '')[:300].replace('\n', ' ')
+        if r.status_code in (400, 404):
             return False, r.status_code, f'Not visible/invalid: {snippet}'
-        if r.status_code==401:
+        if r.status_code == 401:
             return False, r.status_code, 'Unauthorized'
-        if r.status_code==403:
+        if r.status_code == 403:
             return False, r.status_code, 'Forbidden'
         return False, r.status_code, snippet
     except Exception as e:
@@ -306,31 +324,26 @@ def delete_table_quiet(client, dataset_id, table_id):
 # -------------- Jira fetch helpers --------------
 
 def fetch_issues_page(search_url, auth, headers, jql, start_at, max_results):
-    payload = json.dumps({
-        'jql': jql,
-        'startAt': start_at,
-        'maxResults': max_results,
-        'fields': ['key']
-    })
+    params = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
     for attempt in range(5):
         try:
             RATE_LIMITER.take()
-            resp = requests.post(search_url, headers=headers, auth=auth, data=payload, timeout=300)
+            resp = requests.get(search_url, headers=headers, auth=auth, params=params, timeout=300)
+            if resp.status_code == 429:
+                global SEARCH_429_COUNT
+                SEARCH_429_COUNT += 1
+                retry_after = int(resp.headers.get('Retry-After', 30))
+                sleep_for = retry_after + random.uniform(0, JITTER_MAX_SECONDS)
+                logging.warning(f"Rate limited 429 search attempt {attempt+1}/5; sleeping {sleep_for:.1f}s")
+                time.sleep(sleep_for)
+                continue
             resp.raise_for_status()
             return resp.json()
         except requests.exceptions.Timeout:
             logging.warning(f"Search timeout attempt {attempt+1}/5 startAt={start_at}")
             time.sleep(15)
         except requests.RequestException as e:
-            status = e.response.status_code if e.response else 'NA'
-            if status == 429:
-                global SEARCH_429_COUNT
-                SEARCH_429_COUNT += 1
-                retry_after = int(e.response.headers.get('Retry-After', 30)) if e.response else 30
-                sleep_for = retry_after + random.uniform(0, JITTER_MAX_SECONDS)
-                logging.warning(f"Rate limited 429 search attempt {attempt+1}/5; sleeping {sleep_for:.1f}s")
-                time.sleep(sleep_for)
-                continue
+            status = e.response.status_code if getattr(e, 'response', None) else 'NA'
             logging.error(f"Search error attempt {attempt+1}/5: {e} status={status}")
             if attempt < 4:
                 time.sleep(10)
@@ -487,8 +500,8 @@ def sync_changelog_window(base_url, jql, auth, client, dataset_id, table_id, win
     if not create_or_replace_table(client, dataset_id, temp_table, schema) or not wait_for_table(client, dataset_id, temp_table):
         return False, 0
 
-    search_url = f"{base_url}/rest/api/2/search"
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    search_url = f"{base_url}/rest/api/3/search/jql"
+    headers = {"Accept": "application/json"}
     max_results = 100
     start_at = 0
     total = float('inf')
@@ -632,7 +645,6 @@ def main():
         'GS&O Data Analytics',
         'GS&O Tool Automation',
         'GS&O Knowledge Consolidation',
-        'Google Contact Center AI Solution',
         'TAC',
         'VOICE - CE',
         'IOT CE',
@@ -642,7 +654,6 @@ def main():
         'Transmission TX-CE',
         'Mobility SMS - CE',
         'Managed Security Services',
-        'Customer Success Management',
         'Sherbet'
     ]
     # Try external file override (InitialSync/JQL.txt)

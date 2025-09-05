@@ -173,8 +173,8 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
 
     # Construct the full search URL once
     # Jira Cloud typically uses /rest/api/2/ or /rest/api/3/. /rest/api/latest/ resolves to one of these.
-    # Using /rest/api/2/ as it was in the original script and is widely compatible.
-    search_api_endpoint = f"{jira_base_url}/rest/api/2/search"
+    # Using /rest/api/latest/ as it was in the original script and is widely compatible.
+    search_api_endpoint = f"{jira_base_url}/rest/api/3/search/jql"
 
     while start_at < total_issues:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}

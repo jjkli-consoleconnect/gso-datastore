@@ -146,16 +146,17 @@ def load_config():
 def preflight_validate_project(auth, project_name, base_url='https://consoleconnect.atlassian.net'):
     """Run lightweight maxResults=0 search to confirm visibility to project.
     Returns (ok, status_code, message)."""
-    search_url = f'{base_url}/rest/api/2/search'
+    # Use tenant-accepted GET /rest/api/3/search/jql with query params
+    search_url = f"{base_url}/rest/api/3/search/jql"
     test_jql = f'project = "{project_name}"'
-    payload = json.dumps({'jql': test_jql, 'startAt':0, 'maxResults':0, 'fields':['key']})
-    headers={'Accept':'application/json','Content-Type':'application/json'}
+    params = {'jql': test_jql, 'startAt': 0, 'maxResults': 1, 'fields': 'key'}
+    headers = {'Accept': 'application/json'}
     try:
-        r = requests.post(search_url, headers=headers, auth=auth, data=payload, timeout=30)
+        r = requests.get(search_url, headers=headers, auth=auth, params=params, timeout=30)
         if r.status_code == 200:
             return True, r.status_code, 'ok'
-        snippet = (r.text or '')[:300].replace('\n',' ')
-        if r.status_code in (400,404):
+        snippet = (r.text or '')[:300].replace('\n', ' ')
+        if r.status_code in (400, 404):
             return False, r.status_code, f'Not visible/invalid: {snippet}'
         if r.status_code == 401:
             return False, r.status_code, 'Unauthorized'
@@ -212,6 +213,17 @@ def load_projects_from_file(defaults):
     except Exception as e:
         logging.debug(f'Could not resolve external project list: {e}')
     return defaults
+
+
+def to_utc_aware(dt):
+    if dt is None: return None
+    if getattr(dt, 'tzinfo', None):
+        try:
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            return dt.replace(tzinfo=timezone.utc)
+    else:
+        return dt.replace(tzinfo=timezone.utc)
 
 def convert_ts(ts):
     if not ts: return None
@@ -272,24 +284,42 @@ def delete_table_quiet(client,dataset,table):
     except Exception: pass
 
 def fetch_issues_page(search_url,auth,headers,jql,start_at,max_results):
+    """Use GET /rest/api/3/search/jql with query params to fetch issues."""
     global SEARCH_429_COUNT
-    payload=json.dumps({'jql':jql,'startAt':start_at,'maxResults':max_results,'fields':['key']})
+    params = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
     for attempt in range(5):
         try:
             logging.debug(f"Searching issues startAt={start_at} maxResults={max_results} attempt={attempt+1}/5")
-            RATE_LIMITER.take(); r=requests.post(search_url,headers=headers,auth=auth,data=payload,timeout=120)
-            if r.status_code==429:
-                SEARCH_429_COUNT+=1; ra=int(r.headers.get('Retry-After',30)); sleep_for=ra+random.uniform(0,JITTER_MAX_SECONDS)
-                logging.warning(f"429 search attempt {attempt+1}/5 startAt={start_at}; sleeping {sleep_for:.1f}s")
-                time.sleep(sleep_for); continue
-            r.raise_for_status(); return r.json()
+            RATE_LIMITER.take()
+            r = requests.get(search_url, headers=headers, auth=auth, params=params, timeout=120)
+            if r.status_code == 429:
+                SEARCH_429_COUNT += 1
+                ra = int(r.headers.get('Retry-After', 30) or 30)
+                logging.warning(f"429 search attempt {attempt+1}/5 startAt={start_at}; sleeping {ra:.1f}s")
+                time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
+                continue
+            if r.status_code != 200:
+                snippet = (r.text or '')[:300].replace('\n',' ')
+                logging.warning(f'Jira search non-200 status={r.status_code} attempt={attempt+1} startAt={start_at} resp_snippet="{snippet}"')
+            r.raise_for_status()
+            return r.json()
         except requests.exceptions.Timeout:
-            logging.warning(f"Search timeout attempt {attempt+1}/5 startAt={start_at}"); time.sleep(15)
+            logging.warning(f"Search timeout attempt {attempt+1}/5 startAt={start_at}")
+            time.sleep(15)
         except requests.RequestException as e:
-            status = e.response.status_code if getattr(e, 'response', None) else 'NA'
-            logging.error(f"Search error attempt {attempt+1}/5 startAt={start_at} status={status}: {e}")
-            if attempt<4: time.sleep(8)
-            else: return None
+            try:
+                status = getattr(e.response, 'status_code', None)
+            except Exception:
+                status = None
+            logging.error(f'Error searching issues on attempt {attempt+1}/5: {e} status={status}')
+            if status == 429:
+                SEARCH_429_COUNT += 1
+                time.sleep(5*(attempt+1))
+                continue
+            if attempt < 4:
+                time.sleep(10)
+                continue
+            return None
     return None
 
 def fetch_comments_for_issue(base_url,issue_key,auth):
@@ -326,6 +356,46 @@ def fetch_comments_batch(base_url,keys,auth,max_workers=None):
 
 def generate_rows(issues,cmap,ws,we):
     now_str=datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    def _body_to_string(body):
+        """Normalize Jira comment body to a string.
+        - If already a string, return it.
+        - If ADF (dict with 'content'), try to extract plain text.
+        - Otherwise fallback to JSON-dumped string.
+        """
+        if body is None:
+            return None
+        if isinstance(body, str):
+            return body
+        try:
+            # Try Atlassian Document Format (ADF) extraction
+            if isinstance(body, dict) and 'content' in body:
+                parts = []
+                def walk(node):
+                    if node is None:
+                        return
+                    if isinstance(node, str):
+                        parts.append(node)
+                        return
+                    if isinstance(node, dict):
+                        if 'text' in node and isinstance(node['text'], str):
+                            parts.append(node['text'])
+                        for k in ('content','content_list'):
+                            if k in node and isinstance(node[k], list):
+                                for child in node[k]:
+                                    walk(child)
+                        return
+                    if isinstance(node, list):
+                        for item in node:
+                            walk(item)
+                walk(body.get('content'))
+                if parts:
+                    return ' '.join(parts)
+        except Exception:
+            pass
+        try:
+            return json.dumps(body, ensure_ascii=False)
+        except Exception:
+            return str(body)
     for issue in issues:
         key=issue.get('key') if issue else None
         if not key: continue
@@ -338,7 +408,7 @@ def generate_rows(issues,cmap,ws,we):
             a=c.get('author',{}); vis=c.get('visibility',{})
             yield {
                 'Issue_Key': key,'Comment_ID': c.get('id'),'Author_Account_ID': a.get('accountId'),'Author_Display_Name': a.get('displayName'),
-                'Created': created,'Updated': updated,'Body': c.get('body'),'Visibility_Type': vis.get('type'),'Visibility_Value': vis.get('value'),'SyncTime': now_str,
+                'Created': created,'Updated': updated,'Body': _body_to_string(c.get('body')),'Visibility_Type': vis.get('type'),'Visibility_Value': vis.get('value'),'SyncTime': now_str,
             }
 
 def sync_window(base_url,jql,auth,client,dataset,table,ws,we):
@@ -350,7 +420,8 @@ def sync_window(base_url,jql,auth,client,dataset,table,ws,we):
         try: client.query(f"ALTER TABLE `{dataset}.{table}` ADD COLUMN IF NOT EXISTS SyncTime TIMESTAMP").result()
         except Exception: pass
     if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp): return False,0
-    search_url=f"{base_url}/rest/api/2/search"; headers={'Accept':'application/json','Content-Type':'application/json'}
+    # Use the GET-based search endpoint preferred by our Jira tenant
+    search_url=f"{base_url}/rest/api/3/search/jql"; headers={'Accept':'application/json'}
     start=0; max_results=100; total=float('inf'); buf=[]; batch=1000; inserted=0
     while start<total:
         data=fetch_issues_page(search_url,auth,headers,jql,start,max_results)
@@ -425,21 +496,19 @@ def main():
             try: client.query(f"ALTER TABLE `{dataset}.{progress}` ADD COLUMN IF NOT EXISTS {col} {ctype}").result()
             except Exception: pass
     default_projects = [
-        'GS&O Data Analytics',
-        'GS&O Tool Automation',
-        'GS&O Knowledge Consolidation',
-        'Google Contact Center AI Solution', 
-        'TAC',
-        'VOICE - CE', 
-        'IOT CE',
-        'Console Application Support',
-        'Console Connect Provisioning',
-        'Global Service Delivery Team',
-        'Transmission TX-CE',
-        'Mobility SMS - CE',
-        'Managed Security Services',
-        'Customer Success Management',
-        'Sherbet'
+    'GS&O Data Analytics',
+    'GS&O Tool Automation',
+    'GS&O Knowledge Consolidation',
+    'TAC',
+    'VOICE - CE',
+    'IOT CE',
+    'Console Application Support',
+    'Console Connect Provisioning',
+    'Global Service Delivery Team',
+    'Transmission TX-CE',
+    'Mobility SMS - CE',
+    'Managed Security Services',
+    'Sherbet'
     ]
     # External file override (InitialSync/JQL.txt)
     default_projects = load_projects_from_file(default_projects)

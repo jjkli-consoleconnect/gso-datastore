@@ -308,6 +308,37 @@ def generate_rows(issues, jira_base_url, username, api_token):
 
     utc_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
+    def _body_to_string(body):
+        if body is None:
+            return None
+        if isinstance(body, str):
+            return body
+        try:
+            if isinstance(body, dict) and 'content' in body:
+                parts = []
+                def walk(node):
+                    if node is None:
+                        return
+                    if isinstance(node, str):
+                        parts.append(node); return
+                    if isinstance(node, dict):
+                        if 'text' in node and isinstance(node['text'], str):
+                            parts.append(node['text'])
+                        for k in ('content','content_list'):
+                            if k in node and isinstance(node[k], list):
+                                for child in node[k]: walk(child)
+                        return
+                    if isinstance(node, list):
+                        for item in node: walk(item)
+                walk(body.get('content'))
+                if parts: return ' '.join(parts)
+        except Exception:
+            pass
+        try:
+            return json.dumps(body, ensure_ascii=False)
+        except Exception:
+            return str(body)
+
     for issue_key in issue_keys:
         comments = comments_batch.get(issue_key)
         if comments is None:
@@ -328,7 +359,7 @@ def generate_rows(issues, jira_base_url, username, api_token):
                     "Author_Display_Name": author_info.get('displayName'),
                     "Created": convert_timestamp(comment.get('created')),
                     "Updated": convert_timestamp(comment.get('updated')),
-                    "Body": comment.get('body'),
+                    "Body": _body_to_string(comment.get('body')),
                     "Visibility_Type": visibility_info.get('type'),
                     "Visibility_Value": visibility_info.get('value'),
                     "SyncTime": utc_now,
@@ -372,9 +403,9 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
     total_rows_inserted_to_temp = 0
 
     # Construct the full search URL using the base URL and the /rest/api/2 path
-    # Although user mentioned '/latest', /rest/api/2/search is also valid and consistent
+    # Although user mentioned '/latest', /rest/api/latest/search is also valid and consistent
     # with the comments endpoint path used in the script.
-    search_url = f"{jira_base_url}/rest/api/2/search" 
+    search_url = f"{jira_base_url}/rest/api/latest/search" 
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     auth = (username, api_token)
 
@@ -628,7 +659,6 @@ def main():
             'project = "GS&O Data Analytics" OR '\
             'project = "GS&O Tool Automation" OR '\
             'project = "GS&O Knowledge Consolidation" OR '\
-            'project = "Google Contact Center AI Solution" OR '\
             'project = TAC OR '\
             'project = "VOICE - CE" OR '\
             'project = "IOT CE" OR '\
@@ -637,8 +667,8 @@ def main():
             'project = "Global Service Delivery Team" OR '\
             'project = "Transmission TX-CE" OR '\
             'project = "Mobility SMS - CE" OR '\
-            'project = "Managed Security Services" OR '\
-            'project = "Customer Success Management" '
+            'project = "Managed Security Services" '\
+            'project = Sherbet '
             ')'
         )
         base_jql = load_base_jql(default_text=base_default)

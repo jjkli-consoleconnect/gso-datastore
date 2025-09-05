@@ -118,10 +118,9 @@ def fetch_and_sync_jira_data():
         logging.error("Failed to load configuration. Exiting.")
         return
 
-    jira_url = 'https://consoleconnect.atlassian.net/rest/api/latest/search'
+    jira_url = 'https://consoleconnect.atlassian.net/rest/api/3/search/jql'
     jql_query = (
         '('
-        'project = "Google Contact Center AI Solution" OR '
         'project = "GS&O Data Analytics" OR '
         'project = "GS&O Knowledge Consolidation" OR '
         'project = "GS&O Tool Automation" '

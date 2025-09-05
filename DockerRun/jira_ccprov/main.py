@@ -98,7 +98,7 @@ def fetch_and_sync_jira_data():
     if config is None:
         return
 
-    jira_url = 'https://consoleconnect.atlassian.net/rest/api/latest/search'
+    jira_url = 'https://consoleconnect.atlassian.net/rest/api/3/search/jql'
     jql_query = 'project = CCPROV AND IssueType != File.13 AND "Port Prov Status" != Cancelled AND updated >= endOfDay(-8) ORDER BY updated DESC'
     username = 'jjkli@consoleconnect.com'
     api_token = config.get('jira_api_token')

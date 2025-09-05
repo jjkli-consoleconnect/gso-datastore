@@ -138,7 +138,7 @@ def fetch_and_sync_jira_data():
         logging.error("Failed to load configuration. Exiting.")
         return
 
-    jira_url = 'https://consoleconnect.atlassian.net/rest/api/latest/search'
+    jira_url = 'https://consoleconnect.atlassian.net/rest/api/3/search/jql'
     username = 'jjkli@consoleconnect.com'
     api_token = config.get('jira_api_token')
 

@@ -1,7 +1,6 @@
 GS&O Data Analytics
 GS&O Tool Automation
 GS&O Knowledge Consolidation
-Google Contact Center AI Solution
 TAC
 VOICE - CE
 IOT CE
@@ -11,4 +10,4 @@ Global Service Delivery Team
 Transmission TX-CE
 Mobility SMS - CE
 Managed Security Services
-Customer Success Management
+Sherbet

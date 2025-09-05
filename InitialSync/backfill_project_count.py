@@ -28,14 +28,15 @@ def fetch_all_issue_keys(base_url,proj,auth):
     keys=[]; start=0; max_results=100
     headers={'Accept':'application/json','Content-Type':'application/json'}
     while True:
-        payload={'jql': f'project = "{proj}"','startAt': start,'maxResults': max_results,'fields':['key']}
-        r = requests.post(f"{base_url}/rest/api/2/search", json=payload, auth=auth, headers=headers, timeout=60)
+        params={'jql': f'project = "{proj}"','startAt': start,'maxResults': max_results,'fields':'key'}
+        r = requests.get(f"{base_url}/rest/api/3/search/jql", params=params, auth=auth, headers=headers, timeout=60)
         r.raise_for_status(); j=r.json()
         iss=j.get('issues',[])
         keys.extend([i.get('key') for i in iss if i.get('key')])
         total=j.get('total',0)
         start += len(iss)
-        if start>=total: break
+        if start>=total:
+            break
         time.sleep(0.05)
     return keys
 

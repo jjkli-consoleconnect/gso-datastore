@@ -46,6 +46,7 @@ def insert_rows_with_retry(client, dataset_id, table_id, rows, schema, retries=5
             return False
     return False
 import requests
+import random
 import json
 from google.cloud import bigquery
 import logging
@@ -57,6 +58,9 @@ import re
 import os
 from typing import Optional
 from pipeline_runs_logger import log_pipeline_run
+
+# Jitter used when sleeping after 429s
+JITTER_MAX_SECONDS = 0.3
 
 # Logging config with LOG_LEVEL env override; default INFO; DEBUG enables DEBUG
 DEBUG = str(os.environ.get('DEBUG', '')).lower() in ('1', 'true', 'yes')
@@ -125,10 +129,8 @@ def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
                         for p in filtered:
                             if p in ('*','ALL'):
                                 continue
-                            if p.isupper() and ' ' not in p and '-' not in p:
-                                clauses.append(f'project = {p}')
-                            else:
-                                clauses.append(f'project = "{p}"')
+                            # Always quote project names to avoid JQL parse issues
+                            clauses.append(f'project = "{p}"')
                         if clauses:
                             rebuilt = '(' + ' OR '.join(clauses) + ')'
                         else:
@@ -261,7 +263,8 @@ def fetch_and_sync_jira_data():
     if config is None:
         return
 
-    jira_url = 'https://consoleconnect.atlassian.net/rest/api/latest/search'
+    # Use tenant-accepted GET search/jql endpoint
+    jira_url = 'https://consoleconnect.atlassian.net/rest/api/3/search/jql'
 
     username = 'jjkli@consoleconnect.com'
     api_token = config.get('jira_api_token')
@@ -299,7 +302,6 @@ def fetch_and_sync_jira_data():
             'project = "GS&O Data Analytics" OR '\
             'project = "GS&O Tool Automation" OR '\
             'project = "GS&O Knowledge Consolidation" OR '\
-            'project = "Google Contact Center AI Solution" OR '\
             'project = TAC OR '\
             'project = "VOICE - CE" OR '\
             'project = "IOT CE" OR '\
@@ -309,7 +311,6 @@ def fetch_and_sync_jira_data():
             'project = "Transmission TX-CE" OR '\
             'project = "Mobility SMS - CE" OR '\
             'project = "Managed Security Services" OR '\
-            'project = "Customer Success Management" OR '\
             'project = Sherbet '
             ')'
         )
@@ -530,7 +531,13 @@ def fetch_and_sync_jira_data():
             headers = {"Accept": "application/json", "Content-Type": "application/json"}
             auth = (username, api_token)
             try:
-                response = requests.post(jira_url, headers=headers, auth=auth, data=payload, timeout=120)
+                params = {'jql': jql_query, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
+                response = requests.get(jira_url, headers={'Accept': 'application/json'}, auth=auth, params=params, timeout=120)
+                if response.status_code == 429:
+                    ra = int(response.headers.get('Retry-After', 30) or 30)
+                    logging.warning(f'Jira search 429; sleeping {ra}s')
+                    time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
+                    continue
                 response.raise_for_status()
                 data = response.json()
                 issues = data.get('issues', [])

@@ -175,7 +175,7 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
     # Construct the full search URL once
     # Jira Cloud typically uses /rest/api/2/ or /rest/api/3/. /rest/api/latest/ resolves to one of these.
     # Using /rest/api/2/ as it was in the original script and is widely compatible.
-    search_api_endpoint = f"{jira_base_url}/rest/api/2/search"
+    search_api_endpoint = f"{jira_base_url}/rest/api/3/search/jql"
 
     while start_at < total_issues:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
@@ -321,7 +321,7 @@ def main():
         return
 
     jira_base_url = 'https://consoleconnect.atlassian.net' # Base URL for Jira Cloud
-    jql_query = 'project = "GS&O Tool Automation" OR project = "Google Contact Center AI Solution" OR project = "GS&O Knowledge Consolidation"'
+    jql_query = 'project = "GS&O Tool Automation" OR project = "GS&O Knowledge Consolidation"'
 
     username = 'jjkli@consoleconnect.com'
     logging.info(f"Using Jira username: {username}")

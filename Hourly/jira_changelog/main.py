@@ -90,10 +90,8 @@ def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
                         for p in filtered:
                             if p in ('*','ALL'):
                                 continue
-                            if p.isupper() and ' ' not in p and '-' not in p:
-                                clauses.append(f'project = {p}')
-                            else:
-                                clauses.append(f'project = "{p}"')
+                            # Always quote project names to avoid JQL parse issues
+                            clauses.append(f'project = "{p}"')
                         if clauses:
                             rebuilt = '(' + ' OR '.join(clauses) + ')'
                         else:
@@ -243,10 +241,11 @@ def fetch_issue_histories_parallel(jira_url, issues, username, api_token):
     return results
 
 def fetch_issues_with_retry(jira_search_url, headers, auth, payload, retries=5, delay=5):
+    # Expecting 'payload' to be a dict of params for GET (jql, startAt, maxResults...)
+    params = payload if isinstance(payload, dict) else {}
     for attempt in range(retries):
         try:
-            # Using jira_search_url directly as it's already fully formed
-            response = requests.post(jira_search_url, headers=headers, auth=auth, data=payload, timeout=300)
+            response = requests.get(jira_search_url, headers=headers, auth=auth, params=params, timeout=300)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
@@ -343,17 +342,18 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
     max_results = 100
     issues_processed = 0
     batch_size = 1000
-    search_api_endpoint = f"{jira_base_url}/rest/api/2/search"
+    # Use GET /rest/api/3/search/jql per tenant requirements
+    search_api_endpoint = f"{jira_base_url}/rest/api/3/search/jql"
     rows_inserted = 0
 
     while start_at < total_issues:
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        headers = {"Accept": "application/json"}
         auth = (username, api_token)
-        payload = json.dumps({"jql": jql_query, "startAt": start_at, "maxResults": max_results, "fields": ["key"]})
+        params = {"jql": jql_query, "startAt": start_at, "maxResults": max_results, "fields": "key"}
 
         logging.info(f"Fetching issues from Jira: {search_api_endpoint} with JQL, startAt {start_at}, maxResults {max_results}")
         try:
-            data = fetch_issues_with_retry(search_api_endpoint, headers, auth, payload)
+            data = fetch_issues_with_retry(search_api_endpoint, headers, auth, params)
             if data is None:
                 logging.error(f"Repeated failures in fetching issues. Merging and exiting.")
                 break
@@ -465,22 +465,19 @@ def main():
     jira_base_url = 'https://consoleconnect.atlassian.net'
     base_default = (
         '('\
-        'project = "GS&O Data Analytics" OR '\
-        'project = "GS&O Tool Automation" OR '\
-        'project = "GS&O Knowledge Consolidation" OR '\
-        'project = "Google Contact Center AI Solution" OR '\
-        'project = TAC OR '\
-        'project = "VOICE - CE" OR '\
-        'project = "IOT CE" OR '\
-        'project = "Console Application Support" OR '\
-        'project = "Console Connect Provisioning" OR '\
-        'project = "Global Service Delivery Team" OR '\
-        'project = "Transmission TX-CE" OR '\
-        'project = "Mobility SMS - CE" OR '\
-        'project = "Managed Security Services" OR '\
-        'project = "Vendor Management Escalations" OR '\
-        'project = "Customer Success Management" OR '
-        'project = Sherbet '
+    'project = "GS&O Data Analytics" OR '\
+    'project = "GS&O Tool Automation" OR '\
+    'project = "GS&O Knowledge Consolidation" OR '\
+    'project = TAC OR '\
+    'project = "VOICE - CE" OR '\
+    'project = "IOT CE" OR '\
+    'project = "Console Application Support" OR '\
+    'project = "Console Connect Provisioning" OR '\
+    'project = "Global Service Delivery Team" OR '\
+    'project = "Transmission TX-CE" OR '\
+    'project = "Mobility SMS - CE" OR '\
+    'project = "Managed Security Services" OR '\
+    'project = Sherbet '
         ')'
     )
     base_jql = load_base_jql(default_text=base_default)
@@ -518,16 +515,15 @@ def main():
     try:
         log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
         rows_merged = sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client)
-        if rows_merged and rows_merged > 0:
-            logging.info("Successfully synced transitions history to BigQuery.")
-            run_ended = datetime.now(timezone.utc)
-            duration_seconds = (run_ended - run_started).total_seconds()
-            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", window_start=jql_window_start, window_end=jql_window_end, rows_merged=int(rows_merged), duration_seconds=duration_seconds)
-        else:
+        run_ended = datetime.now(timezone.utc)
+        duration_seconds = (run_ended - run_started).total_seconds()
+        if rows_merged is None or (isinstance(rows_merged, int) and rows_merged < 0):
             logging.error("Failed to sync transition history to BigQuery.")
-            run_ended = datetime.now(timezone.utc)
-            duration_seconds = (run_ended - run_started).total_seconds()
             log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Failed to sync transition history to BigQuery", status="ERROR", duration_seconds=duration_seconds)
+        else:
+            # Zero rows is a valid outcome for a test/quiet window; mark SUCCESS with rows_merged count
+            logging.info(f"Sync complete. Rows merged: {int(rows_merged)}")
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", window_start=jql_window_start, window_end=jql_window_end, rows_merged=int(rows_merged), duration_seconds=duration_seconds)
     except Exception as e:
         logging.exception(f"Pipeline run failed: {e}")
         run_ended = datetime.now(timezone.utc)

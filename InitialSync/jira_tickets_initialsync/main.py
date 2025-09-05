@@ -22,7 +22,7 @@ if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
         if cand_path.exists():
             os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(cand_path)
             break
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery
 # Attempt to import shared logger; provide local fallback if shared/ not packaged in Docker context
@@ -219,6 +219,59 @@ def load_projects_from_file(defaults):
         logging.warning('No JQL project file found; using embedded default project list (set SINGLE_PROJECT / mount JQL.txt to override).')
     return defaults
 
+
+def to_utc_aware(dt):
+    """Return a timezone-aware datetime in UTC for input dt which may be naive or aware."""
+    if dt is None: return None
+    if getattr(dt, 'tzinfo', None):
+        try:
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            return dt.replace(tzinfo=timezone.utc)
+    else:
+        # assume naive times are UTC
+        return dt.replace(tzinfo=timezone.utc)
+
+
+def parse_test_window_env():
+    """Parse TEST_WINDOW_START and TEST_WINDOW_END env vars (ISO-like). Return tuple (ws,we) as UTC-aware datetimes or (None,None).
+    Supported formats: ISO 8601 with optional 'Z' or timezone (eg 2025-08-01T00:00:00Z or 2025-08-01T00:00:00+00:00)
+    Also accepts 'YYYY-MM-DD HH:MM' and 'YYYY/MM/DD HH:MM'. Times without tz are assumed UTC.
+    """
+    s = os.environ.get('TEST_WINDOW_START')
+    e = os.environ.get('TEST_WINDOW_END')
+    if not s or not e:
+        return None, None
+    def _parse(x):
+        if not x: return None
+        x = x.strip()
+        # normalize Z -> +00:00 for fromisoformat
+        if x.endswith('Z'):
+            x = x[:-1] + '+00:00'
+        # try iso first
+        try:
+            dt = datetime.fromisoformat(x)
+            return to_utc_aware(dt)
+        except Exception:
+            pass
+        # try common formats used in this repo
+        for fmt in ('%Y-%m-%d %H:%M','%Y/%m/%d %H:%M','%Y-%m-%d %H:%M:%S','%Y/%m/%d %H:%M:%S'):
+            try:
+                dt = datetime.strptime(x, fmt)
+                return to_utc_aware(dt)
+            except Exception:
+                continue
+        return None
+    try:
+        ws = _parse(s); we = _parse(e)
+        if ws and we and ws < we:
+            logging.info(f'Using TEST_WINDOW_START/END override: {ws} -> {we}')
+            return ws, we
+    except Exception:
+        pass
+    logging.warning('Invalid TEST_WINDOW_START/END environment variables; ignoring')
+    return None, None
+
 def convert_ts(ts):
     if not ts: return None
     fmts=['%Y-%m-%dT%H:%M:%S.%f%z','%Y-%m-%dT%H:%M:%S%z','%Y-%m-%dT%H:%M:%S.%fZ','%Y-%m-%dT%H:%M:%SZ']
@@ -334,41 +387,62 @@ def delete_table_quiet(client,dataset,table):
 
 # ---------------- Jira fetch ----------------
 BASE_URL='https://consoleconnect.atlassian.net'
-SEARCH_URL=f'{BASE_URL}/rest/api/2/search'
+SEARCH_URL=f'{BASE_URL}/rest/api/3/search/jql'
 
 def fetch_issues_page(auth,jql,start_at,max_results):
+    """Fetch a page of issues using GET /rest/api/3/search/jql with query params.
+    Returns parsed JSON or None on failure."""
     global SEARCH_429_COUNT
-    payload=json.dumps({'jql':jql,'startAt':start_at,'maxResults':max_results,'fields':FIELDS_FOR_SEARCH})
-    headers={'Accept':'application/json','Content-Type':'application/json'}
+    headers={'Accept':'application/json'}
+    params = {
+        'jql': jql,
+        'startAt': start_at,
+        'maxResults': max_results,
+        # send fields as comma separated list
+        'fields': ','.join(FIELDS_FOR_SEARCH)
+    }
     for attempt in range(5):
         try:
             RATE_LIMITER.take()
-            r=requests.post(SEARCH_URL,headers=headers,auth=auth,data=payload,timeout=120)
-            if r.status_code==429:
-                SEARCH_429_COUNT+=1
-                ra=int(r.headers.get('Retry-After',30))
+            r = requests.get(SEARCH_URL, headers=headers, auth=auth, params=params, timeout=120)
+            if r.status_code == 429:
+                SEARCH_429_COUNT += 1
+                ra = int(r.headers.get('Retry-After', 30) or 30)
                 logging.warning(f'429 search startAt={start_at}; sleeping {ra:.1f}s')
-                time.sleep(ra+random.uniform(0,JITTER_MAX_SECONDS)); continue
-            if r.status_code!=200:
-                # Log first 300 chars of response to aid debugging (auth issues etc.)
-                snippet=(r.text or '')[:300].replace('\n',' ')
+                time.sleep(ra + random.random()*JITTER_MAX_SECONDS)
+                continue
+            if r.status_code != 200:
+                snippet = (r.text or '')[:300].replace('\n',' ')
                 logging.warning(f'Jira search non-200 status={r.status_code} attempt={attempt+1} startAt={start_at} resp_snippet="{snippet}"')
-            r.raise_for_status(); return r.json()
+            r.raise_for_status()
+            return r.json()
         except requests.exceptions.Timeout:
             time.sleep(15)
-        except requests.RequestException:
-            if attempt<4: time.sleep(10)
-            else: return None
+        except requests.RequestException as re:
+            try:
+                status = getattr(re.response, 'status_code', None)
+            except Exception:
+                status = None
+            logging.error(f'Error searching issues on attempt {attempt+1}/5: {re} status={status}')
+            if status == 429:
+                SEARCH_429_COUNT += 1
+                time.sleep(5*(attempt+1))
+                continue
+            if attempt < 4:
+                time.sleep(10)
+                continue
+            return None
     return None
 
 def preflight_validate_project(auth, project_name):
     """Run a lightweight maxResults=0 search to verify the authenticated user can see the project.
     Returns (ok, status_code, message)."""
     test_jql = f'project = "{project_name}"'
-    payload = json.dumps({'jql': test_jql, 'startAt':0, 'maxResults':0, 'fields':['key']})
-    headers={'Accept':'application/json','Content-Type':'application/json'}
+    params = {'jql': test_jql, 'startAt': 0, 'maxResults': 1, 'fields': 'key'}
+    headers={'Accept':'application/json'}
     try:
-        r = requests.post(SEARCH_URL, headers=headers, auth=auth, data=payload, timeout=30)
+        # Use a GET with query params for a simple visibility check - avoids POST payload schema differences
+        r = requests.get(SEARCH_URL, headers=headers, auth=auth, params=params, timeout=30)
         if r.status_code == 200:
             return True, r.status_code, 'ok'
         # Distinguish invalid vs permission vs other
@@ -404,13 +478,13 @@ def extract_sla_metrics(sla_field):
             bdt=parse(breach_time)
             if sdt and bdt: elapsed=(bdt-sdt).total_seconds()/3600.0
         else:
-            if sdt: elapsed=(datetime.utcnow()-sdt.replace(tzinfo=None)).total_seconds()/3600.0
+            if sdt: elapsed=(datetime.now(timezone.utc)-sdt.replace(tzinfo=None)).total_seconds()/3600.0
     goal=goal_millis/3600000.0 if goal_millis else None
     breached=breach_time is not None
     return (elapsed,goal,breached,n)
 
 def generate_ticket_rows(issues,ws,we):
-    now_str=datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    now_str=datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
     rows=[]
     for item in issues:
         k=item.get('key')
@@ -640,7 +714,7 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
 
 # ---------------- Logging buffer ----------------
 def log_buf(pipeline,run_id,level,msg,fn=None,details=None):
-    LOG_BUFFER.append({'Timestamp':datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),'PipelineName':pipeline,'RunID':run_id,'LogLevel':level,'Message':msg,'FunctionName':fn,'Details':details})
+    LOG_BUFFER.append({'Timestamp':datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),'PipelineName':pipeline,'RunID':run_id,'LogLevel':level,'Message':msg,'FunctionName':fn,'Details':details})
 
 def flush_logs(client,dataset,table):
     if not LOG_BUFFER: return
@@ -664,8 +738,8 @@ def main():
     cfg=load_config();
     if not cfg: return
     dataset='GSO'; table='JiraTickets'; progress=f'{table}_progress'; pipeline='jira_tickets'; run_id=str(uuid.uuid4())
-    base_days=7; min_start=datetime(2024,7,1); client=bigquery.Client()
-    run_started = datetime.utcnow()  # Track overall pipeline start time
+    base_days=7; min_start=datetime(2024,7,1,tzinfo=timezone.utc); client=bigquery.Client()
+    run_started = datetime.now(timezone.utc)  # Track overall pipeline start time
     logging.info('Starting tickets pipeline')
     prog_schema=[bigquery.SchemaField(n,t) for n,t in [
         ('WindowStart','TIMESTAMP'),('WindowEnd','TIMESTAMP'),('Status','STRING'),('LastRun','TIMESTAMP'),('Projects','STRING'),('Project','STRING'),('RowCount','INT64')]]
@@ -721,6 +795,8 @@ def main():
             lc_map={p.casefold():p for p in default_projects}
             projects=[lc_map[r.casefold()] for r in req if r.casefold() in lc_map]
             logging.info(f'Using PROJECTS env override -> {projects}')
+    # NOTE: TEST_PROJECTS override removed — use the full project list unless
+    # overridden by CLI (--project / --projects) or env SINGLE_PROJECT / PROJECTS.
     if not projects: return
     logging.info(f'Final project list: {projects}')
     # Allow environment variable overrides for credentials
@@ -728,6 +804,9 @@ def main():
     token=os.environ.get('JIRA_API_TOKEN') or cfg.get('jira_api_token')
     if not token: logging.error('jira_api_token missing'); return
     auth=(user,token)
+    # Shared-filter logic removed per operator request — always use per-project JQL
+    filter_jql = None
+    use_filter = False
     for proj in projects:
         logging.info(f'Starting backfill for project {proj}')
         ok, sc, msg = preflight_validate_project(auth, proj)
@@ -764,14 +843,20 @@ def main():
                 bigquery.ScalarQueryParameter('minsec','INT64',MIN_PROGRESS_WINDOW_SEC)
             ])
             ws=None; we=None
-            try:
-                # Only pick outstanding windows that are not tiny; tiny ones are ignored (or cleaned up above)
-                res=client.query(
-                    f"SELECT WindowStart,WindowEnd FROM `{dataset}.{progress}` WHERE Project=@p AND Status NOT IN ('complete','degraded') AND TIMESTAMP_DIFF(WindowEnd, WindowStart, SECOND) >= @minsec ORDER BY WindowStart ASC LIMIT 1",
-                    job_config=cfgq_with_min
-                ).result()
-                for r in res: ws=r.WindowStart; we=r.WindowEnd; break
-            except Exception: pass
+            # Allow a test override for a single forced historic window via env vars
+            test_ws, test_we = parse_test_window_env()
+            if test_ws and test_we:
+                ws = test_ws
+                we = test_we
+            else:
+                try:
+                    # Only pick outstanding windows that are not tiny; tiny ones are ignored (or cleaned up above)
+                    res=client.query(
+                        f"SELECT WindowStart,WindowEnd FROM `{dataset}.{progress}` WHERE Project=@p AND Status NOT IN ('complete','degraded') AND TIMESTAMP_DIFF(WindowEnd, WindowStart, SECOND) >= @minsec ORDER BY WindowStart ASC LIMIT 1",
+                        job_config=cfgq_with_min
+                    ).result()
+                    for r in res: ws=r.WindowStart; we=r.WindowEnd; break
+                except Exception: pass
             adaptive=base_days
             try:
                 hist=list(client.query(f"SELECT RowCount,WindowStart,WindowEnd, IFNULL(Search429,0) Search429, IFNULL(Detail429,0) Detail429 FROM `{dataset}.{progress}` WHERE Project=@p AND Status IN ('complete','degraded') ORDER BY WindowEnd DESC LIMIT 5",job_config=cfgq).result())
@@ -801,28 +886,29 @@ def main():
                 except Exception: pass
                 if latest:
                     overlap=timedelta(minutes=OVERLAP_MINUTES)
-                    latest_naive=latest.replace(tzinfo=None) if getattr(latest,'tzinfo',None) else latest
-                    last_completed_naive=last_completed_start.replace(tzinfo=None) if (last_completed_start and getattr(last_completed_start,'tzinfo',None)) else last_completed_start
+                    latest_aware = to_utc_aware(latest)
+                    last_completed_aware = to_utc_aware(last_completed_start) if last_completed_start else None
                     # If we're too close to now, skip making a tiny window and move to next project
                     try:
-                        if (datetime.utcnow() - latest_naive).total_seconds() < MIN_PROGRESS_WINDOW_SEC:
+                        now_tmp = datetime.now(timezone.utc)
+                        if (now_tmp - latest_aware).total_seconds() < MIN_PROGRESS_WINDOW_SEC:
                             logging.info(f'Project {proj}: latest completed window end is too recent; skipping tiny near-now window and moving on')
                             # Exit project loop to move on to next project
                             break
                     except Exception:
                         pass
-                    cand_start=latest_naive-overlap
-                    if last_completed_naive and cand_start<=last_completed_naive: cand_start=latest_naive
-                    if last_completed_naive and (latest_naive-last_completed_naive)<=overlap*2: cand_start=latest_naive
+                    cand_start=latest_aware - overlap
+                    if last_completed_aware and cand_start<=last_completed_aware: cand_start=latest_aware
+                    if last_completed_aware and (latest_aware-last_completed_aware)<=overlap*2: cand_start=latest_aware
                     if cand_start<min_start: cand_start=min_start
                     ws=cand_start
                 else:
                     ws=min_start
                 cand_end=ws+timedelta(days=adaptive)
-            ws=ws.replace(tzinfo=None) if getattr(ws,'tzinfo',None) else ws
-            now=datetime.utcnow()
-            cand_end=cand_end.replace(tzinfo=None) if getattr(cand_end,'tzinfo',None) else cand_end
-            we=min(cand_end, now)
+            ws = to_utc_aware(ws) if ws else ws
+            now = datetime.now(timezone.utc)
+            cand_end = to_utc_aware(cand_end) if cand_end else cand_end
+            we = min(cand_end, now)
             # Enforce a minimum window length to avoid thrashing on tiny windows
             try:
                 if (we - ws).total_seconds() < MIN_PROGRESS_WINDOW_SEC:
@@ -840,7 +926,10 @@ def main():
                 pass
             if ws>=now: break
             proj_clause=f'project = "{proj}"' if any(ch in proj for ch in [' ','&']) else f'project = {proj}'
-            jql=f"({proj_clause}) AND updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
+            if use_filter:
+                jql=f"({filter_jql}) AND updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
+            else:
+                jql=f"({proj_clause}) AND updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
             try:
                 merge=(
                     f"MERGE `{dataset}.{progress}` T USING (SELECT TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS WindowStart, TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS WindowEnd, '{proj}' AS Project) S "
@@ -854,7 +943,7 @@ def main():
             except Exception:
                 break
             success=False; rc=0
-            window_start_time = datetime.utcnow()  # Track window processing start time
+            window_start_time = datetime.now(timezone.utc)  # Track window processing start time
             global SEARCH_429_COUNT, DETAIL_429_COUNT, CURRENT_TICKET_WORKERS, _NO429_STREAK
             SEARCH_429_COUNT=0; DETAIL_429_COUNT=0
             logging.info(f'Executing JQL: {jql}')
@@ -866,7 +955,7 @@ def main():
                 ratio=DETAIL_429_COUNT/max(1,rc)
                 if ratio>FAILURE_RATIO_DEGRADED: degraded=True
             status='degraded' if degraded else ('complete' if success else 'failed')
-            window_end_time = datetime.utcnow()
+            window_end_time = datetime.now(timezone.utc)
             window_duration_seconds = (window_end_time - window_start_time).total_seconds()
             upd=(
                 f"UPDATE `{dataset}.{progress}` SET Status='{status}', LastRun=CURRENT_TIMESTAMP(), RowCount={rc}, Search429={SEARCH_429_COUNT}, Detail429={DETAIL_429_COUNT} "
@@ -874,6 +963,13 @@ def main():
             ); client.query(upd).result()
             logging.info(f'Project {proj} window {ws}->{we} {status} rows={rc} 429_search={SEARCH_429_COUNT} 429_detail={DETAIL_429_COUNT}')
             log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level=("INFO" if success else "ERROR"), message=f'Window {status} {proj}', status=("SUCCESS" if success else "ERROR"), window_start=ws.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'), rows_merged=int(rc), duration_seconds=window_duration_seconds)
+            # If we used a TEST_WINDOW_START/END override, only run that single forced window then exit the project loop
+            try:
+                if 'TEST_WINDOW_START' in os.environ and 'TEST_WINDOW_END' in os.environ:
+                    logging.info('TEST_WINDOW override processed; exiting project loop after one forced window')
+                    break
+            except Exception:
+                pass
             if status in ('complete','degraded'):
                 last_completed_start=ws
                 if (SEARCH_429_COUNT>0 or DETAIL_429_COUNT>0):
@@ -905,7 +1001,7 @@ def main():
                     break
             # Legacy flush disabled (no-op)
         log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message=f"Project {proj} finished", status="SUCCESS")
-    run_ended = datetime.utcnow()
+    run_ended = datetime.now(timezone.utc)
     duration_seconds = (run_ended - run_started).total_seconds()
     log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Tickets pipeline finished", status="SUCCESS", duration_seconds=duration_seconds)
 

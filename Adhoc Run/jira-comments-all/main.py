@@ -280,7 +280,7 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
     # Construct the full search URL using the base URL and the /rest/api/2 path
     # Although user mentioned '/latest', /rest/api/2/search is also valid and consistent
     # with the comments endpoint path used in the script.
-    search_url = f"{jira_base_url}/rest/api/2/search" 
+    search_url = f"{jira_base_url}/rest/api/3/search/jql"
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     auth = (username, api_token)
 
@@ -457,7 +457,7 @@ def main():
     # Changed to the new Jira Cloud base URL
     jira_url = 'https://consoleconnect.atlassian.net'
     # Changed to the direct JQL query provided
-    jql_query = 'project = "GS&O Tool Automation" OR project = "Google Contact Center AI Solution" OR project = "GS&O Knowledge Consolidation" OR project = "GS&O Data Analytics" AND updated >= endOfDay(-7)'
+    jql_query = 'project = "GS&O Tool Automation" OR project = "GS&O Knowledge Consolidation" OR project = "GS&O Data Analytics" AND updated >= endOfDay(-7)'
     # -----------------------
 
     # Assuming username and API token key in config remain the same

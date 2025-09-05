@@ -106,13 +106,12 @@ def fetch_and_sync_jira_data():
     if config is None:
         return
 
-    jira_url = 'https://consoleconnect.atlassian.net/rest/api/latest/search'
+    jira_url = 'https://consoleconnect.atlassian.net/rest/api/3/search/jql'
     
     jql_query = (
         'project = "GS&O Data Analytics" OR '
         'project = "GS&O Tool Automation" OR '
-        'project = "GS&O Knowledge Consolidation" OR '
-        'project = "Google Contact Center AI Solution" OR '
+    'project = "GS&O Knowledge Consolidation" OR '
         'project = TAC OR '
         'project = "Console Application Support" OR '
         'project = "VOICE - CE" OR '

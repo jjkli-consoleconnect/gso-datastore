@@ -45,15 +45,88 @@ def load_config():
         return None
 
 def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
-    """Use the embedded default JQL from the script only.
-
-    This intentionally ignores any external files or environment-based JQL so the
-    script behavior matches the Docker image which embeds the JQL.
+    """Load base JQL from env (BASE_JQL_B64/BASE_JQL/JQL_FILE/PROJECTS_FILE) or ../JQL.txt.
+    Falls back to provided default_text if nothing is found.
     """
+    # Highest precedence: direct env injection
+    env_b64 = os.environ.get('BASE_JQL_B64')
+    if env_b64:
+        try:
+            import base64
+            decoded = base64.b64decode(env_b64).decode('utf-8').strip()
+            if DEBUG:
+                logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL_B64 env variable")
+            if decoded:
+                return decoded
+        except Exception as e:
+            logging.warning(f"[JQL_LOAD] Failed decoding BASE_JQL_B64: {e}")
+
+    env_text = os.environ.get('BASE_JQL')
+    if env_text and env_text.strip():
+        if DEBUG:
+            logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL env variable")
+        return env_text.strip()
+
+    env_path = os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
+    candidates = []
+    if env_path:
+        candidates.append(env_path)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Hourly shared JQL.txt (when running locally, not in container)
+    candidates.append(os.path.normpath(os.path.join(script_dir, '..', 'JQL.txt')))
+    # Optional extra fallback: InitialSync/JQL.txt if present
+    candidates.append(os.path.normpath(os.path.join(script_dir, '..', '..', 'InitialSync', 'JQL.txt')))
+    # Container-friendly absolute fallbacks
+    candidates.extend(['/config/JQL.txt', '/data/JQL.txt'])
+
+    if DEBUG:
+        logging.info(f"[JQL_LOAD] Env JQL_FILE={os.environ.get('JQL_FILE')} PROJECTS_FILE={os.environ.get('PROJECTS_FILE')} BASE_JQL=set? {'yes' if os.environ.get('BASE_JQL') else 'no'} BASE_JQL_B64=set? {'yes' if os.environ.get('BASE_JQL_B64') else 'no'}")
+        logging.info(f"[JQL_LOAD] Candidate paths: {candidates}")
+
+    for path in candidates:
+        if not path:
+            continue
+        try:
+            if os.path.isfile(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    raw = f.read()
+                    text = raw.strip('\n\r ')
+                    # Support comment lines (#, //, --) and plain project list (one per line) -> build OR chain
+                    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+                    filtered = []
+                    for ln in lines:
+                        u = ln.lstrip()
+                        if u.startswith('#') or u.startswith('//') or u.startswith('--'):
+                            continue
+                        filtered.append(ln)
+                    rebuilt = '\n'.join(filtered)
+                    # Decide if it's already JQL (contains 'project =') or a bare list of project names
+                    if filtered and not any('project ' in ln.lower() for ln in filtered):
+                        # Treat each line as a project name literal unless it is ALL / * sentinel
+                        clauses = []
+                        for p in filtered:
+                            if p in ('*','ALL'):  # allow sentinel -> match everything (leave base part empty parenthesis)
+                                continue
+                            if p.isupper() and ' ' not in p and '-' not in p:
+                                # Likely an unquoted key (e.g., TAC)
+                                    clauses.append(f'project = "{p}"')
+                            else:
+                                clauses.append(f'project = "{p}"')
+                        if clauses:
+                            rebuilt = '(' + ' OR '.join(clauses) + ')'
+                        else:
+                            rebuilt = ''
+                    logging.info(f"Loaded base JQL from: {path}")
+                    return rebuilt.strip() if rebuilt else text
+            else:
+                if DEBUG:
+                    logging.info(f"[JQL_LOAD] Skipping non-file path: {path}")
+        except Exception as e:
+            logging.warning(f"[JQL_LOAD] Failed reading {path}: {e}")
     if default_text:
-        logging.info("Using embedded default base JQL from script.")
+        logging.info("Using embedded default base JQL.")
         return default_text.strip()
-    logging.error("No embedded base JQL provided in the script.")
+    logging.error("No base JQL found. Provide Hourly/JQL.txt or set JQL_FILE env var.")
     return None
 
 def convert_timestamp(timestamp):
@@ -164,8 +237,8 @@ def fetch_comments_for_issue(jira_base_url, issue_key, username, api_token, max_
     start_at = 0
 
     while True:
-        # Construct the full URL using the base URL and the /rest/api/2 path
-        url = f"{jira_base_url}/rest/api/2/issue/{issue_key}/comment"
+        # Construct the full URL using the base URL and the REST v3 comments path
+        url = f"{jira_base_url}/rest/api/3/issue/{issue_key}/comment"
         headers = {"Accept": "application/json"}
         # Basic Auth with username and API token
         auth = (username, api_token)
@@ -183,16 +256,20 @@ def fetch_comments_for_issue(jira_base_url, issue_key, username, api_token, max_
 
             total_comments = data.get('total', 0)
             if start_at + len(comments) >= total_comments: # Check if we got all comments on this page or exceeded total
-                 break # Exit the loop if all comments are fetched
+                break # Exit the loop if all comments are fetched
 
             start_at += len(comments) # Use actual number of comments returned in case max_results is ignored/capped
-
 
         except requests.RequestException as e:
             # Log specific error details, including response text if available
             error_message = f"Error fetching comments for issue {issue_key}: {e}"
-            if e.response is not None:
-                 error_message += f", Status Code: {e.response.status_code}, Response Text: {e.response.text}"
+            if hasattr(e, 'response') and e.response is not None:
+                error_message += f", Status Code: {e.response.status_code}, Response Text: {e.response.text}"
+                if e.response.status_code == 429:
+                    retry_after = e.response.headers.get('Retry-After', 30)
+                    logging.warning(f"Rate limited (429) when fetching comments. Retrying after {retry_after} seconds...")
+                    time.sleep(int(retry_after))
+                    continue
             logging.error(error_message)
             return None # Return None to indicate failure for this issue
 
@@ -240,6 +317,37 @@ def generate_rows(issues, jira_base_url, username, api_token):
 
     utc_now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
+    def _body_to_string(body):
+        if body is None:
+            return None
+        if isinstance(body, str):
+            return body
+        try:
+            if isinstance(body, dict) and 'content' in body:
+                parts = []
+                def walk(node):
+                    if node is None:
+                        return
+                    if isinstance(node, str):
+                        parts.append(node); return
+                    if isinstance(node, dict):
+                        if 'text' in node and isinstance(node['text'], str):
+                            parts.append(node['text'])
+                        for k in ('content','content_list'):
+                            if k in node and isinstance(node[k], list):
+                                for child in node[k]: walk(child)
+                        return
+                    if isinstance(node, list):
+                        for item in node: walk(item)
+                walk(body.get('content'))
+                if parts: return ' '.join(parts)
+        except Exception:
+            pass
+        try:
+            return json.dumps(body, ensure_ascii=False)
+        except Exception:
+            return str(body)
+
     for issue_key in issue_keys:
         comments = comments_batch.get(issue_key)
         if comments is None:
@@ -260,7 +368,7 @@ def generate_rows(issues, jira_base_url, username, api_token):
                     "Author_Display_Name": author_info.get('displayName'),
                     "Created": convert_timestamp(comment.get('created')),
                     "Updated": convert_timestamp(comment.get('updated')),
-                    "Body": comment.get('body'),
+                    "Body": _body_to_string(comment.get('body')),
                     "Visibility_Type": visibility_info.get('type'),
                     "Visibility_Value": visibility_info.get('value'),
                     "SyncTime": utc_now,
@@ -311,58 +419,47 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
     batch_size = 1000 
     total_rows_inserted_to_temp = 0
 
-    # Construct the full search URL using the base URL and the /rest/api/2 path
-    # Although user mentioned '/latest', /rest/api/2/search is also valid and consistent
-    # with the comments endpoint path used in the script.
-    search_url = f"{jira_base_url}/rest/api/2/search" 
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    # Use tenant-accepted GET /rest/api/3/search/jql endpoint
+    search_url = f"{jira_base_url}/rest/api/3/search/jql"
+    headers = {"Accept": "application/json"}
     auth = (username, api_token)
 
     logging.info(f"Starting Jira search from {search_url}")
 
     while start_at < total_issues:
-        # The payload now includes the direct 'jql' string
-        payload = json.dumps({
-            "jql": jql_query,
-            "startAt": start_at,
-            "maxResults": max_results,
-            "fields": ["key"] # Only need the issue key for fetching comments
-        })
+        params = {"jql": jql_query, "startAt": start_at, "maxResults": max_results, "fields": "key"}
 
         logging.info(f"Fetching issues with JQL, startAt: {start_at}, maxResults: {max_results}")
 
-        # --- Jira Search API Call with Retries ---
-        response = None # Define response before the loop
-        for attempt in range(5): # Increased retries for network issues
+        response = None
+        for attempt in range(5):
             try:
-                # Add a generous timeout for the search request as it might be slow
-                response = requests.post(search_url, headers=headers, auth=auth, data=payload, timeout=300) 
+                response = requests.get(search_url, headers=headers, auth=auth, params=params, timeout=300)
                 response.raise_for_status()
-                break # Success, exit retry loop
+                break
             except requests.exceptions.Timeout:
-                 logging.warning(f"Search request timed out on attempt {attempt + 1}/5. Retrying...")
-                 time.sleep(15) # Wait longer on timeout
+                logging.warning(f"Search request timed out on attempt {attempt + 1}/5. Retrying...")
+                time.sleep(15)
             except requests.RequestException as e:
                 error_message = f"Error searching issues on attempt {attempt + 1}/5: {e}"
-                if e.response is not None:
+                if hasattr(e, 'response') and e.response is not None:
                     error_message += f", Status Code: {e.response.status_code}, Response Text: {e.response.text}"
-                    # Handle specific Jira Cloud rate limiting (429)
                     if e.response.status_code == 429:
-                         retry_after = e.response.headers.get('Retry-After', 30) # Default 30 seconds
-                         logging.warning(f"Rate limited (429). Retrying after {retry_after} seconds...")
-                         time.sleep(int(retry_after))
-                         continue # Skip sleep below, retry immediately after waiting
+                        retry_after = e.response.headers.get('Retry-After', 30)
+                        logging.warning(f"Rate limited (429). Retrying after {retry_after} seconds...")
+                        time.sleep(int(retry_after))
+                        continue
                 logging.error(error_message)
 
                 if attempt < 4:
-                    logging.info(f"Retrying Jira search in 10 seconds...")
+                    logging.info("Retrying Jira search in 10 seconds...")
                     time.sleep(10)
                 else:
                     logging.error("Failed to search issues after multiple attempts.")
-                    delete_temp_table(client, dataset_id, temp_table_id) # Clean up temp table on failure
-                    return -1 # Give up after retries
+                    delete_temp_table(client, dataset_id, temp_table_id)
+                    return -1
 
-        if response is None: # If loop finished without a successful response
+        if response is None:
             logging.error("Jira search failed after multiple retries.")
             # Merge temp table into final table before exit
             logging.info(f"Starting merge operation from '{dataset_id}.{temp_table_id}' to '{dataset_id}.{table_id}'...")
@@ -398,26 +495,22 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
             except Exception as e:
                 logging.exception(f"Error running merge query: {e}")
             delete_temp_table(client, dataset_id, temp_table_id)
-            # No window to mark as failed; skip progress table update
             return -1
 
-        # --- Process Search Results ---
         try:
             data = response.json()
             issues = data.get('issues', [])
-            total_issues = data.get('total', 0) # Get the *total* number of issues matching the JQL
+            total_issues = data.get('total', 0)
 
             if not issues:
                 logging.info(f"No issues found on this page (startAt: {start_at}). Total issues reported: {total_issues}.")
                 if start_at == 0 and total_issues > 0:
-                    # This might happen if maxResults is too large or pagination is odd
                     logging.warning("Got 0 issues on first page but total > 0. Check maxResults or JQL.")
-                break # No more issues to process
+                break
 
             logging.info(f"Fetched {len(issues)} issues (startAt: {start_at}) out of total {total_issues}")
 
             rows_to_insert = []
-            # Pass the base URL to generate_rows (no window filtering)
             for row in generate_rows(issues, jira_base_url, username, api_token):
                 rows_to_insert.append(row)
                 if len(rows_to_insert) >= batch_size:
@@ -586,7 +679,6 @@ def main():
             'project = "GS&O Data Analytics" OR '\
             'project = "GS&O Tool Automation" OR '\
             'project = "GS&O Knowledge Consolidation" OR '\
-            'project = "Google Contact Center AI Solution" OR '\
             'project = TAC OR '\
             'project = "VOICE - CE" OR '\
             'project = "IOT CE" OR '\
@@ -596,7 +688,6 @@ def main():
             'project = "Transmission TX-CE" OR '\
             'project = "Mobility SMS - CE" OR '\
             'project = "Managed Security Services" OR '\
-            'project = "Customer Success Management" OR '\
             'project = Sherbet '
             ')'
         )
@@ -616,7 +707,8 @@ def main():
         try:
             log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
             rows_merged = sync_comments_to_bigquery(jira_url, jql_query, username, api_token, dataset_id, table_id, client)
-            if rows_merged and rows_merged > -1:
+            # rows_merged may be 0 on a forced/test window; treat any non-negative integer as success
+            if isinstance(rows_merged, int) and rows_merged >= 0:
                 logging.info("Successfully synced comments to BigQuery.")
                 run_ended = datetime.now(timezone.utc)
                 duration_seconds = (run_ended - run_started).total_seconds()

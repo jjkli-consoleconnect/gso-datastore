@@ -283,10 +283,10 @@ def sync_comments_to_bigquery(jira_base_url, jql_query, username, api_token, dat
     batch_size = 1000 
     total_rows_inserted_to_temp = 0
 
-    # Construct the full search URL using the base URL and the /rest/api/2 path
-    # Although user mentioned '/latest', /rest/api/2/search is also valid and consistent
+    # Construct the full search URL using the base URL and the /rest/api/latest path
+    # Although user mentioned '/latest', /rest/api/latest/search is also valid and consistent
     # with the comments endpoint path used in the script.
-    search_url = f"{jira_base_url}/rest/api/2/search" 
+    search_url = f"{jira_base_url}/rest/api/latest/search" 
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     auth = (username, api_token)
 
