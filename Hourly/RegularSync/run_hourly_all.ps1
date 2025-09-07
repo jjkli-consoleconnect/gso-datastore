@@ -16,6 +16,9 @@ param(
     # allow caller to override BaseDir; if not provided, auto-detect below
     [string]$BaseDir = $null,
     [string]$PythonPath = $null
+    ,
+    # When set (default), run the hourly jobs in their docker images (use :latest tags).
+    [switch]$UseDocker = $true
 )
 
 Set-StrictMode -Version Latest
@@ -88,6 +91,47 @@ function Invoke-HourlyScript {
     }
 }
 
+# Run a pipeline as a docker image (uses :latest images by default).
+function Invoke-DockerImage {
+    param([string]$ImageName)
+
+    Write-Log "\n===== Running Docker image: $ImageName at $(Get-Date -Format o) ====="
+
+    # Determine credential basename so it can be mounted into the container under /app
+    $credBasename = $null
+    if (-not [string]::IsNullOrEmpty($env:GOOGLE_APPLICATION_CREDENTIALS)) {
+        $credBasename = Split-Path -Leaf $env:GOOGLE_APPLICATION_CREDENTIALS
+    }
+
+    $dockerArgs = @('--rm')
+    # Mount repo root -> /app inside container so containers can read files (config.json, JQL.txt, etc.)
+    $dockerArgs += "-v"; $dockerArgs += "${BaseDir}:/app"
+    if ($credBasename) {
+        # Forward credentials env inside container pointing to the mounted location
+        $dockerArgs += "-e"; $dockerArgs += "GOOGLE_APPLICATION_CREDENTIALS=/app/$credBasename"
+    }
+    if (-not [string]::IsNullOrEmpty($env:LOG_LEVEL)) {
+        $dockerArgs += "-e"; $dockerArgs += "LOG_LEVEL=$env:LOG_LEVEL"
+    }
+
+    $fullArgs = $dockerArgs + $ImageName
+
+    if ($DryRun) {
+        Write-Log "DRYRUN: would execute: docker $($fullArgs -join ' ')"
+        return 0
+    }
+
+    try {
+        & docker @($fullArgs)
+        $exit = $LASTEXITCODE
+        Write-Log "Exit code: $exit"
+        return $exit
+    } catch {
+        Write-Log "EXCEPTION: $_"
+        return 1
+    }
+}
+
 # Auto-detect Google application credentials if not already set
 if (-not [string]::IsNullOrEmpty($env:GOOGLE_APPLICATION_CREDENTIALS)) {
     Write-Log "GOOGLE_APPLICATION_CREDENTIALS already set to: $env:GOOGLE_APPLICATION_CREDENTIALS"
@@ -113,18 +157,25 @@ if (-not [string]::IsNullOrEmpty($env:GOOGLE_APPLICATION_CREDENTIALS)) {
     }
 }
 
-# Edit this list if you want different scripts or order
-$scripts = @(
-    'Hourly\jira_changelog\main.py',
-    'Hourly\jira_comments\main.py',
-    'Hourly\jira_tickets\main.py'
+# Edit this list if you want different scripts or order. When running via Docker
+# the images below will be used (':latest' tag appended by convention).
+$tasks = @(
+    @{ Name = 'jira_changelog'; Script = 'Hourly\jira_changelog\main.py'; Image = 'jira_changelog_initialsync:latest' },
+    @{ Name = 'jira_comments'; Script = 'Hourly\jira_comments\main.py'; Image = 'jira_comments_initialsync:latest' },
+    @{ Name = 'jira_tickets'; Script = 'Hourly\jira_tickets\main.py'; Image = 'jira_tickets_initialsync:latest' }
 )
 
 $finalExit = 0
-foreach ($s in $scripts) {
-    $exit = Invoke-HourlyScript $s
+foreach ($t in $tasks) {
+    if ($UseDocker) {
+        # Prefer Docker image run; containers expect the repo mounted at /app
+        $exit = Invoke-DockerImage $t.Image
+    } else {
+        $exit = Invoke-HourlyScript $t.Script
+    }
+
     if ($exit -ne 0) {
-        Write-Log "Script $s failed with exit $exit"
+        Write-Log "Task $($t.Name) failed with exit $exit"
         # record failure and continue so others still run
         $finalExit = $exit
     }

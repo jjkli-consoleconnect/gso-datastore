@@ -7,6 +7,9 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 import json
 from google.cloud import bigquery
+# Fallback imports for explicit service account usage when ADC are missing
+from google.auth.exceptions import DefaultCredentialsError
+from google.oauth2 import service_account
 import logging
 from datetime import datetime, timedelta, timezone
 import time
@@ -67,62 +70,9 @@ def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
             logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL env variable")
         return env_text.strip()
 
-    env_path = os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
-    candidates = []
-    if env_path:
-        candidates.append(env_path)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # Hourly shared JQL.txt (when running locally, not in container)
-    candidates.append(os.path.normpath(os.path.join(script_dir, '..', 'JQL.txt')))
-    # Optional extra fallback: InitialSync/JQL.txt if present
-    candidates.append(os.path.normpath(os.path.join(script_dir, '..', '..', 'InitialSync', 'JQL.txt')))
-    # Container-friendly absolute fallbacks
-    candidates.extend(['/config/JQL.txt', '/data/JQL.txt'])
-
+    # No external JQL files: only support env-injected JQL or embedded default_text
     if DEBUG:
-        logging.info(f"[JQL_LOAD] Env JQL_FILE={os.environ.get('JQL_FILE')} PROJECTS_FILE={os.environ.get('PROJECTS_FILE')} BASE_JQL=set? {'yes' if os.environ.get('BASE_JQL') else 'no'} BASE_JQL_B64=set? {'yes' if os.environ.get('BASE_JQL_B64') else 'no'}")
-        logging.info(f"[JQL_LOAD] Candidate paths: {candidates}")
-
-    for path in candidates:
-        if not path:
-            continue
-        try:
-            if os.path.isfile(path):
-                with open(path, 'r', encoding='utf-8') as f:
-                    raw = f.read()
-                    text = raw.strip('\n\r ')
-                    # Support comment lines (#, //, --) and plain project list (one per line) -> build OR chain
-                    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-                    filtered = []
-                    for ln in lines:
-                        u = ln.lstrip()
-                        if u.startswith('#') or u.startswith('//') or u.startswith('--'):
-                            continue
-                        filtered.append(ln)
-                    rebuilt = '\n'.join(filtered)
-                    # Decide if it's already JQL (contains 'project =') or a bare list of project names
-                    if filtered and not any('project ' in ln.lower() for ln in filtered):
-                        # Treat each line as a project name literal unless it is ALL / * sentinel
-                        clauses = []
-                        for p in filtered:
-                            if p in ('*','ALL'):  # allow sentinel -> match everything (leave base part empty parenthesis)
-                                continue
-                            if p.isupper() and ' ' not in p and '-' not in p:
-                                # Likely an unquoted key (e.g., TAC)
-                                    clauses.append(f'project = "{p}"')
-                            else:
-                                clauses.append(f'project = "{p}"')
-                        if clauses:
-                            rebuilt = '(' + ' OR '.join(clauses) + ')'
-                        else:
-                            rebuilt = ''
-                    logging.info(f"Loaded base JQL from: {path}")
-                    return rebuilt.strip() if rebuilt else text
-            else:
-                if DEBUG:
-                    logging.info(f"[JQL_LOAD] Skipping non-file path: {path}")
-        except Exception as e:
-            logging.warning(f"[JQL_LOAD] Failed reading {path}: {e}")
+        logging.info(f"[JQL_LOAD] External JQL file lookup disabled for jira_comments. Using env/base default only.")
     if default_text:
         logging.info("Using embedded default base JQL.")
         return default_text.strip()
@@ -701,6 +651,21 @@ def main():
         jql_window_end = run_started
         try:
             client = bigquery.Client()
+            logging.info(f"Successfully connected to BigQuery project: {getattr(client, 'project', None)}")
+        except DefaultCredentialsError as e:
+            # ADC not found - attempt to use a credentials.json file colocated with this script
+            creds_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'credentials.json')
+            if os.path.isfile(creds_path):
+                try:
+                    creds = service_account.Credentials.from_service_account_file(creds_path)
+                    client = bigquery.Client(credentials=creds, project=creds.project_id)
+                    logging.info(f"Initialized BigQuery client from service account file: {creds_path}")
+                except Exception as e2:
+                    logging.exception(f"Failed to initialize BigQuery client from {creds_path}: {e2}")
+                    return
+            else:
+                logging.exception(f"Application Default Credentials not found and credentials file missing at {creds_path}: {e}")
+                return
         except Exception as e:
             logging.exception(f"Failed to initialize BigQuery client: {e}. Ensure GCP credentials are set up correctly.")
             return
