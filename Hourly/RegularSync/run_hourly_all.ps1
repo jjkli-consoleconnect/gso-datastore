@@ -17,8 +17,9 @@ param(
     [string]$BaseDir = $null,
     [string]$PythonPath = $null
     ,
-    # When set (default), run the hourly jobs in their docker images (use :latest tags).
-    [switch]$UseDocker = $true
+    # When set, run the hourly jobs in their docker images (use :latest tags).
+    # Default: not using Docker for regular runs—use local Hourly scripts instead.
+    [switch]$UseDocker = $false
 )
 
 Set-StrictMode -Version Latest

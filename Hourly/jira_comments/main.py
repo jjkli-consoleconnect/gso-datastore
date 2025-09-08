@@ -7,6 +7,7 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 import json
 from google.cloud import bigquery
+import re
 # Fallback imports for explicit service account usage when ADC are missing
 from google.auth.exceptions import DefaultCredentialsError
 from google.oauth2 import service_account
@@ -78,6 +79,16 @@ def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
         return default_text.strip()
     logging.error("No base JQL found. Provide Hourly/JQL.txt or set JQL_FILE env var.")
     return None
+
+
+def build_jql(base: str, extra: str, joiner: str = 'AND') -> str:
+    if not base or not base.strip():
+        return extra.strip()
+    b = base.strip()
+    e = extra.strip()
+    b = re.sub(r"(?i)\b(?:AND|OR)\s*$", '', b).rstrip()
+    e = re.sub(r"(?i)^(?:AND|OR)\b", '', e).lstrip()
+    return f"{b} {joiner} {e}"
 
 def convert_timestamp(timestamp):
     if timestamp:
@@ -644,7 +655,8 @@ def main():
         base_jql = load_base_jql(default_text=base_default)
         if not base_jql:
             return
-        jql_query = f"{base_jql} AND updated >= -1h"
+        jql_query = build_jql(base_jql, "updated >= -1h", joiner='AND')
+        logging.info(f"Final jql_query for comments: {jql_query}")
         # Compute JQL window: last hour relative to run start
         run_started = datetime.now(timezone.utc)
         jql_window_start = run_started - timedelta(hours=1)

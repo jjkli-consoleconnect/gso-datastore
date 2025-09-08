@@ -6,6 +6,7 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 import json
 from google.cloud import bigquery
+import re
 import logging
 from datetime import datetime, timedelta, timezone
 import time
@@ -38,8 +39,12 @@ def load_config():
         return None
 
 def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
-    """Load base JQL from env (BASE_JQL_B64/BASE_JQL/JQL_FILE/PROJECTS_FILE) or ../JQL.txt next to Hourly."""
-    # Highest precedence: env-provided JQL
+    """Load base JQL from env (BASE_JQL_B64/BASE_JQL) or fall back to embedded default_text.
+
+    This simplified loader intentionally does NOT read any external JQL files. It prefers
+    a BASE_JQL_B64 or BASE_JQL environment variable and otherwise returns the provided
+    default_text (embedded list of projects).
+    """
     env_b64 = os.environ.get('BASE_JQL_B64')
     if env_b64:
         try:
@@ -58,56 +63,28 @@ def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
             logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL env variable")
         return env_text.strip()
 
-    env_path = os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
-    candidates = []
-    if env_path:
-        candidates.append(env_path)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates.append(os.path.normpath(os.path.join(script_dir, '..', 'JQL.txt')))
-    candidates.append(os.path.normpath(os.path.join(script_dir, '..', '..', 'InitialSync', 'JQL.txt')))
-    candidates.extend(['/config/JQL.txt', '/data/JQL.txt'])
-    if DEBUG:
-        logging.info(f"[JQL_LOAD] Env JQL_FILE={os.environ.get('JQL_FILE')} PROJECTS_FILE={os.environ.get('PROJECTS_FILE')} BASE_JQL=set? {'yes' if os.environ.get('BASE_JQL') else 'no'} BASE_JQL_B64=set? {'yes' if os.environ.get('BASE_JQL_B64') else 'no'}")
-        logging.info(f"[JQL_LOAD] Candidate paths: {candidates}")
-    for path in candidates:
-        if not path:
-            continue
-        try:
-            if os.path.isfile(path):
-                with open(path, 'r', encoding='utf-8') as f:
-                    raw = f.read()
-                    text = raw.strip('\n\r ')
-                    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-                    filtered = []
-                    for ln in lines:
-                        u = ln.lstrip()
-                        if u.startswith('#') or u.startswith('//') or u.startswith('--'):
-                            continue
-                        filtered.append(ln)
-                    rebuilt = '\n'.join(filtered)
-                    if filtered and not any('project ' in ln.lower() for ln in filtered):
-                        clauses = []
-                        for p in filtered:
-                            if p in ('*','ALL'):
-                                continue
-                            # Always quote project names to avoid JQL parse issues
-                            clauses.append(f'project = "{p}"')
-                        if clauses:
-                            rebuilt = '(' + ' OR '.join(clauses) + ')'
-                        else:
-                            rebuilt = ''
-                    logging.info(f"Loaded base JQL from: {path}")
-                    return rebuilt.strip() if rebuilt else text
-            else:
-                if DEBUG:
-                    logging.info(f"[JQL_LOAD] Skipping non-file path: {path}")
-        except Exception as e:
-            logging.warning(f"[JQL_LOAD] Failed reading {path}: {e}")
     if default_text:
         logging.info("Using embedded default base JQL.")
         return default_text.strip()
-    logging.error("No base JQL found. Provide Hourly/JQL.txt or set JQL_FILE env var.")
+
+    logging.error("No base JQL found. Set BASE_JQL or provide a default_text.")
     return None
+
+
+def build_jql(base: str, extra: str, joiner: str = 'AND') -> str:
+    """Safely join a base JQL and an extra clause.
+    - Filters out empty parts.
+    - Strips stray leading/trailing operators (AND/OR) to avoid "OR AND".
+    """
+    if not base or not base.strip():
+        return extra.strip()
+    b = base.strip()
+    e = extra.strip()
+    # remove trailing AND/OR from base
+    b = re.sub(r"(?i)\b(?:AND|OR)\s*$", '', b).rstrip()
+    # remove leading AND/OR from extra
+    e = re.sub(r"(?i)^(?:AND|OR)\b", '', e).lstrip()
+    return f"{b} {joiner} {e}"
 
 def convert_timestamp(timestamp):
     if timestamp:
@@ -484,7 +461,8 @@ def main():
     logging.info(f"Resolved base_jql for hourly changelog job: {base_jql}")
     if not base_jql:
         return
-    jql_query = f"{base_jql} AND status CHANGED DURING (-1h, now())"
+    jql_query = build_jql(base_jql, "status CHANGED DURING (-1h, now())", joiner='AND')
+    logging.info(f"Final jql_query for changelog: {jql_query}")
     # Window for CHANGED DURING is last hour relative to run start
     run_started = datetime.now(timezone.utc)
     jql_window_start = run_started - timedelta(hours=1)

@@ -258,8 +258,54 @@ function processAttachmentByType(attachment, message) {
 
 function processAttachmentToJsonGeneric(attachment, config) {
   try {
-    const rawCsvString = attachment.getDataAsString();
-    const csvData = Utilities.parseCsv(rawCsvString);
+    // Log attachment metadata to help diagnose parsing issues
+    try {
+      const blob = attachment.copyBlob ? attachment.copyBlob() : attachment.getAs ? attachment.getAs('application/octet-stream') : null;
+      const size = blob ? blob.getBytes().length : (attachment.getSize ? attachment.getSize() : 'unknown');
+      const contentType = blob ? blob.getContentType() : (attachment.getContentType ? attachment.getContentType() : 'unknown');
+      console.log(`      Attachment metadata: name="${attachment.getName()}", size=${size}, contentType=${contentType}`);
+    } catch (metaErr) {
+      console.log(`      Attachment metadata logging failed: ${metaErr.message}`);
+    }
+
+    // Quick-detect upstream error payloads (JSON error responses) and skip them
+    try {
+      const previewRaw = attachment.getDataAsString();
+      const preview = (typeof previewRaw === 'string') ? previewRaw.trim() : '';
+      if (preview && (preview[0] === '{' || preview[0] === '[')) {
+        try {
+          const parsed = JSON.parse(preview);
+          if (parsed && (parsed.statusCode || parsed.error || parsed.message)) {
+            console.log(`      Attachment appears to be an upstream error payload: ${attachment.getName()}`);
+            try {
+              MailApp.sendEmail({
+                to: errorNotificationEmails,
+                subject: `Upstream error payload received for ${scriptName}: ${attachment.getName()}`,
+                body: `Detected an upstream error payload attached to an incoming email for pipeline ${scriptName}.
+
+Attachment: ${attachment.getName()}
+Config: ${config.name}
+
+Preview:
+${preview}
+`
+              });
+            } catch (mailErr) {
+              console.log('      Failed to send notification email for error payload: ' + mailErr.message);
+            }
+            // Treat as no-data so caller will mark message read and continue
+            return null;
+          }
+        } catch (jsonErr) {
+          // Not valid JSON, continue to parsing attempts
+        }
+      }
+    } catch (previewErr) {
+      console.log('      Could not read attachment preview for quick error-detect: ' + previewErr.message);
+    }
+
+    // Use a tolerant CSV parser that attempts multiple encodings and delimiters
+    const csvData = robustParseCsv(attachment);
 
     if (csvData.length <= 1) { 
       console.warn(`      CSV data empty or only headers for attachment: "${attachment.getName()}". Skipping conversion.`);
@@ -369,6 +415,219 @@ function loadJsonToBigQueryGeneric(jsonFileId, config) {
 
 function standardizeFieldName(header, fieldMap) {
   return fieldMap[header.trim()] || header.trim().replace(/\s+/g, "_");
+}
+
+/**
+ * Robust CSV parsing: tries different encodings, strips BOM, normalizes line endings,
+ * and attempts common delimiters (comma, semicolon, tab). Returns array of rows (arrays).
+ * Throws an Error if parsing fails after heuristics.
+ */
+function robustParseCsv(attachment) {
+  // Try default Apps Script string extraction first
+  let raw = null;
+  let errors = [];
+
+  try {
+    raw = attachment.getDataAsString();
+    raw = stripBOM(raw);
+    const attempt = tryParseWithDelimiter(raw);
+    if (attempt) return attempt;
+  } catch (e) {
+    errors.push('getDataAsString default failed: ' + e.message);
+  }
+
+  // Try reading as UTF-8 by getting bytes and decoding with Utilities
+  try {
+    const bytes = attachment.getBytes();
+    // Apps Script doesn't expose direct encoding conversions; try constructing string from bytes
+    raw = String.fromCharCode.apply(null, bytes);
+    raw = stripBOM(raw);
+    const attempt = tryParseWithDelimiter(raw);
+    if (attempt) return attempt;
+  } catch (e) {
+    errors.push('byte->string attempt failed: ' + e.message);
+  }
+
+  // Attempt UTF-16 (LE/BE) decoding if bytes show UTF-16 characteristics
+  try {
+    const bytes = attachment.getBytes();
+    if (detectLikelyUtf16(bytes)) {
+      console.log('    Detected likely UTF-16 encoding; attempting UTF-16 LE/BE decode.');
+      try {
+        const le = decodeUtf16LE(bytes);
+        const attemptLE = tryParseWithDelimiter(stripBOM(le));
+        if (attemptLE) return attemptLE;
+      } catch (e) {
+        errors.push('utf16le_failed:' + e.message);
+      }
+      try {
+        const be = decodeUtf16BE(bytes);
+        const attemptBE = tryParseWithDelimiter(stripBOM(be));
+        if (attemptBE) return attemptBE;
+      } catch (e) {
+        errors.push('utf16be_failed:' + e.message);
+      }
+    }
+  } catch (e) {
+    errors.push('utf16_detection_failed:' + e.message);
+  }
+
+  // As a last resort, try trimming lines and replacing stray nulls then parse
+  try {
+    if (raw === null) raw = attachment.getDataAsString();
+    raw = raw.replace(/\u0000/g, '');
+    raw = raw.replace(/\r\n?/g, '\n');
+    raw = stripBOM(raw);
+    const attempt = tryParseWithDelimiter(raw);
+    if (attempt) return attempt;
+  } catch (e) {
+    errors.push('final normalized attempt failed: ' + e.message);
+  }
+
+  // If we reach here, all attempts failed. Build informative error and throw.
+  // Attempt to save diagnostic artifacts (preview + binary snippet) to Drive for inspection
+  try {
+    const folder = DriveApp.getFolderById(folderId);
+    try {
+      const previewText = (raw && typeof raw === 'string') ? raw.substring(0, 2000) : (attachment.getDataAsString ? attachment.getDataAsString().substring(0, 2000) : 'no-preview-available');
+      const previewFile = folder.createFile(attachment.getName() + '_preview.txt', previewText);
+      errors.push('preview_file_id:' + previewFile.getId());
+
+      // Attempt to find likely incident numbers in the preview to speed up manual triage
+      try {
+        const likely = extractLikelyIncidentNumbers(previewText);
+        if (likely && likely.length > 0) {
+          errors.push('likely_incidents_preview:' + likely.slice(0, 10).join(','));
+          console.log('    Likely incidents in preview: ' + likely.slice(0, 10).join(', '));
+        }
+      } catch (e) {
+        // non-fatal
+      }
+    } catch (diagErr) {
+      errors.push('diag_preview_failed:' + diagErr.message);
+    }
+
+    try {
+      const bytes = attachment.getBytes();
+      const slice = bytes.slice(0, 200000); // first ~200KB
+      const blob = Utilities.newBlob(slice, attachment.getContentType ? attachment.getContentType() : 'application/octet-stream', attachment.getName() + '_raw_part.bin');
+      const rawFile = folder.createFile(blob);
+      errors.push('raw_file_id:' + rawFile.getId());
+      try {
+        // also try to decode the binary snippet as UTF-16/UTF-8 to search for incident numbers
+        var decoded = null;
+        try { decoded = (typeof raw === 'string' ? raw : attachment.getDataAsString()); } catch(e) { decoded = null; }
+        if (!decoded) {
+          try { decoded = String.fromCharCode.apply(null, slice); } catch(e) { decoded = null; }
+        }
+        if (decoded) {
+          const likelyRaw = extractLikelyIncidentNumbers(decoded);
+          if (likelyRaw && likelyRaw.length > 0) {
+            errors.push('likely_incidents_raw:' + likelyRaw.slice(0, 10).join(','));
+            console.log('    Likely incidents in raw snippet: ' + likelyRaw.slice(0, 10).join(', '));
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    } catch (diagErr) {
+      errors.push('diag_raw_dump_failed:' + diagErr.message);
+    }
+  } catch (e) {
+    // If Drive diagnostic creation fails, include that in errors but continue to throw below
+    errors.push('diag_folder_access_failed:' + e.message);
+  }
+
+  const errMsg = 'Could not parse CSV attachment "' + (attachment ? attachment.getName() : 'unknown') + '" after multiple attempts. Details: ' + errors.join(' | ');
+  throw new Error(errMsg);
+}
+
+function tryParseWithDelimiter(rawString) {
+  if (!rawString || typeof rawString !== 'string') return null;
+  // Normalize line endings
+  rawString = rawString.replace(/\r\n?/g, '\n');
+  // Common delimiters to try in order
+  const delimiters = [',', ';', '\t'];
+
+  for (const delim of delimiters) {
+    try {
+      // Utilities.parseCsv supports delimiter as second arg when called on a single line.
+      // We will split into lines and parse each line with the delimiter to avoid CSV quirks,
+      // but first try the simple Utilities.parseCsv on entire text (it handles newlines).
+      const parsed = Utilities.parseCsv(rawString);
+      // Basic sanity checks: at least 2 rows and header values non-empty
+      if (parsed && parsed.length > 1 && parsed[0].some(h => h && h.toString().trim() !== '')) {
+        return parsed;
+      }
+
+      // Fall back: try splitting lines and parsing line-by-line using delimiter
+      const lines = rawString.split('\n').filter(Boolean);
+      if (lines.length === 0) continue;
+      const parsedLines = lines.map(line => line.split(delim).map(cell => cell));
+      // Ensure header row exists and has non-empty cells
+      if (parsedLines[0].some(h => h && h.toString().trim() !== '')) {
+        return parsedLines;
+      }
+    } catch (e) {
+      // ignore and try next delimiter
+    }
+  }
+  return null;
+}
+
+function stripBOM(s) {
+  if (!s || typeof s !== 'string') return s;
+  return s.replace(/^\uFEFF/, '');
+}
+
+// Heuristic: check for null bytes in every other byte which often indicates UTF-16
+function detectLikelyUtf16(bytes) {
+  if (!bytes || bytes.length < 2) return false;
+  let zeroCountLE = 0;
+  let zeroCountBE = 0;
+  const checkLen = Math.min(bytes.length, 200);
+  for (let i = 0; i < checkLen - 1; i += 2) {
+    if (bytes[i] === 0) zeroCountBE++;
+    if (bytes[i + 1] === 0) zeroCountLE++;
+  }
+  // If a significant fraction of even or odd bytes are zero, likely UTF-16
+  return (zeroCountLE / (checkLen / 2) > 0.6) || (zeroCountBE / (checkLen / 2) > 0.6);
+}
+
+function decodeUtf16LE(bytes) {
+  // bytes is an array of numbers 0-255. Convert pairs to code units (little-endian).
+  const codeUnits = [];
+  for (let i = 0; i < bytes.length - 1; i += 2) {
+    codeUnits.push(bytes[i] | (bytes[i + 1] << 8));
+  }
+  return String.fromCharCode.apply(null, codeUnits);
+}
+
+function decodeUtf16BE(bytes) {
+  const codeUnits = [];
+  for (let i = 0; i < bytes.length - 1; i += 2) {
+    codeUnits.push((bytes[i] << 8) | bytes[i + 1]);
+  }
+  return String.fromCharCode.apply(null, codeUnits);
+}
+
+function extractLikelyIncidentNumbers(text) {
+  if (!text || typeof text !== 'string') return [];
+  const candidates = {};
+  // Common patterns: sequences of 6-12 digits, or SR/no formats like SR12345
+  const digitRe = /\b(\d{6,12})\b/g;
+  let m;
+  while ((m = digitRe.exec(text)) !== null) {
+    candidates[m[1]] = (candidates[m[1]] || 0) + 1;
+  }
+  // SR or SRno prefixes
+  const srRe = /\b(?:SR|SRno|SRNo|SR#)\s*[:#-]?\s*(\d{4,12})\b/g;
+  while ((m = srRe.exec(text)) !== null) {
+    candidates[m[1]] = (candidates[m[1]] || 0) + 2; // boost
+  }
+  // Turn into sorted list by frequency
+  const sorted = Object.keys(candidates).sort((a, b) => candidates[b] - candidates[a]);
+  return sorted;
 }
 
 function mergeTablesInBigQueryGeneric(config) {

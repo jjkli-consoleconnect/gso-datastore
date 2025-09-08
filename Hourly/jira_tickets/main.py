@@ -82,8 +82,13 @@ def load_config():
         return None
 
 def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
-    """Load base JQL from env (BASE_JQL_B64/BASE_JQL/JQL_FILE/PROJECTS_FILE) or ../JQL.txt next to Hourly."""
-    # Highest precedence: env-provided JQL text/base64
+    """Load base JQL from env (BASE_JQL_B64/BASE_JQL) or fall back to embedded default_text.
+
+    This loader deliberately avoids reading external files. Preference order:
+    1. BASE_JQL_B64 (base64-encoded JQL)
+    2. BASE_JQL (raw JQL string)
+    3. default_text (embedded project list)
+    """
     env_b64 = os.environ.get('BASE_JQL_B64')
     if env_b64:
         try:
@@ -100,50 +105,22 @@ def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
         logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL env variable")
         return env_text.strip()
 
-    env_path = os.environ.get('JQL_FILE') or os.environ.get('PROJECTS_FILE')
-    candidates = []
-    if env_path:
-        candidates.append(env_path)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates.append(os.path.normpath(os.path.join(script_dir, '..', 'JQL.txt')))
-    candidates.append(os.path.normpath(os.path.join(script_dir, '..', '..', 'InitialSync', 'JQL.txt')))
-    candidates.extend(['/config/JQL.txt', '/data/JQL.txt'])
-    for path in candidates:
-        if not path:
-            continue
-        try:
-            if os.path.isfile(path):
-                with open(path, 'r', encoding='utf-8') as f:
-                    raw = f.read()
-                    text = raw.strip('\n\r ')
-                    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-                    filtered = []
-                    for ln in lines:
-                        u = ln.lstrip()
-                        if u.startswith('#') or u.startswith('//') or u.startswith('--'):
-                            continue
-                        filtered.append(ln)
-                    rebuilt = '\n'.join(filtered)
-                    if filtered and not any('project ' in ln.lower() for ln in filtered):
-                        clauses = []
-                        for p in filtered:
-                            if p in ('*','ALL'):
-                                continue
-                            # Always quote project names to avoid JQL parse issues
-                            clauses.append(f'project = "{p}"')
-                        if clauses:
-                            rebuilt = '(' + ' OR '.join(clauses) + ')'
-                        else:
-                            rebuilt = ''
-                    logging.info(f"Loaded base JQL from: {path}")
-                    return rebuilt.strip() if rebuilt else text
-        except Exception as e:
-            logging.warning(f"[JQL_LOAD] Failed reading {path}: {e}")
     if default_text:
         logging.info("Using embedded default base JQL.")
         return default_text.strip()
-    logging.error("No base JQL found. Provide Hourly/JQL.txt or set JQL_FILE env var.")
+
+    logging.error("No base JQL found. Set BASE_JQL or provide a default_text.")
     return None
+
+
+def build_jql(base: str, extra: str, joiner: str = 'AND') -> str:
+    if not base or not base.strip():
+        return extra.strip()
+    b = base.strip()
+    e = extra.strip()
+    b = re.sub(r"(?i)\b(?:AND|OR)\s*$", '', b).rstrip()
+    e = re.sub(r"(?i)^(?:AND|OR)\b", '', e).lstrip()
+    return f"{b} {joiner} {e}"
 
 def convert_timestamp(timestamp):
     if timestamp:
@@ -318,7 +295,8 @@ def fetch_and_sync_jira_data():
         logging.info(f"Resolved base_jql for hourly tickets job: {base_jql}")
         if not base_jql:
             return
-        jql_query = f"{base_jql} AND updated >= -1h"
+        jql_query = build_jql(base_jql, "updated >= -1h", joiner='AND')
+        logging.info(f"Final jql_query for tickets: {jql_query}")
 
         # Expected JQL time window (relative -1h): [run_started-1h, run_started]
         jql_window_start = run_started - timedelta(hours=1)
