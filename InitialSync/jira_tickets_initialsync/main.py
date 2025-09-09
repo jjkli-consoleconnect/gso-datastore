@@ -565,6 +565,8 @@ def generate_ticket_rows(issues,ws,we):
             SR_REF_BQ_NAME: get_field_value(fields.get(SR_REF_JIRA_ID)),
             'SyncTime': now_str,
             'AppSupEscalation': get_field_value(fields.get(ESCALATION_FIELD)),
+            # Story Points (customfield_10347) as integer when possible
+            'StoryPoints': (None if fields.get('customfield_10347') is None else ((lambda v: (int(float(v)) if v is not None else None))(get_field_value(fields.get('customfield_10347'))))),
         }
         for name,(e,g,b,c) in sla.items():
             row[f'{name}_Elapsed']=e; row[f'{name}_Goal']=g; row[f'{name}_Breached']=b; row[f'{name}_Cycles']=c
@@ -616,7 +618,8 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         ('TimeToCloseAfterResolution_Goal','FLOAT64','NULLABLE'),
         ('TimeToCloseAfterResolution_Breached','BOOL','NULLABLE'),
         ('TimeToCloseAfterResolution_Cycles','INT64','NULLABLE'),
-        ('AppSupEscalation','STRING','NULLABLE'),
+    ('AppSupEscalation','STRING','NULLABLE'),
+    ('StoryPoints','INT64','NULLABLE'),
     ]]
     # Ensure destination table exists and only perform schema ensure once per process
     table_key=f"{dataset}.{table}"
@@ -717,8 +720,9 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         TimeToCloseAfterResolution_Elapsed = S.TimeToCloseAfterResolution_Elapsed,
         TimeToCloseAfterResolution_Goal = S.TimeToCloseAfterResolution_Goal,
         TimeToCloseAfterResolution_Breached = S.TimeToCloseAfterResolution_Breached,
-        TimeToCloseAfterResolution_Cycles = S.TimeToCloseAfterResolution_Cycles,
-        AppSupEscalation = S.AppSupEscalation
+    TimeToCloseAfterResolution_Cycles = S.TimeToCloseAfterResolution_Cycles,
+    AppSupEscalation = S.AppSupEscalation,
+    StoryPoints = S.StoryPoints
     WHEN NOT MATCHED THEN INSERT (
     T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, RemedyTicketNumber, Links, {SR_REF_BQ_NAME}, SyncTime,
         TimeToFirstResponse_Elapsed, TimeToFirstResponse_Goal, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles,
@@ -727,7 +731,7 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         TimeToApproveNormalChange_Elapsed, TimeToApproveNormalChange_Goal, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles,
         ProlongCase_Elapsed, ProlongCase_Goal, ProlongCase_Breached, ProlongCase_Cycles,
         TimeToCloseAfterResolution_Elapsed, TimeToCloseAfterResolution_Goal, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles,
-        AppSupEscalation
+    AppSupEscalation, StoryPoints
     ) VALUES (
     S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, S.Component, S.RemedyTicketNumber, S.Links, S.{SR_REF_BQ_NAME}, S.SyncTime,
         S.TimeToFirstResponse_Elapsed, S.TimeToFirstResponse_Goal, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles,
@@ -735,8 +739,8 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         S.TimeToResolution_Elapsed, S.TimeToResolution_Goal, S.TimeToResolution_Breached, S.TimeToResolution_Cycles,
         S.TimeToApproveNormalChange_Elapsed, S.TimeToApproveNormalChange_Goal, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles,
         S.ProlongCase_Elapsed, S.ProlongCase_Goal, S.ProlongCase_Breached, S.ProlongCase_Cycles,
-        S.TimeToCloseAfterResolution_Elapsed, S.TimeToCloseAfterResolution_Goal, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles,
-        S.AppSupEscalation
+    S.TimeToCloseAfterResolution_Elapsed, S.TimeToCloseAfterResolution_Goal, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles,
+    S.AppSupEscalation, S.StoryPoints
     )
     """
     try:

@@ -356,6 +356,7 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("TimeToCloseAfterResolution_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("TimeToCloseAfterResolution_Cycles", "INT64", mode="NULLABLE"),
             bigquery.SchemaField("AppSupEscalation", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("StoryPoints", "INT64", mode="NULLABLE"),
         ]
         if not create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
             logging.error("Setup failed: Could not create temp table.")
@@ -489,6 +490,10 @@ def fetch_and_sync_jira_data():
                     "TimeToCloseAfterResolution_Cycles": sla_metrics['TimeToCloseAfterResolution_Cycles'],
                     # Escalation field
                     "AppSupEscalation": get_field_value(fields.get('customfield_11171')),
+                    # Story Points (customfield_10347) as integer when possible
+                    "StoryPoints": (None if fields.get('customfield_10347') is None else (
+                        (lambda v: (int(float(v)) if v is not None else None))(get_field_value(fields.get('customfield_10347')))
+                    )),
                 }
                 return row
             except Exception as e:
@@ -567,7 +572,7 @@ def fetch_and_sync_jira_data():
                 "TimeToApproveNormalChange_Elapsed", "TimeToApproveNormalChange_Goal", "TimeToApproveNormalChange_Breached", "TimeToApproveNormalChange_Cycles",
                 "ProlongCase_Elapsed", "ProlongCase_Goal", "ProlongCase_Breached", "ProlongCase_Cycles",
                 "TimeToCloseAfterResolution_Elapsed", "TimeToCloseAfterResolution_Goal", "TimeToCloseAfterResolution_Breached", "TimeToCloseAfterResolution_Cycles",
-                "AppSupEscalation"
+                "AppSupEscalation", "StoryPoints"
             ]
             merge_query = f'''
                 MERGE `{dataset_id}.{table_id}` T
