@@ -8,3 +8,6 @@
 
 # Ensure .gitignore itself is tracked
 !.gitignore
+service-account.json
+Hourly/**/credentials.json
+InitialSync/**/credentials.json
