@@ -13,18 +13,13 @@ SELECT
   hd.Status AS hdStatus,
   hd.CaseType,
   CASE
-    WHEN CaseType IN ('Problem', 'Request', 'Incident', 'Question', 'Fault Report Request') THEN ('Remedy' || '-' || CaseType)
+    WHEN st.`T` IS NOT NULL THEN (REGEXP_EXTRACT(Key, r'^([A-Z]+)') || '-' || st.`T`)
+    WHEN CaseType IN ('Problem', 'Request', 'Incident', 'Question', 'Fault Report Request') THEN ('Remedy-' || CaseType)
     WHEN CaseType IN (
       'MCEvent-Child', 'MCEvent', 'RPO-Child', 'RPO',
       'UMW-Child', 'UMW', 'CRN-Child', 'CRN'
     ) THEN 'Remedy-Maintenance'
-    WHEN st.`T` IN (
-      'Incident', 'Change', 'Support Request', 'Ecosystem Health Check',
-      'Proactive Alert', 'Billing Task', 'Problem', 'Sustaining Reliability Engineering',
-      'Task', 'Project', 'Knowledge Management', 'Regression Testing',
-      'Service Request', 'Assignment', 'Service Request with Approvals'
-    ) THEN (REGEXP_EXTRACT(Key, r'^([A-Z]+)') || '-' || st.`T`)
-    ELSE null
+    ELSE NULL
   END AS TicketType,
   hd.Assigned_Group,
   hd.Categorization_Tier_1,
@@ -135,6 +130,5 @@ FULL OUTER JOIN FlattenedTierTwo AS st
   ON hd.Incident_Number = st.RemedyTicketNumber_flat
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON CONCAT('SR', st.SR_Ref) = shr.SRNo
-
 
 

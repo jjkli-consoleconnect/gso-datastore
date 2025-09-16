@@ -102,10 +102,10 @@ SELECT
 FROM
   TicketWithLinkedKeys twk
 LEFT JOIN
-  `pccw-internal-virt-agent-uat.JIRAProjects.CCAS_comments` c
+  `pccw-internal-virt-agent-uat.GSO.JiraComments` c
 ON
   twk.Key = c.Issue_Key
 LEFT JOIN
-  `pccw-internal-virt-agent-uat.JIRAProjects.CCAS_changelog` l
+  `pccw-internal-virt-agent-uat.GSO.JiraChangelog` l
 ON
   twk.Key = l.Issue_Key

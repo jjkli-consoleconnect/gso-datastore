@@ -11,6 +11,7 @@ SELECT
   t.Assignee,
   t.Component,
   t.RemedyTicketNumber,
+  t.Resolution,
   CASE
     WHEN LOWER(t.Links) LIKE '%none%' THEN NULL
     ELSE ARRAY_TO_STRING(
