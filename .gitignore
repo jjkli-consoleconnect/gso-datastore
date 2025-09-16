@@ -11,3 +11,20 @@
 service-account.json
 Hourly/**/credentials.json
 InitialSync/**/credentials.json
+
+# Keys and credentials (explicit)
+jira-bigquery-key.json
+jira-bigquery-key-*.json
+credentials.json
+found-credentials.txt
+service-account-*.json
+service-account.json
+
+# Ignore all credential files in any directory
+**/credentials.json
+**/service-account.json
+**/jira-bigquery-key.json
+**/client_secret.json
+
+# Archive folder for cleanup
+Archive/
