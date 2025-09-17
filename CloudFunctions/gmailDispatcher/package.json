@@ -1,0 +1,14 @@
+{
+  "name": "gmail-dispatcher",
+  "version": "1.0.0",
+  "description": "Pub/Sub -> Firestore mapping -> forward to Apps Script webhooks",
+  "main": "index.js",
+  "engines": {
+    "node": "18"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^6.4.0",
+    "axios": "^1.4.0",
+    "google-auth-library": "^9.0.0"
+  }
+}
