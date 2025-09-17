@@ -67,7 +67,23 @@ function consolidateAllSimple() {
     if (maxRows > 1) target.getRange(2, 1, Math.max(1, maxRows - 1), DATA_COLS).clearContent();
   } catch (e) { /* ignore */ }
 
-  try { target.getRange(1, 1, 1, Math.min(headerRow.length, DATA_COLS)).setValues([headerRow.slice(0, DATA_COLS)]); } catch (e) { /* ignore */ }
+  try {
+    // Preserve manual header edits: only write header if A1 is empty.
+    const preserveManualHeader = true;
+    let shouldWriteHeader = true;
+    try {
+      const existingA1 = target.getRange(1, 1).getValue();
+      if (preserveManualHeader && existingA1 !== '' && existingA1 !== null && existingA1 !== undefined) {
+        shouldWriteHeader = false;
+      }
+    } catch (e) {
+      // If we can't read A1 for some reason, fall back to writing header
+      shouldWriteHeader = true;
+    }
+    if (shouldWriteHeader) {
+      target.getRange(1, 1, 1, Math.min(headerRow.length, DATA_COLS)).setValues([headerRow.slice(0, DATA_COLS)]);
+    }
+  } catch (e) { /* ignore */ }
 
   if (finalRows.length > 0) {
     try {
