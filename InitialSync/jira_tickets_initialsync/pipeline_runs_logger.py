@@ -19,6 +19,7 @@ def log_pipeline_run(
     rows_merged: Optional[int] = None,
     error_code: Optional[str] = None,
     context: Optional[dict[str, Any]] = None,
+    duration_seconds: Optional[float] = None,
     project: str = "pccw-internal-virt-agent-uat",
     dataset: str = "GSO",
     table: str = "PipelineRuns",
@@ -45,6 +46,7 @@ def log_pipeline_run(
             @runid AS RunID,
             @status AS Status,
             @err AS ErrorCode,
+            @duration AS DurationSeconds,
             CAST(NULL AS JSON) AS Context
         ) S
         ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID
@@ -56,10 +58,11 @@ def log_pipeline_run(
             T.Message     = COALESCE(S.Message,     T.Message),
             T.Status      = COALESCE(S.Status,      T.Status),
             T.ErrorCode   = COALESCE(S.ErrorCode,   T.ErrorCode),
+            T.DurationSeconds = COALESCE(S.DurationSeconds, T.DurationSeconds),
             T.Context     = COALESCE(S.Context,     T.Context)
         WHEN NOT MATCHED THEN
-          INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, Context)
-          VALUES (CURRENT_TIMESTAMP(), S.PipelineName, S.WindowStart, S.WindowEnd, S.RowsMerged, S.LogLevel, S.Message, S.RunID, S.Status, S.ErrorCode, S.Context)
+          INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, DurationSeconds, Context)
+          VALUES (CURRENT_TIMESTAMP(), S.PipelineName, S.WindowStart, S.WindowEnd, S.RowsMerged, S.LogLevel, S.Message, S.RunID, S.Status, S.ErrorCode, S.DurationSeconds, S.Context)
     """
     params = [
         bigquery.ScalarQueryParameter("pipeline", "STRING", pipeline_name),
@@ -71,6 +74,7 @@ def log_pipeline_run(
         bigquery.ScalarQueryParameter("runid", "STRING", run_id),
         bigquery.ScalarQueryParameter("status", "STRING", status),
         bigquery.ScalarQueryParameter("err", "STRING", error_code),
+        bigquery.ScalarQueryParameter("duration", "FLOAT64", duration_seconds),
     ]
     job_config = bigquery.QueryJobConfig(query_parameters=params)
     delay = 1.0

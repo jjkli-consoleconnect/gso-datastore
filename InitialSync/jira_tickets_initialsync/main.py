@@ -805,6 +805,7 @@ def main():
         'Managed Security Services',
         'Sherbet'
     ]
+    default_projects.append('Customer Success Management')
     # External file override (InitialSync/JQL.txt)
     default_projects = load_projects_from_file(default_projects)
     

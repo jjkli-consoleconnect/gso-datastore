@@ -277,6 +277,7 @@ def fetch_and_sync_jira_data():
         base_default = (
             '('\
             'project = "GS&O Data Analytics" OR '\
+            'project = "Customer Success Management" OR '\
             'project = "GS&O Tool Automation" OR '\
             'project = "GS&O Knowledge Consolidation" OR '\
             'project = TAC OR '\

@@ -47,6 +47,25 @@ _level = getattr(logging, _env_level.upper(), None) if _env_level else (logging.
 logging.basicConfig(level=_level, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.info("Comments initial sync starting up")
 
+# Embedded default project list for deterministic runs; ensures Customer Success Management included
+default_projects = [
+    'GS&O Data Analytics',
+    'GS&O Tool Automation',
+    'GS&O Knowledge Consolidation',
+    'Google Contact Center AI Solution',
+    'TAC',
+    'VOICE - CE',
+    'IOT CE',
+    'Console Application Support',
+    'Console Connect Provisioning',
+    'Global Service Delivery Team',
+    'Transmission TX-CE',
+    'Mobility SMS - CE',
+    'Managed Security Services',
+    'Sherbet',
+    'Customer Success Management'
+]
+
 # Adaptive thresholds
 ADAPT_HIGH_ROWS=50000
 ADAPT_MEDIUM_ROWS=15000

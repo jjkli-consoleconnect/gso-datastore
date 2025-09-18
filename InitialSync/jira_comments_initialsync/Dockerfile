@@ -22,4 +22,4 @@ COPY jira-bigquery-key.json /app/jira-bigquery-key.json
 
 # Make entrypoint executable and use it as container entrypoint
 RUN chmod +x /app/entrypoint.sh
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["sh", "/app/entrypoint.sh"]

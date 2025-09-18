@@ -656,6 +656,7 @@ def main():
         'Managed Security Services',
         'Sherbet'
     ]
+    project_list_default.append('Customer Success Management')  # Added project
     # Ignore external file override and CLI args; always use embedded defaults
     project_list_default = load_projects_from_file(project_list_default)
     project_list = project_list_default
