@@ -2,6 +2,7 @@
  * Infer schema fields from a sample row (object with header keys)
  */
 function deriveSchemaFromSample(headers, sampleRow) {
+  if (!headers || !Array.isArray(headers)) return [];
   const fields = [];
   for (let i = 0; i < headers.length; i++) {
     const name = headers[i] || ('col_' + i);
@@ -90,19 +91,18 @@ function processNewFiles() {
 
   if (DEBUG) Logger.log('Scanned ' + scannedCount + ' total file(s) in source folder.');
 
-  // Dedupe 'all' by date: keep newest per date
-  const byDateAll = {};
+  // For 'all' expired, pick the single latest file by the date in the filename (not metadata)
+  let latestAll = null;
+  let latestAllDate = null;
   candidatesAll.forEach(c => {
-    const existing = byDateAll[c.date];
-    if (!existing || c.timestamp > existing.timestamp) {
-      if (existing) Logger.log('Replacing existing ALL file for date ' + c.date + ' with newer file: ' + c.name + ' (replacing ' + existing.name + ')');
-      byDateAll[c.date] = c;
-    } else {
-      Logger.log('Keeping existing ALL file for date ' + c.date + ': ' + existing.name + ' (skipping ' + c.name + ')');
+    const d = new Date(c.date);
+    if (!latestAllDate || d > latestAllDate) {
+      latestAllDate = d;
+      latestAll = c;
     }
   });
 
-  const selectedAllFiles = Object.keys(byDateAll).map(d => byDateAll[d].file);
+  const selectedAllFiles = latestAll ? [latestAll.file] : [];
 
   // For to-be-expired, pick the single latest file by the date in the filename (not metadata)
   let latestToBe = null;
@@ -115,7 +115,7 @@ function processNewFiles() {
     }
   });
 
-  Logger.log('Processing ' + selectedAllFiles.length + ' ALL files; TO-BE present=' + (latestToBe ? 'yes' : 'no'));
+  Logger.log('Processing ' + selectedAllFiles.length + ' ALL file; TO-BE present=' + (latestToBe ? 'yes' : 'no'));
 
   // Process ALL files as a single staging + MERGE
   if (selectedAllFiles.length > 0) {
@@ -499,6 +499,10 @@ function runMergeFromStaging(projectId, datasetId, stagingTable, targetTable, me
   let onClause;
   if (mergeKey && stagingFields.some(f => f.name.toLowerCase() === mergeKey.toLowerCase())) {
     onClause = `T.${mergeKey} = S.${mergeKey}`;
+    // Special case for expired_cost_items: include snapshot_date in ON clause to handle multiple snapshots per costitemid
+    if (targetTable.toLowerCase() === 'expired_cost_items' && mergeKey.toLowerCase() === 'costitemid' && stagingFields.some(f => f.name.toLowerCase() === 'snapshot_date')) {
+      onClause += ` AND T.snapshot_date = S.snapshot_date`;
+    }
   } else {
     const pairs = stagingFields.map(f => `COALESCE(CAST(T.${f.name} AS STRING),'') = COALESCE(CAST(S.${f.name} AS STRING),'')`);
     onClause = pairs.join(' AND ');

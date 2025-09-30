@@ -27,7 +27,7 @@ const csvTypeConfigurations = [
       "Closed_Date", "Submit_Date", "Assignee", "Closed_By", "Submitter", "TrueMTTR_mins",
       "Cust_ID", "Carrier", "Customer_Name", "SRno", "LastResolvedDate", "ReportedDate",
       "RespondedDate", "FaultCauseDetail", "LastModifiedDate", "ReportedBy",
-      "Product_Family", "ProductDescription" // <-- Removed ExtractedDescription from here
+      "Product_Family", "ProductDescription", "GSMP_Circuit_ID" // <-- Added new field
     ],
     primaryKeyForMerge: "Incident_Number",
     fieldMap: {
@@ -40,7 +40,8 @@ const csvTypeConfigurations = [
       "Closed Date": "Closed_Date", "Submit Date": "Submit_Date", "ClosedBy": "Closed_By",
       "Cust ID": "Cust_ID", "CustomerName": "Customer_Name", "SRno": "SRno", "ReportedBy": "ReportedBy",
       "Product Family": "Product_Family", // <-- Add mapping
-      "ProductDescription": "ProductDescription" // <-- Add mapping
+      "ProductDescription": "ProductDescription", // <-- Add mapping
+      "GSMP Circuit ID": "GSMP_Circuit_ID" // <-- Added new mapping
     },
     timestampFields: ["GCSC_1st_Customer_Update", "GCSC_2nd_Customer_Update", "GCSC_3rd_Customer_Update",
                       "Closed_Date", "Submit_Date", "LastResolvedDate", "ReportedDate", "RespondedDate",
