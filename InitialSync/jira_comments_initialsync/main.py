@@ -480,6 +480,7 @@ def main():
     'GS&O Data Analytics',
     'GS&O Tool Automation',
     'GS&O Knowledge Consolidation',
+    'Google Contact Center AI Solution',
     'TAC',
     'VOICE - CE',
     'IOT CE',
@@ -489,7 +490,8 @@ def main():
     'Transmission TX-CE',
     'Mobility SMS - CE',
     'Managed Security Services',
-    'Sherbet'
+    'Sherbet',
+    'Customer Success Management'
     ]
     # External file override removed: always use embedded defaults
     default_projects = load_projects_from_file(default_projects)

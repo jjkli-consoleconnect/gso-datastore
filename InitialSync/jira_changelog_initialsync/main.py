@@ -645,6 +645,7 @@ def main():
         'GS&O Data Analytics',
         'GS&O Tool Automation',
         'GS&O Knowledge Consolidation',
+        'Google Contact Center AI Solution',
         'TAC',
         'VOICE - CE',
         'IOT CE',
@@ -654,9 +655,9 @@ def main():
         'Transmission TX-CE',
         'Mobility SMS - CE',
         'Managed Security Services',
-        'Sherbet'
+        'Sherbet',
+        'Customer Success Management'
     ]
-    project_list_default.append('Customer Success Management')  # Added project
     # Ignore external file override and CLI args; always use embedded defaults
     project_list_default = load_projects_from_file(project_list_default)
     project_list = project_list_default

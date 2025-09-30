@@ -1,3 +1,0 @@
-/* REMOVED: Using embedded default_projects in pipeline mains
-	Original JQL omitted to force use of embedded defaults */
-project = "GS&O Tool Automation" OR
