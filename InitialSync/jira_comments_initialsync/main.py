@@ -63,7 +63,9 @@ default_projects = [
     'Mobility SMS - CE',
     'Managed Security Services',
     'Sherbet',
-    'Customer Success Management'
+    'Customer Success Management',
+    'Operational Case Reviews',
+    'QMS Documentation'
 ]
 
 # Adaptive thresholds

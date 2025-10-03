@@ -803,9 +803,11 @@ def main():
         'Transmission TX-CE',
         'Mobility SMS - CE',
         'Managed Security Services',
-        'Sherbet'
+        'Sherbet',
+        'Customer Success Management',
+        'Operational Case Reviews',
+        'QMS Documentation'
     ]
-    default_projects.append('Customer Success Management')
     # External file override (InitialSync/JQL.txt)
     default_projects = load_projects_from_file(default_projects)
     

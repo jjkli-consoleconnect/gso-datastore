@@ -290,7 +290,9 @@ def fetch_and_sync_jira_data():
             'project = "Mobility SMS - CE" OR '\
             'project = "Managed Security Services" OR '\
             'project = Sherbet OR '\
-            'project = "Google Contact Center AI Solution" '
+            'project = "Google Contact Center AI Solution" OR '\
+            'project = "QMS Documentation" OR '\
+            'project = "Operational Case Reviews" '
             ')'
         )
         base_jql = load_base_jql(default_text=base_default)

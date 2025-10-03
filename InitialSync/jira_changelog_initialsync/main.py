@@ -656,7 +656,9 @@ def main():
         'Mobility SMS - CE',
         'Managed Security Services',
         'Sherbet',
-        'Customer Success Management'
+        'Customer Success Management',
+        'Operational Case Reviews',
+        'QMS Documentation'
     ]
     # Ignore external file override and CLI args; always use embedded defaults
     project_list_default = load_projects_from_file(project_list_default)
