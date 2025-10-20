@@ -1,151 +1,121 @@
-SELECT
-  snapshot_date,
-  CAST(base.costitemid AS STRING) AS costitemid,
-  salesrecord,
-  signedcompany,
-  vendorname,
-  vendorcode,
-  costtype,
-  vendortype,
-  reachtype,
-  glcode,
-  ccc,
-  potype,
-  ponumber,
-  polinenum,
-  lispnum,
-  costcategory,
-  costsubcategory,
-  nomenclature,
-  description,
-  aendaddress,
-  bendaddress,
-  billingtype,
-  currency,
-  quantity,
-  unitprice,
-  uom,
-  gcid,
-  sequence,
-  rateusd,
-  mrc,
-  mrc_usd,
-  startbillingdate,
-  stopbillingdate,
-  servicehandoverdate,
-  receivedqty,
-  reveivedamount,
-  receivingdate,
-  receivingyear,
-  customername,
-  srproductfamily,
-  srproducttype,
-  salesregion,
-  signedbdmname,
-  srstatus,
-  provisioningcentre,
-  requester,
-  projectnumber,
-  terminationnoticeday,
-  itemstatus,
-  popid,
-  terminationpriorsendingday,
-  prid,
-  pritemid,
-  wonumber,
-  pccwgserviceid,
-  vendorcircuitid,
-  reqdetailid,
-  prrequestergroup,
-  next_pr,
-  next_br,
-  next_ct,
-  cost_type_desc,
-  cost_category,
-  expire_type,
-  rpttype,
-  LISPONum,
-
-  -- New column based on your logic
-  CASE
-    WHEN expire_type = 'To-be-Expired' THEN DATE_TRUNC(stopbillingdate, WEEK(MONDAY))
-    ELSE DATE_TRUNC(snapshot_date, WEEK(MONDAY))
-  END AS DateCombined,
-
-  -- Fields for top 80% analysis (these will be filled from the ranked CTE)
-  IFNULL(top80.top_80_count, 0) AS top_80_count,
-  IFNULL(top80.top_80_amount, 0.0) AS top_80_amount,
-  IFNULL(rk.is_top_80, FALSE) AS is_top_80
-
-FROM
-  -- base data
-  `pccw-internal-virt-agent-uat.CostItemExpiration.expired_cost_items` base
-
--- CTE to compute running sum and top 80% aggregates (single row)
-CROSS JOIN (
-  WITH base_cte AS (
-    SELECT *, COALESCE(mrc_usd, 0) AS mrc_usd_nonnull FROM `pccw-internal-virt-agent-uat.CostItemExpiration.expired_cost_items`
-    WHERE DATE(snapshot_date) >= '2025-09-15'
-  ),
-  total AS (
-    SELECT SUM(mrc_usd_nonnull) AS total_mrc FROM base_cte
-  ),
-  ranked AS (
-    SELECT
-      costitemid,
-      mrc_usd_nonnull,
-      ROW_NUMBER() OVER (ORDER BY mrc_usd_nonnull DESC) AS rn,
-      SUM(mrc_usd_nonnull) OVER (ORDER BY mrc_usd_nonnull DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_sum
-    FROM base_cte
-  ),
-  threshold AS (
-    SELECT total_mrc * 0.8 AS thresh FROM total
-  ),
-  flagged AS (
-    SELECT
-      r.costitemid,
-      r.mrc_usd_nonnull,
-      r.rn,
-      r.running_sum,
-      t.thresh,
-      -- mark rows that are part of the top 80% (include the row that crosses the threshold)
-      CASE WHEN r.running_sum <= t.thresh THEN TRUE
-           WHEN r.running_sum - r.mrc_usd_nonnull < t.thresh THEN TRUE
-           ELSE FALSE END AS is_top_80
-    FROM ranked r CROSS JOIN threshold t
-  )
+WITH base_data AS (
   SELECT
-    COUNTIF(is_top_80) AS top_80_count,
-    SUM(CASE WHEN is_top_80 THEN mrc_usd_nonnull ELSE 0 END) AS top_80_amount
-  FROM flagged
-) top80
+    *,
+    COALESCE(mrc_usd, 0) AS mrc_usd_nonnull
+  FROM `pccw-internal-virt-agent-uat.CostItemExpiration.expired_cost_items`
+  WHERE expire_type != 'To-be-Expired'
+    OR snapshot_date = (SELECT MAX(snapshot_date) FROM `pccw-internal-virt-agent-uat.CostItemExpiration.expired_cost_items` WHERE expire_type = 'To-be-Expired')
+),
 
--- per-row flag join (to get is_top_80 for each costitem)
-LEFT JOIN (
-  WITH base_cte AS (
-    SELECT *, COALESCE(mrc_usd, 0) AS mrc_usd_nonnull FROM `pccw-internal-virt-agent-uat.CostItemExpiration.expired_cost_items`
-    WHERE DATE(snapshot_date) >= '2025-09-15'
-  ),
-  total AS (
-    SELECT SUM(mrc_usd_nonnull) AS total_mrc FROM base_cte
-  ),
-  ranked AS (
-    SELECT
-      costitemid,
-      mrc_usd_nonnull,
-      ROW_NUMBER() OVER (ORDER BY mrc_usd_nonnull DESC) AS rn,
-      SUM(mrc_usd_nonnull) OVER (ORDER BY mrc_usd_nonnull DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_sum
-    FROM base_cte
-  ),
-  threshold AS (
-    SELECT total_mrc * 0.8 AS thresh FROM total
-  )
-  SELECT costitemid, 
-    CASE WHEN running_sum <= thresh THEN TRUE
-         WHEN running_sum - mrc_usd_nonnull < thresh THEN TRUE
-         ELSE FALSE END AS is_top_80
-  FROM ranked r CROSS JOIN threshold t
-) rk
-ON CAST(base.costitemid AS STRING) = CAST(rk.costitemid AS STRING)
+ranked_costs AS (
+  SELECT
+    *,
+    SUM(mrc_usd_nonnull) OVER (
+      PARTITION BY snapshot_date
+      ORDER BY mrc_usd_nonnull DESC
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS running_total,
+    SUM(mrc_usd_nonnull) OVER (PARTITION BY snapshot_date) AS total_mrc_usd,
+    SUM(mrc_usd_nonnull) OVER (PARTITION BY snapshot_date) * 0.8 AS target_mrc_usd
+  FROM base_data
+),
 
-WHERE DATE(base.snapshot_date) >= '2025-09-15'
+flagged_rows AS (
+  SELECT
+    *,
+    CASE
+      WHEN running_total <= target_mrc_usd THEN TRUE
+      WHEN running_total - mrc_usd_nonnull < target_mrc_usd THEN TRUE
+      ELSE FALSE
+    END AS is_top_80
+  FROM ranked_costs
+),
+
+summary AS (
+  SELECT
+    snapshot_date,
+    COUNTIF(is_top_80) AS costitemid_count_to_80pct,
+    SUM(CASE WHEN is_top_80 THEN mrc_usd_nonnull ELSE 0 END) AS top_80_amount,
+    MIN(CASE WHEN is_top_80 THEN mrc_usd_nonnull ELSE NULL END) AS threshold_mrc_usd_at_cutoff,
+    MAX(target_mrc_usd) AS eighty_percent_of_total
+  FROM flagged_rows
+  GROUP BY snapshot_date
+)
+
+SELECT DISTINCT
+  fr.snapshot_date,
+  CAST(fr.costitemid AS STRING) AS costitemid,
+  fr.salesrecord,
+  fr.signedcompany,
+  fr.vendorname,
+  fr.vendorcode,
+  fr.costtype,
+  fr.vendortype,
+  fr.reachtype,
+  fr.glcode,
+  fr.ccc,
+  fr.potype,
+  fr.ponumber,
+  fr.polinenum,
+  fr.lispnum,
+  fr.costcategory,
+  fr.costsubcategory,
+  fr.nomenclature,
+  fr.description,
+  fr.aendaddress,
+  fr.bendaddress,
+  fr.billingtype,
+  fr.currency,
+  fr.quantity,
+  fr.unitprice,
+  fr.uom,
+  fr.gcid,
+  fr.sequence,
+  fr.rateusd,
+  fr.mrc,
+  fr.mrc_usd,
+  fr.startbillingdate,
+  fr.stopbillingdate,
+  fr.servicehandoverdate,
+  fr.receivedqty,
+  fr.reveivedamount,
+  fr.receivingdate,
+  fr.receivingyear,
+  fr.customername,
+  fr.srproductfamily,
+  fr.srproducttype,
+  fr.salesregion,
+  fr.signedbdmname,
+  fr.srstatus,
+  fr.provisioningcentre,
+  fr.requester,
+  fr.projectnumber,
+  fr.terminationnoticeday,
+  fr.itemstatus,
+  fr.popid,
+  fr.terminationpriorsendingday,
+  fr.prid,
+  fr.pritemid,
+  fr.wonumber,
+  fr.pccwgserviceid,
+  fr.vendorcircuitid,
+  fr.reqdetailid,
+  fr.prrequestergroup,
+  fr.next_pr,
+  fr.next_br,
+  fr.next_ct,
+  fr.cost_type_desc,
+  fr.cost_category,
+  fr.expire_type,
+  fr.rpttype,
+  fr.LISPONum,
+  CASE
+    WHEN fr.expire_type = 'To-be-Expired' THEN DATE_TRUNC(fr.stopbillingdate, WEEK(MONDAY))
+    ELSE DATE_TRUNC(fr.snapshot_date, WEEK(MONDAY))
+  END AS DateCombined,
+  s.costitemid_count_to_80pct,
+  s.eighty_percent_of_total,
+  s.threshold_mrc_usd_at_cutoff,
+  fr.is_top_80
+FROM flagged_rows fr
+JOIN summary s ON fr.snapshot_date = s.snapshot_date

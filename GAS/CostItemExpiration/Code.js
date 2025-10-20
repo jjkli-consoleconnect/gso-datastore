@@ -9,8 +9,6 @@ function deriveSchemaFromSample(headers, sampleRow) {
     const val = sampleRow && sampleRow[name];
     let type = 'STRING';
     if (val instanceof Date) type = 'DATE';
-    else if (typeof val === 'number') type = 'FLOAT64';
-    else type = 'STRING';
     fields.push({ name: name, type: type });
   }
   return fields;
@@ -37,9 +35,9 @@ function processNewFiles() {
   const lastProcessedIso = lastProcessed ? new Date(lastProcessed).toISOString() : 'never';
   if (DEBUG) Logger.log('CostItemExpiration run started at ' + runStart.toISOString() + ' with lastProcessed=' + lastProcessedIso);
 
-  // Patterns: accept both the older "snapshot" naming and the newer "cost_item" naming for safety
-  const patternAll = /^(?:weekly_all_expired_snapshot_|weekly_all_expired_cost_item_)(\d{4}-\d{2}-\d{2})\.xlsx$/i;
-  const patternToBe = /^weekly_to_be_expired_cost_item_(\d{4}-\d{2}-\d{2})\.xlsx$/i;
+  // Patterns: flexible to accept variations in filename prefixes for safety (weekly optional, all_ optional for expired)
+  const patternAll = /^weekly_?(all_)?expired.*_(\d{4}-\d{2}-\d{2})\.xlsx$/i;
+  const patternToBe = /^weekly_?to_be_expired.*_(\d{4}-\d{2}-\d{2})\.xlsx$/i;
 
   const candidatesAll = [];
   const candidatesToBe = [];
@@ -60,14 +58,16 @@ function processNewFiles() {
     const effectiveTimestamp = Math.max(createdTime, updatedTime);
     const effectiveIso = effectiveTimestamp ? new Date(effectiveTimestamp).toISOString() : 'unknown';
 
+    Logger.log('Scanned file: ' + fileName + ' effective=' + effectiveIso);
+
     // Check 'all' pattern
     let m = fileName.match(patternAll);
     if (m) {
       const dateStr = m[1];
       if (effectiveTimestamp <= lastProcessed) {
-        if (DEBUG) Logger.log('Skipping ALL file (timestamp <= lastProcessed): ' + fileName + ' effective=' + effectiveIso + ' lastProcessed=' + lastProcessedIso);
+        Logger.log('Skipping ALL file (timestamp <= lastProcessed): ' + fileName + ' effective=' + effectiveIso + ' lastProcessed=' + lastProcessedIso + ' diff=' + (effectiveTimestamp - lastProcessed));
       } else {
-        if (DEBUG) Logger.log('Queueing ALL file: ' + fileName + ' effective=' + effectiveIso);
+        Logger.log('Queueing ALL file: ' + fileName + ' effective=' + effectiveIso);
         candidatesAll.push({ file: file, name: fileName, date: dateStr, timestamp: effectiveTimestamp });
         if (effectiveTimestamp > processedNewestTimestamp) processedNewestTimestamp = effectiveTimestamp;
       }
@@ -79,7 +79,7 @@ function processNewFiles() {
     if (m) {
       const dateStr = m[1];
       if (effectiveTimestamp <= lastProcessed) {
-        if (DEBUG) Logger.log('Skipping TO-BE file (timestamp <= lastProcessed): ' + fileName + ' effective=' + effectiveIso + ' lastProcessed=' + lastProcessedIso);
+        Logger.log('Skipping TO-BE file (timestamp <= lastProcessed): ' + fileName + ' effective=' + effectiveIso + ' lastProcessed=' + lastProcessedIso + ' diff=' + (effectiveTimestamp - lastProcessed));
       } else {
         if (DEBUG) Logger.log('Queueing TO-BE file: ' + fileName + ' effective=' + effectiveIso);
         candidatesToBe.push({ file: file, name: fileName, date: dateStr, timestamp: effectiveTimestamp });
@@ -116,6 +116,8 @@ function processNewFiles() {
   });
 
   Logger.log('Processing ' + selectedAllFiles.length + ' ALL file; TO-BE present=' + (latestToBe ? 'yes' : 'no'));
+  if (selectedAllFiles.length > 0) Logger.log('Selected ALL file: ' + selectedAllFiles[0].getName());
+  if (latestToBe) Logger.log('Selected TO-BE file: ' + latestToBe.file.getName());
 
   // Process ALL files as a single staging + MERGE
   if (selectedAllFiles.length > 0) {
@@ -277,9 +279,16 @@ function processAndMergeFiles(files, targetTableId) {
         if (v instanceof Date) v = v.toISOString().split('T')[0];
         obj[h] = (v === '' || v === undefined) ? null : v;
       });
+      // If expire_type column is missing, infer from filename (all files are 'Expired')
+      if (!obj.hasOwnProperty('expire_type')) obj.expire_type = 'Expired';
       allJsonRows.push({ json: obj });
     });
   });
+
+  // Ensure expire_type is in commonHeaders for schema creation
+  if (commonHeaders && commonHeaders.indexOf('expire_type') === -1) {
+    commonHeaders.push('expire_type');
+  }
 
   if (!commonHeaders || allJsonRows.length === 0) {
     Logger.log('No rows found to stage.');
@@ -318,8 +327,8 @@ function processAndMergeFiles(files, targetTableId) {
 
 /**
  * Process the latest to-be-expired file: stage and then run a MERGE that effectively replaces rows
- * where expire_type = 'To-be-Expired'. We'll stage the file and then delete existing To-be-Expired rows
- * via MERGE semantics (update/delete) and insert the new ones.
+ * where expire_type = 'To-be-Expired'. We'll stage the file (setting expire_type for all rows based on filename)
+ * and then delete existing To-be-Expired rows via MERGE semantics (update/delete) and insert the new ones.
  */
 function processAndMergeToBeExpired(file, targetTableId) {
   const projectId = 'pccw-internal-virt-agent-uat';
@@ -344,11 +353,13 @@ function processAndMergeToBeExpired(file, targetTableId) {
       if (v instanceof Date) v = v.toISOString().split('T')[0];
       obj[h] = (v === '' || v === undefined) ? null : v;
     });
+    // Set expire_type based on filename (to-be files are 'To-be-Expired')
+    obj.expire_type = 'To-be-Expired';
     return { json: obj };
-  }).filter(x => x.json && String(x.json['expire_type'] || '').trim() === 'To-be-Expired');
+  });
 
   if (jsonRows.length === 0) {
-    Logger.log('No To-be-Expired rows in latest file.');
+    Logger.log('No rows in to-be file: ' + file.getName());
     return;
   }
 
@@ -523,10 +534,13 @@ function runMergeFromStaging(projectId, datasetId, stagingTable, targetTable, me
     return `SAFE_CAST(S.${tname} AS ${targetType})`;
   }).join(', ');
 
-  // If optionalWhere is provided, use a subquery to filter staging rows
+  // If optionalWhere is provided, use a subquery to filter staging rows; otherwise deduplicate to avoid MERGE conflicts
   let usingClause = `\`${projectId}.${datasetId}.${stagingTable}\` S`;
   if (optionalWhere) {
     usingClause = `(SELECT * FROM \`${projectId}.${datasetId}.${stagingTable}\` WHERE ${optionalWhere}) S`;
+  } else {
+    // Deduplicate staging table on merge keys to prevent multiple source rows matching one target row
+    usingClause = `(SELECT * FROM \`${projectId}.${datasetId}.${stagingTable}\` QUALIFY ROW_NUMBER() OVER (PARTITION BY CAST(costitemid AS STRING), CAST(snapshot_date AS STRING) ORDER BY costitemid) = 1) S`;
   }
 
   const mergeSql = `MERGE \`${projectId}.${datasetId}.${targetTable}\` T

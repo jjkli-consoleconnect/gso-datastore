@@ -1,11 +1,12 @@
 WITH FlattenedTierTwo AS (
   SELECT
     t.*,
+  UPPER(NULLIF(TRIM(t.Links), '')) AS Links_clean,
     remedy_incident AS RemedyTicketNumber_flat
   FROM
     `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
     LEFT JOIN UNNEST(t.RemedyTicketNumber) AS remedy_incident
-  WHERE NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC)')
+  WHERE NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC|OCR|QMS|MSS|CSM)')
 )
 
 SELECT
@@ -14,10 +15,9 @@ SELECT
   hd.CaseType,
   CASE
     WHEN st.`T` IS NOT NULL THEN (REGEXP_EXTRACT(Key, r'^([A-Z]+)') || '-' || st.`T`)
-    WHEN CaseType IN ('Problem', 'Request', 'Incident', 'Question', 'Fault Report Request') THEN ('Remedy-' || CaseType)
+    WHEN CaseType IN ('Problem', 'Request', 'Incident', 'Question', 'Fault Report Request', 'MCEvent-Child', 'MCEvent') THEN ('Remedy-' || CaseType)
     WHEN CaseType IN (
-      'MCEvent-Child', 'MCEvent', 'RPO-Child', 'RPO',
-      'UMW-Child', 'UMW', 'CRN-Child', 'CRN'
+      'RPO-Child', 'RPO', 'UMW-Child', 'UMW', 'CRN-Child', 'CRN'
     ) THEN 'Remedy-Maintenance'
     ELSE NULL
   END AS TicketType,
@@ -68,29 +68,30 @@ SELECT
   st.Resolved,
   st.Assignee AS SecondTierAssignee,
   st.RemedyTicketNumber,
-  st.Links,
+  st.Links_clean AS Links,
   REGEXP_EXTRACT(Key, r'^([A-Z]+)') AS ProjectCode,
   CASE
+    WHEN STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 THEN 'T3'
+
     WHEN (
-      (STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0 OR STRPOS(Key, 'MSS') > 0) AND
+      (STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0) AND
       (
-        STRPOS(Links, 'AS3491') > 0 OR
-        STRPOS(Links, 'CCONB') > 0 OR
-        STRPOS(Links, 'COPS') > 0 OR
-        STRPOS(Links, 'CSCM') > 0 OR
-        STRPOS(Links, 'SH') > 0
+        STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 OR
+        STRPOS(COALESCE(st.Links_clean, ''), 'CCONB') > 0 OR
+        STRPOS(COALESCE(st.Links_clean, ''), 'COPS') > 0 OR
+        STRPOS(COALESCE(st.Links_clean, ''), 'CSCM') > 0
       )
     ) THEN 'T3'
 
     WHEN (
-      (STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0 OR STRPOS(Key, 'MSS') > 0) AND
+      (STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0) AND
       (
-        Links IS NULL OR NOT (
-          STRPOS(Links, 'AS3491') > 0 OR
-          STRPOS(Links, 'CCONB') > 0 OR
-          STRPOS(Links, 'COPS') > 0 OR
-          STRPOS(Links, 'CSCM') > 0 OR
-          STRPOS(Links, 'SH') > 0
+        st.Links_clean IS NULL OR NOT (
+          STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 OR
+          STRPOS(COALESCE(st.Links_clean, ''), 'CCONB') > 0 OR
+          STRPOS(COALESCE(st.Links_clean, ''), 'COPS') > 0 OR
+          STRPOS(COALESCE(st.Links_clean, ''), 'CSCM') > 0 OR
+          STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0
         )
       )
     ) THEN 'T2'
@@ -100,18 +101,17 @@ SELECT
     ELSE NULL
   END AS SolvedBy,
   CASE
-    WHEN STRPOS(Links, 'AS3491') > 0 THEN 'AS3491'
-    WHEN STRPOS(Links, 'CCONB') > 0 THEN 'CCONB'
-    WHEN STRPOS(Links, 'COPS') > 0 THEN 'COPS'
-    WHEN STRPOS(Links, 'CSCM') > 0 THEN 'CSCM'
-    WHEN STRPOS(Links, 'SH') > 0 THEN 'SH'
+    WHEN STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 THEN 'AS3491'
+    WHEN STRPOS(COALESCE(st.Links_clean, ''), 'CCONB') > 0 THEN 'CCONB'
+    WHEN STRPOS(COALESCE(st.Links_clean, ''), 'COPS') > 0 THEN 'COPS'
+    WHEN STRPOS(COALESCE(st.Links_clean, ''), 'CSCM') > 0 THEN 'CSCM'
+    WHEN STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 THEN 'SH'
     WHEN STRPOS(Key, 'CCAS') > 0 THEN 'CCAS'
     WHEN STRPOS(Key, 'TAC') > 0 THEN 'TAC'
     WHEN STRPOS(Key, 'VOICECE') > 0 THEN 'VOICECE'
     WHEN STRPOS(Key, 'IOTCE') > 0 THEN 'IOTCE'
     WHEN STRPOS(Key, 'TXCE') > 0 THEN 'TXCE'
     WHEN STRPOS(Key, 'SMSCE') > 0 THEN 'SMSCE'
-    WHEN STRPOS(Key, 'MSS') > 0 THEN 'MSS'
     ELSE NULL
   END AS SolvedByProject,
   CASE 
@@ -130,5 +130,4 @@ FULL OUTER JOIN FlattenedTierTwo AS st
   ON hd.Incident_Number = st.RemedyTicketNumber_flat
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON CONCAT('SR', st.SR_Ref) = shr.SRNo
-
 

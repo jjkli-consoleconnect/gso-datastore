@@ -1,4 +1,0 @@
-mkdir gas && cd gas
-clasp clone 1o_75uWZ5jb1Tixt6h5xAgj8ttgdnmOP4-YCB8_0_Xx5c0JiNh_jWIbgc
-clasp clone 1iZCSMUBHw03UvrhFFBGjVLOc9Bo1Kyo3mYz7IVWpw4Zxns0paiZvKm75
-clasp clone 16xEPmJ3A75CoILJUEtAbkirPl_qT2uALOTNnk6xr9HsMhXWGixyrp122

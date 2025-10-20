@@ -775,7 +775,12 @@ def main():
     cfg=load_config();
     if not cfg: return
     dataset='GSO'; table='JiraTickets'; progress=f'{table}_progress'; pipeline='jira_tickets'; run_id=str(uuid.uuid4())
-    base_days=7; min_start=datetime(2024,7,1,tzinfo=timezone.utc); client=bigquery.Client()
+    base_days=7; min_start=datetime(2024,7,1,tzinfo=timezone.utc)
+    try:
+        client=bigquery.Client()
+    except Exception as e:
+        logging.exception(f"BigQuery client init failed: {e}")
+        return
     run_started = datetime.now(timezone.utc)  # Track overall pipeline start time
     logging.info('Starting tickets pipeline')
     prog_schema=[bigquery.SchemaField(n,t) for n,t in [

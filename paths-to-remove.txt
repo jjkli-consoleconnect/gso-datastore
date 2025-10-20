@@ -1,9 +1,0 @@
-\service-account.json
-jira-bigquery-key.json
-Hourly/jira_tickets/credentials.json
-Hourly/jira_comments/credentials.json
-Hourly/jira_changelog/credentials.json
-InitialSync/**/credentials.json
-InitialSync/**/service-account.json
-DockerRun/**/credentials.json
-Adhoc Run/**/credentials.json

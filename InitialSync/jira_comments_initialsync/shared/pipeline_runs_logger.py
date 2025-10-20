@@ -47,7 +47,7 @@ def log_pipeline_run(
         WHEN MATCHED THEN UPDATE SET
             T.WindowStart = COALESCE(S.WindowStart, T.WindowStart),
             T.WindowEnd   = COALESCE(S.WindowEnd,   T.WindowEnd),
-            T.RowsMerged  = COALESCE(S.RowsMerged,  T.RowsMerged),
+            T.RowsMerged  = IFNULL(T.RowsMerged, 0) + IFNULL(S.RowsMerged, 0),
             T.LogLevel    = COALESCE(S.LogLevel,    T.LogLevel),
             T.Message     = COALESCE(S.Message,     T.Message),
             T.Status      = COALESCE(S.Status,      T.Status),

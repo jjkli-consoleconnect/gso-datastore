@@ -1,7 +1,3 @@
-/**
- * Minimal consolidation: keep only full rebuild + formula helper + onOpen menu.
- */
-
 function consolidateAllSimple() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const targetName = 'BigQuery-consolidated';
@@ -52,13 +48,19 @@ function consolidateAllSimple() {
 
   const finalRows = rows.map(normalize);
   const DATA_COLS = 14; // A..N
+  const FORMULA_START_COL = 15; // O
+  const FORMULA_END_COL = 19;   // S
+  const FORMULA_COLS = FORMULA_END_COL - FORMULA_START_COL + 1;
+  const dataRowCount = finalRows.length;
 
   // Snapshot formulas from O2:S2
   let snapshotFormulas = null;
   try {
-    const startCol = 15; const endCol = 19; const numCols = endCol - startCol + 1;
-    if (target.getLastColumn() >= startCol) snapshotFormulas = target.getRange(2, startCol, 1, numCols).getFormulasR1C1();
-    else snapshotFormulas = [new Array(numCols).fill('')];
+    if (target.getLastColumn() >= FORMULA_START_COL) {
+      snapshotFormulas = target.getRange(2, FORMULA_START_COL, 1, FORMULA_COLS).getFormulasR1C1();
+    } else {
+      snapshotFormulas = [new Array(FORMULA_COLS).fill('')];
+    }
   } catch (e) { snapshotFormulas = null; }
 
   // Clear A..N and write header + data into A..N only
@@ -100,28 +102,42 @@ function consolidateAllSimple() {
   // Restore O2:S2 formulas and copy down
   try {
     if (snapshotFormulas) {
-      try { target.getRange(2, 15, 1, snapshotFormulas[0].length).setFormulasR1C1(snapshotFormulas); } catch (e) { /* ignore */ }
+      try { target.getRange(2, FORMULA_START_COL, 1, snapshotFormulas[0].length).setFormulasR1C1(snapshotFormulas); } catch (e) { /* ignore */ }
     }
-    fillFormulasInConsolidated(2, 15, 19);
+    fillFormulasInConsolidated(2, FORMULA_START_COL, FORMULA_END_COL, dataRowCount);
   } catch (e) { /* ignore */ }
 
   const log = ss.getSheetByName('ConsolidationSummary') || ss.insertSheet('ConsolidationSummary');
   log.appendRow([new Date(), 'consolidateAllSimple', 'sheets', sheets.length, 'rowsWritten', finalRows.length]);
 }
 
-function fillFormulasInConsolidated(srcRow, startCol, endCol) {
+function fillFormulasInConsolidated(srcRow, startCol, endCol, dataRowCount) {
   srcRow = srcRow || 2; startCol = startCol || 15; endCol = endCol || 19;
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const target = ss.getSheetByName('BigQuery-consolidated');
   if (!target) return;
-  const lastRow = target.getLastRow();
-  if (lastRow <= srcRow) return;
   const numCols = endCol - startCol + 1;
+  dataRowCount = dataRowCount || 0;
+
+  const rowsNeedingFormulas = Math.max(0, dataRowCount - 1);
   try {
-    const srcRange = target.getRange(srcRow, startCol, 1, numCols);
-    const destRange = target.getRange(2, startCol, lastRow - 1, numCols);
-    srcRange.copyTo(destRange, SpreadsheetApp.CopyPasteType.PASTE_FORMULA, false);
+    if (rowsNeedingFormulas > 0) {
+      const srcRange = target.getRange(srcRow, startCol, 1, numCols);
+      const destRange = target.getRange(srcRow + 1, startCol, rowsNeedingFormulas, numCols);
+      srcRange.copyTo(destRange, SpreadsheetApp.CopyPasteType.PASTE_FORMULA, false);
+    }
   } catch (e) { /* ignore */ }
+
+  const clearStartRow = srcRow + Math.max(dataRowCount, 1);
+  const maxRows = target.getMaxRows();
+  if (clearStartRow <= maxRows) {
+    const rowsToClear = maxRows - clearStartRow + 1;
+    if (rowsToClear > 0) {
+      try {
+        target.getRange(clearStartRow, startCol, rowsToClear, numCols).clearContent();
+      } catch (e) { /* ignore */ }
+    }
+  }
 }
 
 function onOpen(e) {
