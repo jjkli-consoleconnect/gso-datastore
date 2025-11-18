@@ -1,37 +1,83 @@
-WITH OrderedChangeLog AS (
+WITH ordered AS (
   SELECT
-    changelog.Issue_Key,
-    changelog.History_ID,
-    changelog.Transition_Timestamp,
-    changelog.Transitioned_From,
-    changelog.Transitioned_To,
-    changelog.Transitioned_By_Account_ID,
-    changelog.Transitioned_By_Display_Name AS Transitioned_By,
-    LAG(changelog.Transition_Timestamp) OVER (
-      PARTITION BY changelog.Issue_Key
-      ORDER BY changelog.History_ID ASC
-    ) AS Original_Previous_Transition_Timestamp
-  FROM
-    `pccw-internal-virt-agent-uat.GSO.JiraChangelog` changelog
-    WHERE changelog.Issue_Key LIKE 'CSM%'
-
+    cl.Issue_Key,
+    cl.Transition_Timestamp,
+    cl.Transitioned_From,
+    cl.Transitioned_To,
+    hd.Created,
+    hd.Resolved,
+    hd.Status AS current_status,
+    -- next transition in time order (when we leave the status we just entered)
+    LEAD(cl.Transition_Timestamp) OVER (
+      PARTITION BY cl.Issue_Key
+      ORDER BY cl.Transition_Timestamp
+    ) AS next_transition,
+    ROW_NUMBER() OVER (
+      PARTITION BY cl.Issue_Key
+      ORDER BY cl.Transition_Timestamp
+    ) AS row_num
+  FROM `pccw-internal-virt-agent-uat.GSO.JiraChangelog` cl
+  LEFT JOIN `pccw-internal-virt-agent-uat.GSO.Jira` hd
+    ON cl.Issue_Key = hd.Ticket_Key
+  WHERE cl.Issue_Key LIKE 'CSM%'
+),
+entered_status AS (
+  -- duration in the status that starts at each transition
+  SELECT
+    Issue_Key,
+    Transitioned_To AS status_label,
+    Transition_Timestamp AS status_start,
+    COALESCE(next_transition, Resolved, CURRENT_TIMESTAMP()) AS status_end
+  FROM ordered
+  WHERE Transitioned_To IS NOT NULL
+),
+initial_status AS (
+  -- initial state from ticket creation until the first logged transition
+  SELECT
+    Issue_Key,
+    COALESCE(Transitioned_From, current_status, 'Created (unknown)') AS status_label,
+    Created AS status_start,
+    Transition_Timestamp AS status_end
+  FROM ordered
+  WHERE row_num = 1
+    AND Transition_Timestamp IS NOT NULL
+),
+no_changelog AS (
+  -- tickets that never had a transition recorded
+  SELECT
+    hd.Ticket_Key AS Issue_Key,
+    hd.Status AS status_label,
+    hd.Created AS status_start,
+    COALESCE(hd.Resolved, CURRENT_TIMESTAMP()) AS status_end
+  FROM `pccw-internal-virt-agent-uat.GSO.Jira` hd
+  WHERE hd.Ticket_Key LIKE 'CSM%'
+    AND NOT EXISTS (
+      SELECT 1 FROM ordered o WHERE o.Issue_Key = hd.Ticket_Key
+    )
+),
+durations AS (
+  SELECT * FROM entered_status
+  UNION ALL
+  SELECT * FROM initial_status
+  UNION ALL
+  SELECT * FROM no_changelog
+),
+filtered_durations AS (
+  SELECT *
+  FROM durations
+  WHERE status_start IS NOT NULL
+    AND status_end IS NOT NULL
+    AND status_start < status_end
 )
 SELECT
-  OrderedChangeLog.*,
-  csm.*,
-  CASE
-    WHEN OrderedChangeLog.Original_Previous_Transition_Timestamp IS NULL THEN csm.Created
-    ELSE OrderedChangeLog.Original_Previous_Transition_Timestamp
-  END AS Final_Previous_Transition_Timestamp,
-  OrderedChangeLog.Transitioned_From AS Transitioned_From_Sorted,
-  OrderedChangeLog.Transitioned_To AS Transitioned_To_Sorted
-
-FROM
-  OrderedChangeLog
-LEFT JOIN
-  `pccw-internal-virt-agent-uat.GSO.CSM` csm
-ON
-  OrderedChangeLog.Issue_Key = csm.Ticket_Key
-
-ORDER BY
-  OrderedChangeLog.Transition_Timestamp DESC
+  hd.*,
+  filtered_durations.Issue_Key,
+  filtered_durations.status_label,
+  filtered_durations.status_start,
+  filtered_durations.status_end,
+  TIMESTAMP_DIFF(filtered_durations.status_end, filtered_durations.status_start, MINUTE) AS status_duration_minutes
+FROM `pccw-internal-virt-agent-uat.GSO.Jira` hd
+LEFT JOIN filtered_durations
+  ON filtered_durations.Issue_Key = hd.Ticket_Key
+WHERE REGEXP_CONTAINS(hd.Ticket_Key, r'^CSM')
+ORDER BY hd.Ticket_Key, filtered_durations.status_start;
