@@ -22,8 +22,8 @@ if str(_root_dir) not in sys.path:
 
 # Auto GOOGLE_APPLICATION_CREDENTIALS if not set
 if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
-    for cand in ('service-account.json','jira-bigquery-key.json'):
-        p=_root_dir / cand
+    for cand in ('service-account.json','jira-bigquery-key.json', 'credentials.json'):
+        p=_repo_root / 'shared' / cand
         if p.exists():
             os.environ['GOOGLE_APPLICATION_CREDENTIALS']=str(p)
             break

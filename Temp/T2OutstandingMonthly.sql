@@ -1,40 +1,44 @@
-/**
- * Google Apps Script: Tier-2 Outstanding Monthly Report
- * ------------------------------------------------------
- * 1. Enable the BigQuery Advanced Service (Services > BigQuery).
- * 2. Map this Apps Script project to a GCP project with BigQuery API enabled.
- * 3. Update the configuration constants below, save, then create a time-driven trigger
- *    calling `sendT2OutstandingMonthlyReport` on your desired schedule.
- */
-
 const PROJECT_ID = 'pccw-internal-virt-agent-uat';
-const RECIPIENTS = ['jens-vertexai-aaaan3dj2p4fdro72c3fa2l3km@consoleconnect.org.slack.com'];
-const CC_RECIPIENTS = ['jjkli@consoleconnect.com'];
-const REPORT_TITLE = 'Tier 2 Outstanding Report - Monthly';
+const RECIPIENTS = ['ken.mk.tam@consoleconnect.com'];
+const CC_RECIPIENTS = ['ken.mk.tam@consoleconnect.com', 'jens-vertexai-aaaan3dj2p4fdro72c3fa2l3km@consoleconnect.org.slack.com'];
+const REPORT_TITLE = 'Tier 2 ProductFamily=null - Monthly';
 const TIMEZONE = 'UTC';
-const EMAIL_GREETING = 'Hi Team,';
-const EMAIL_BODY_LINES = [
-	EMAIL_GREETING,
-	'',
-	'Please see the attached Tier 2 Outstanding Monthly report.',
-	'',
-	'Kind regards,',
-	'Data & Analytics Team'
-];
-const EMAIL_BODY_TEXT = EMAIL_BODY_LINES.join('\n');
+const EMAIL_GREETING = 'Hi Alaa,';
+const EMAIL_MESSAGE_LINE = 'Please see the attached Tier 2 "ProductFamily IS NULL" report.';
 
 const SQL_QUERY = `
+WITH source AS (
+	SELECT
+		Key,
+		JiraStatus AS Status,
+		SecondTierAssignee AS Assignee,
+		Summary,
+		ProductFamily,
+		Type AS IssueType,
+		Created,
+		Updated,
+		Resolved,
+		ARRAY_TO_STRING(RemedyTicketNumber, ', ') AS RemedyTicketNumber,
+		Links,
+		ProjectCode
+	FROM
+		\`pccw-internal-virt-agent-uat.GSO.JIRA_HD\`
+	WHERE
+		ProjectCode IN ('CCAS', 'TAC', 'VOICECE', 'IOTCE', 'TXCE', 'SMSCE')
+		AND JiraStatus NOT IN ('Resolved', 'Closed', 'Cancelled', 'Done', 'Denied', 'Completed', 'Cancellation', 'One Time Commissioned', 'Operation', 'Closed / Resolved')
+		AND ProductFamily IS NULL
+)
 SELECT DISTINCT
 	Key,
-	JiraStatus AS Status,
-  SecondTierAssignee AS Assignee,
+	Status,
+	Assignee,
 	Summary,
-  ProductFamily,
-	Type AS IssueType,
-	Created,
-	Updated,
-	Resolved,
-	ARRAY_TO_STRING(RemedyTicketNumber, ', ') AS RemedyTicketNumber,
+	ProductFamily,
+	IssueType,
+	FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S', Created, @timezone) AS Created,
+	FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S', Updated, @timezone) AS Updated,
+	FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S', Resolved, @timezone) AS Resolved,
+	RemedyTicketNumber,
 	Links,
 	ProjectCode,
 	ROUND(
@@ -42,16 +46,11 @@ SELECT DISTINCT
 		2
 	) AS TicketDurationHours
 FROM
-	\`pccw-internal-virt-agent-uat.GSO.JIRA_HD\`
-WHERE
-    ProjectCode IN ('CCAS', 'TAC', 'VOICECE', 'IOTCE', 'TXCE', 'SMSCE')
-	  AND JiraStatus NOT IN ('Resolved', 'Closed', 'Cancelled', 'Done', 'Denied', 'Completed', 'Cancellation', 'One Time Commissioned', 'Operation', 'Closed / Resolved')
+	source
 ORDER BY
 	TicketDurationHours DESC;`;
 
-/**
- * Entry point: executes the BigQuery job, formats results, and emails the report.
- */
+
 function sendT2OutstandingMonthlyReport() {
 	const data = runQuery(SQL_QUERY, { timezone: TIMEZONE });
 
@@ -63,10 +62,12 @@ function sendT2OutstandingMonthlyReport() {
 	}
 
 	const csvContent = buildCsv(data.headers, data.rows);
+	const rowCount = data.rows.length;
+	const emailBodyText = buildEmailBodyText(rowCount);
 
-	GmailApp.sendEmail(joinAddresses(RECIPIENTS), REPORT_TITLE, EMAIL_BODY_TEXT, {
+	GmailApp.sendEmail(joinAddresses(RECIPIENTS), REPORT_TITLE, emailBodyText, {
 		cc: joinAddresses(CC_RECIPIENTS),
-		htmlBody: buildHtmlBody(),
+		htmlBody: buildHtmlBody(rowCount),
 		attachments: [
 			{
 				fileName: `${sanitiseFileName(REPORT_TITLE)}.csv`,
@@ -75,6 +76,19 @@ function sendT2OutstandingMonthlyReport() {
 			}
 		]
 	});
+}
+
+function buildEmailBodyText(rowCount) {
+	return [
+		EMAIL_GREETING,
+		'',
+		EMAIL_MESSAGE_LINE,
+		'',
+		`Count = ${rowCount}`,
+		'',
+		'Kind regards,',
+		'Jens'
+	].join('\n');
 }
 
 /**
@@ -135,12 +149,13 @@ function buildCsv(headers, rows) {
 	return csvRows.join('\n');
 }
 
-function buildHtmlBody() {
+function buildHtmlBody(rowCount) {
 	return `
 		<div style="font-family:Arial, sans-serif;font-size:13px;line-height:1.6;">
 			<p>${EMAIL_GREETING}</p>
-			<p>Please see the attached Tier 2 Outstanding Monthly report.</p>
-			<p>Kind regards,<br>Data &amp; Analytics Team</p>
+			<p>${EMAIL_MESSAGE_LINE}</p>
+			<p>Count = ${rowCount}</p>
+			<p>Kind regards,<br>Jens</p>
 		</div>
 	`;
 }

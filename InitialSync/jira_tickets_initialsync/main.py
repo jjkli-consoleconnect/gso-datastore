@@ -17,8 +17,8 @@ if str(_root_dir) not in sys.path:
 
 # Auto-set GOOGLE_APPLICATION_CREDENTIALS if not provided and common key files exist in repo root
 if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
-    for candidate in ['service-account.json','jira-bigquery-key.json']:
-        cand_path = _root_dir / candidate
+    for candidate in ['service-account.json','jira-bigquery-key.json', 'credentials.json']:
+        cand_path = _repo_root / 'shared' / candidate
         if cand_path.exists():
             os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(cand_path)
             break
@@ -195,6 +195,7 @@ SLA_FIELDS_MAP={
 # Fields to request from Jira search to avoid per-issue detail calls
 FIELDS_FOR_SEARCH=[
     'key','issuetype','summary','status','priority','resolution','created','updated','resolutiondate','project','reporter','assignee','components','issuelinks',
+    'customfield_10347',  # Story Points field so backfill can populate StoryPoints
     SR_REF_JIRA_ID, ESCALATION_FIELD,
     # SLA custom fields
     *list(SLA_FIELDS_MAP.values())

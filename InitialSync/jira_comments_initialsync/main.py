@@ -24,19 +24,11 @@ if str(_root_dir) not in sys.path:
 
 # Auto-set GOOGLE_APPLICATION_CREDENTIALS if not already set and a known key exists
 if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
-    for cand in ('service-account.json','jira-bigquery-key.json'):
-        # Check in script dir first (for container)
-        p = _script_dir / cand
+    for cand in ('service-account.json','jira-bigquery-key.json', 'credentials.json'):
+        p = _repo_root / 'shared' / cand
         if p.exists():
             os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(p)
             break
-    else:
-        # Fallback to repo root (for local runs)
-        for cand in ('service-account.json','jira-bigquery-key.json'):
-            p = _root_dir / cand
-            if p.exists():
-                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(p)
-                break
 
 from shared.pipeline_runs_logger import log_pipeline_run
 

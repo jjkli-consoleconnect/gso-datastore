@@ -40,7 +40,20 @@ BaseConversationData AS (
         cc.transcript,
         cc.languageCode,
         cc.medium,
-        cc.`sentences`[SAFE_OFFSET(0)].`highlightData`[SAFE_OFFSET(0)].displayName AS highlight_category,
+    cc.`sentences`[SAFE_OFFSET(0)].`highlightData`[SAFE_OFFSET(0)].displayName AS highlight_category,
+    ARRAY(
+      SELECT AS STRUCT
+        sentence_offset AS sentence_index,
+        s.sentence AS sentence_text,
+        s.speakerTag AS sentence_speaker_tag,
+        hd.highlighterName AS highlighter_name,
+        hd.displayName AS highlight_display_name,
+        hd.type AS highlight_type,
+        s.startOffsetNanos AS sentence_start_offset_nanos,
+        s.endOffsetNanos AS sentence_end_offset_nanos
+      FROM UNNEST(cc.sentences) AS s WITH OFFSET AS sentence_offset
+      CROSS JOIN UNNEST(IFNULL(s.highlightData, [])) AS hd
+    ) AS sentence_highlights,
         cc.`sentences`[SAFE_OFFSET(0)].speakerTag,
         df.turn_position,
         df.request_time AS requisitionStartTime,
@@ -233,6 +246,40 @@ SELECT
     b.languageCode,
     b.medium,
     b.highlight_category,
+  b.sentence_highlights,
+  b.sentence_highlights[SAFE_OFFSET(0)].highlight_display_name AS highlight_display_name,
+  CASE b.sentence_highlights[SAFE_OFFSET(0)].highlight_display_name
+    WHEN 'Circuits' THEN 'Ticket Analysis'
+    WHEN 'Wanda Enquiry' THEN 'Wanda Enquiry'
+    WHEN 'CHECK_ISSUE_RESOLVED' THEN 'CHECK_ISSUE_RESOLVED'
+    WHEN 'Remedy Ticket' THEN 'Remedy Ticket Agent'
+    WHEN 'Check status' THEN 'Remedy Ticket Agent'
+    WHEN 'Knowledge Base ' THEN 'KMS Agent'
+    WHEN 'RFO' THEN 'RFO'
+    WHEN 'Check customer' THEN 'Ticket Analysis'
+    WHEN 'JIRA' THEN 'Jira Ticket Agent'
+    WHEN 'Revenue' THEN NULL
+    WHEN 'Pricing' THEN NULL
+    WHEN 'Failed Response' THEN 'Failed Response'
+    WHEN 'Jira Ticket' THEN 'Jira Ticket Agent'
+    WHEN 'Confluence Search' THEN 'KMS Agent'
+    WHEN 'Wanda Function Enquiries' THEN 'Wanda Enquiry'
+    WHEN 'Person/ Contact' THEN NULL
+    WHEN 'Cable Outage' THEN 'Cable Event Agent'
+    WHEN 'Info Search' THEN 'KMS Agent'
+    WHEN 'AUTHENTICATION_INFO' THEN 'AUTHENTICATION_INFO'
+    WHEN 'Knowledge Query' THEN 'KMS Agent'
+    WHEN 'CONFIRM_ISSUE_RESOLVED' THEN 'CONFIRM_ISSUE_RESOLVED'
+    WHEN 'Remedy Ticket Agent' THEN 'Remedy Ticket Agent'
+    WHEN 'Blocker' THEN 'Blocker'
+    WHEN 'Cable Event Agent' THEN 'Cable Event Agent'
+    WHEN 'Customer Incident Report' THEN 'Customer Incident Report'
+    WHEN 'Document Agent' THEN 'Document Agent'
+    WHEN 'KMS Agent' THEN 'KMS Agent'
+    WHEN 'Ticket Analysis' THEN 'Ticket Analysis'
+    WHEN 'Ticket Creation Agent' THEN 'Ticket Creation Agent'
+    ELSE b.sentence_highlights[SAFE_OFFSET(0)].highlight_display_name
+  END AS HighlightAgentCleansed,
     b.speakerTag,
     MAX(b.turn_position) OVER (PARTITION BY b.conversation_id) AS max_raw_turn_position,
     b.turn_position AS raw_turn_position,
@@ -247,15 +294,12 @@ SELECT
   ufu.first_use_source,
   DATE(ufu.first_use_timestamp) AS first_use_date,
   -- Compare DATE equality against the best available conversation timestamp so rows with NULL cc.startTimestamp are still detected.
-  -- Limit to the first row of the conversation so a user's first conversation contributes exactly one row.
   CASE
-    WHEN b.row_sequential_number = 1
-         AND DATE(ufu.first_use_timestamp) = DATE(COALESCE(b.conversationStartTime, b.requisitionStartTime)) THEN TRUE
+    WHEN DATE(ufu.first_use_timestamp) = DATE(COALESCE(b.conversationStartTime, b.requisitionStartTime)) THEN TRUE
     ELSE FALSE
   END AS is_first_conversation_for_user,
   CASE
-    WHEN b.row_sequential_number = 1
-         AND DATE(ufu.first_use_timestamp) = DATE(COALESCE(b.conversationStartTime, b.requisitionStartTime)) THEN 1
+    WHEN DATE(ufu.first_use_timestamp) = DATE(COALESCE(b.conversationStartTime, b.requisitionStartTime)) THEN 1
     ELSE 0
   END AS new_user_indicator,
     b.requisitionStartTime,

@@ -1,12 +1,22 @@
 WITH FlattenedTierTwo AS (
   SELECT
     t.*,
-  UPPER(NULLIF(TRIM(t.Links), '')) AS Links_clean,
+    CASE
+      WHEN t.Links IS NULL THEN NULL
+      ELSE (
+        SELECT STRING_AGG(UPPER(trim_link), ', ')
+        FROM (
+          SELECT TRIM(link) AS trim_link
+          FROM UNNEST(SPLIT(t.Links, ',')) AS link
+          WHERE TRIM(link) != '' AND LOWER(TRIM(link)) != 'none'
+        )
+      )
+    END AS Links_clean,
     remedy_incident AS RemedyTicketNumber_flat
   FROM
     `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
     LEFT JOIN UNNEST(t.RemedyTicketNumber) AS remedy_incident
-  WHERE NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC|OCR|QMS|MSS|CSM)')
+  WHERE NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC|OCR|QMS|CSM)')
 )
 
 SELECT
@@ -74,7 +84,7 @@ SELECT
     WHEN STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 THEN 'T3'
 
     WHEN (
-      (STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0) AND
+      (STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0 OR STRPOS(Key, 'MSS') > 0 OR STRPOS(Key, 'VIM') > 0 OR STRPOS(Key, 'VME') > 0) AND
       (
         STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 OR
         STRPOS(COALESCE(st.Links_clean, ''), 'CCONB') > 0 OR
@@ -84,7 +94,7 @@ SELECT
     ) THEN 'T3'
 
     WHEN (
-      (STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0) AND
+      (STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0 OR STRPOS(Key, 'MSS') > 0 OR STRPOS(Key, 'VIM') > 0 OR STRPOS(Key, 'VME') > 0) AND
       (
         st.Links_clean IS NULL OR NOT (
           STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 OR
@@ -106,12 +116,15 @@ SELECT
     WHEN STRPOS(COALESCE(st.Links_clean, ''), 'COPS') > 0 THEN 'COPS'
     WHEN STRPOS(COALESCE(st.Links_clean, ''), 'CSCM') > 0 THEN 'CSCM'
     WHEN STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 THEN 'SH'
-    WHEN STRPOS(Key, 'CCAS') > 0 THEN 'CCAS'
-    WHEN STRPOS(Key, 'TAC') > 0 THEN 'TAC'
-    WHEN STRPOS(Key, 'VOICECE') > 0 THEN 'VOICECE'
-    WHEN STRPOS(Key, 'IOTCE') > 0 THEN 'IOTCE'
-    WHEN STRPOS(Key, 'TXCE') > 0 THEN 'TXCE'
-    WHEN STRPOS(Key, 'SMSCE') > 0 THEN 'SMSCE'
+  WHEN STRPOS(Key, 'CCAS') > 0 THEN 'CCAS'
+  WHEN STRPOS(Key, 'TAC') > 0 THEN 'TAC'
+  WHEN STRPOS(Key, 'VOICECE') > 0 THEN 'VOICECE'
+  WHEN STRPOS(Key, 'IOTCE') > 0 THEN 'IOTCE'
+  WHEN STRPOS(Key, 'TXCE') > 0 THEN 'TXCE'
+  WHEN STRPOS(Key, 'SMSCE') > 0 THEN 'SMSCE'
+  WHEN STRPOS(Key, 'MSS') > 0 THEN 'MSS'
+  WHEN STRPOS(Key, 'VIM') > 0 THEN 'VIM'
+  WHEN STRPOS(Key, 'VME') > 0 THEN 'VME'
     ELSE NULL
   END AS SolvedByProject,
   CASE 
@@ -122,6 +135,7 @@ SELECT
     WHEN hd.Product_Family IS NULL THEN shr.`Product Family`
     ELSE hd.Product_Family
   END AS ProductFamily,
+  shr.`SR Status`,
   st.SR_Ref AS JiraSRNo,
   st.SyncTime
 

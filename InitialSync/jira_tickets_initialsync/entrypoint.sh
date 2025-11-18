@@ -2,7 +2,7 @@
 set -e
 # run from script dir so relative imports/files work
 cd "$(dirname "$0")"
-export GOOGLE_APPLICATION_CREDENTIALS="/app/credentials.json"
+export GOOGLE_APPLICATION_CREDENTIALS="/app/shared/service-account.json"
 echo "DEBUG: entrypoint running in $(pwd)"
 echo "DEBUG: GOOGLE_APPLICATION_CREDENTIALS=$GOOGLE_APPLICATION_CREDENTIALS"
 if [ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
