@@ -3,14 +3,6 @@ WITH base_data AS (
     *,
     COALESCE(mrc_usd, 0) AS mrc_usd_nonnull
   FROM `pccw-internal-virt-agent-uat.CostItemExpiration.expired_cost_items`
-  WHERE snapshot_date = (
-    SELECT MAX(snapshot_date)
-    FROM `pccw-internal-virt-agent-uat.CostItemExpiration.expired_cost_items`
-    WHERE snapshot_date < (
-      SELECT MAX(snapshot_date)
-      FROM `pccw-internal-virt-agent-uat.CostItemExpiration.expired_cost_items`
-    )
-  )
 ),
 
 ranked_costs AS (
@@ -118,10 +110,13 @@ SELECT DISTINCT
   CASE
     WHEN fr.expire_type = 'To-be-Expired' THEN DATE_TRUNC(fr.stopbillingdate, WEEK(MONDAY))
     ELSE DATE_TRUNC(fr.snapshot_date, WEEK(MONDAY))
-  END AS DateCombined,
+  END AS date_combined_week,
+  DATE_TRUNC(fr.snapshot_date, WEEK(MONDAY)) AS snapshot_week,
+  DATE_TRUNC(fr.stopbillingdate, WEEK(MONDAY)) AS billing_week,
   s.costitemid_count_to_80pct,
   s.eighty_percent_of_total,
   s.threshold_mrc_usd_at_cutoff,
   fr.is_top_80
 FROM flagged_rows fr
 JOIN summary s ON fr.snapshot_date = s.snapshot_date
+

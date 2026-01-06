@@ -54,7 +54,13 @@ if ($config.credentialsFile -and $config.credentialsFile.Trim()) {
 $outputRoot = if ([IO.Path]::IsPathRooted($config.outputDir)) { $config.outputDir } else { Join-Path (Split-Path $PSScriptRoot -Parent) $config.outputDir }
 New-BqsDirectory $outputRoot
 
+# Progress + timing
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+Write-Host "Starting BigQuery pull..." -ForegroundColor Cyan
+Write-Host ("Projects: {0}" -f (($projects) -join ', ')) -ForegroundColor Cyan
+
 foreach ($project in ${projects}) {
+  Write-Host ("`nProcessing project: {0}" -f $project) -ForegroundColor Yellow
   $locArg = if ($location) { "--location=$location" } else { "" }
   $datasets = if ($config.datasets -and $config.datasets.Count -gt 0) { 
     $config.datasets 
@@ -62,7 +68,17 @@ foreach ($project in ${projects}) {
   (BqJson ("ls --project_id={0} {1} -d" -f $project, $locArg) | ForEach-Object { $_.datasetReference.datasetId })
   }
 
+  $datasetTotal = $datasets.Count
+  Write-Host ("  Found {0} dataset(s)" -f $datasetTotal) -ForegroundColor Gray
+  $i = 0
+
   foreach ($dataset in $datasets) {
+    $i++
+    $percent = if ($datasetTotal -gt 0) { [int](100 * $i / $datasetTotal) } else { 0 }
+    $elapsed = $sw.Elapsed
+    $secsRemaining = if ($i -gt 0) { [int]($elapsed.TotalSeconds / $i * ($datasetTotal - $i)) } else { -1 }
+    Write-Progress -Activity "Pulling BigQuery objects" -Status ("Project {0}, Dataset {1} ({2}/{3})" -f $project, $dataset, $i, $datasetTotal) -PercentComplete $percent -SecondsRemaining $secsRemaining
+    Write-Host ("  Dataset: {0} ({1}/{2})" -f $dataset, $i, $datasetTotal) -ForegroundColor Green
     # Verify dataset location matches (if specified)
     try {
       $dinfo = BqJson ("show {0} --dataset {1}:{2}" -f $locArg, $project, $dataset)
@@ -86,12 +102,14 @@ foreach ($project in ${projects}) {
   if ($config.include.views -or $config.include.materializedViews) {
       if ($config.include.views) {
         $views = BqQueryJson $project $locArg ("SELECT table_name, view_definition FROM `{0}.{1}.INFORMATION_SCHEMA.VIEWS` ORDER BY table_name" -f $project, $dataset)
+        Write-Host ("    Views: {0}" -f $views.Count) -ForegroundColor DarkGray
         foreach ($row in $views) {
           try {
             $t = $row.table_name
             $sql = $row.view_definition
             $path = Join-Path $viewsDir ("$t.sql")
             Write-Text $path "$sql`n"
+            Write-Host "      OK $t" -ForegroundColor DarkGray
           } catch {
             Write-Warning ("Failed to export view {0} in {1}:{2}: {3}" -f $t, $project, $dataset, $_)
           }
@@ -99,6 +117,7 @@ foreach ($project in ${projects}) {
       }
       if ($config.include.materializedViews) {
         $mviews = BqQueryJson $project $locArg ("SELECT table_name FROM `{0}.{1}.INFORMATION_SCHEMA.TABLES` WHERE table_type='MATERIALIZED VIEW' ORDER BY table_name" -f $project, $dataset)
+        Write-Host ("    Materialized views: {0}" -f $mviews.Count) -ForegroundColor DarkGray
         foreach ($row in $mviews) {
           $t = $row.table_name
           try {
@@ -107,6 +126,7 @@ foreach ($project in ${projects}) {
             $sql = $info.materializedView.query
             $path = Join-Path $mviewsDir ("$t.sql")
             Write-Text $path "$sql`n"
+            Write-Host "      OK $t" -ForegroundColor DarkGray
           } catch {
             Write-Warning ("Failed to export materialized view {0} in {1}:{2}: {3}" -f $t, $project, $dataset, $_)
           }
@@ -117,6 +137,7 @@ foreach ($project in ${projects}) {
     # Routines
     if ($config.include.routines) {
       $routines = BqQueryJson $project $locArg ("SELECT routine_name FROM `{0}.{1}.INFORMATION_SCHEMA.ROUTINES` ORDER BY routine_name" -f $project, $dataset)
+      Write-Host ("    Routines: {0}" -f $routines.Count) -ForegroundColor DarkGray
       foreach ($row in $routines) {
         $r = $row.routine_name
         try {
@@ -132,6 +153,7 @@ foreach ($project in ${projects}) {
           }
           Write-Text (Join-Path $routinesDir ("$r.sql")) "$body`n"
           ($meta | ConvertTo-Json -Depth 10) | Out-File -Encoding utf8 (Join-Path $routinesDir ("$r.meta.json"))
+          Write-Host "      OK $r" -ForegroundColor DarkGray
         } catch {
           Write-Warning ("Failed to inspect routine {0} in {1}:{2}: {3}" -f $r, $project, $dataset, $_)
         }
@@ -140,4 +162,6 @@ foreach ($project in ${projects}) {
   }
 }
 
-Write-Host "Pull complete. Output: $outputRoot"
+$sw.Stop()
+$elapsedStr = $sw.Elapsed.ToString()
+Write-Host "`nPull complete in $elapsedStr. Output: $outputRoot" -ForegroundColor Green

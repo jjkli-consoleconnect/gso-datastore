@@ -5,9 +5,9 @@ Temp staging + MERGE, progress ledger (Project, RowCount), buffered logging, SLA
 import json, logging, time, uuid, requests, argparse, random, threading, os, re, sys, inspect, pathlib
 # Ensure repository root is on sys.path for importing local helper modules
 _script_dir = pathlib.Path(__file__).resolve().parent
-_repo_root = str(_script_dir.parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
+_repo_root = _script_dir.parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
 
 # Ensure repository root (sibling of InitialSync/) is on sys.path so we can import 'shared'
 _script_dir = pathlib.Path(__file__).resolve().parent
@@ -159,6 +159,41 @@ SEARCH_429_COUNT=0
 DETAIL_429_COUNT=0
 _NO429_STREAK=0
 
+def execute_bq_query_with_retry(client, query, job_config=None, max_retries=5, initial_delay=2.0):
+    """
+    Execute a BigQuery query with exponential backoff retry logic.
+    Handles transient network errors including KeyboardInterrupt during network operations.
+    """
+    delay = initial_delay
+    for attempt in range(1, max_retries + 1):
+        try:
+            result = client.query(query, job_config=job_config)
+            return result.result()  # Wait for query to complete
+        except KeyboardInterrupt as e:
+            # KeyboardInterrupt during network calls is often a socket/SSL timeout, not user action
+            # Treat as retryable unless we're on the last attempt
+            if attempt == max_retries:
+                logging.error(f"BigQuery query failed with KeyboardInterrupt after {attempt} attempts")
+                raise
+            logging.warning(f"Query interrupted (likely network timeout) on attempt {attempt}/{max_retries}. Retrying in {delay}s...")
+            time.sleep(delay)
+            delay *= 2
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Check if it's a transient/network error worth retrying
+            is_retryable = any(keyword in error_msg for keyword in [
+                'timeout', 'connection', 'network', 'socket', 'ssl', 
+                'temporary', 'unavailable', 'deadline exceeded'
+            ])
+            
+            if attempt == max_retries or not is_retryable:
+                logging.error(f"BigQuery query failed after {attempt} attempts: {e}")
+                raise
+            
+            logging.warning(f"BigQuery query attempt {attempt}/{max_retries} failed: {e}. Retrying in {delay}s...")
+            time.sleep(delay)
+            delay *= 2  # Exponential backoff
+
 class TokenBucket:
     def __init__(self, capacity, refill_per_sec):
         self.capacity=capacity; self.tokens=capacity; self.refill=refill_per_sec; self.last=time.time(); self.lock=threading.Lock()
@@ -190,6 +225,10 @@ SLA_FIELDS_MAP={
     'TimeToApproveNormalChange':'customfield_10640',
     'ProlongCase':'customfield_10560',
     'TimeToCloseAfterResolution':'customfield_10552',
+    'ITHD_TimeToFirstResponse':'customfield_10627',
+    'ITHD_TimeToResolution':'customfield_10668',
+    'ITHD_ISMSIncidentResponse':'customfield_13449',
+    'ITHD_ISMSIncidentResolution':'customfield_13450',
 }
 
 # Fields to request from Jira search to avoid per-issue detail calls
@@ -198,7 +237,8 @@ FIELDS_FOR_SEARCH=[
     'customfield_10347',  # Story Points field so backfill can populate StoryPoints
     SR_REF_JIRA_ID, ESCALATION_FIELD,
     # SLA custom fields
-    *list(SLA_FIELDS_MAP.values())
+    *list(SLA_FIELDS_MAP.values()),
+    'customfield_13448',  # ITHD Resolution field
 ]
 
 # ---------------- Utilities ----------------
@@ -420,18 +460,20 @@ def delete_table_quiet(client,dataset,table):
 BASE_URL='https://consoleconnect.atlassian.net'
 SEARCH_URL=f'{BASE_URL}/rest/api/3/search/jql'
 
-def fetch_issues_page(auth,jql,start_at,max_results):
+def fetch_issues_page(auth, jql, next_page_token=None, max_results=100):
     """Fetch a page of issues using GET /rest/api/3/search/jql with query params.
+    Supports Atlassian Cloud pagination via nextPageToken.
     Returns parsed JSON or None on failure."""
     global SEARCH_429_COUNT
     headers={'Accept':'application/json'}
     params = {
         'jql': jql,
-        'startAt': start_at,
         'maxResults': max_results,
         # send fields as comma separated list
         'fields': ','.join(FIELDS_FOR_SEARCH)
     }
+    if next_page_token:
+        params['nextPageToken'] = next_page_token
     for attempt in range(5):
         try:
             RATE_LIMITER.take()
@@ -494,29 +536,53 @@ def fetch_issue_detail(issue_key,auth):
 
 def extract_sla_metrics(sla_field):
     if not isinstance(sla_field,dict): return (None,None,None,None)
-    cycles=sla_field.get('completedCycles',[]); n=len(cycles)
-    if n==0: return (None,None,None,0)
-    latest=cycles[-1]; start_time=latest.get('startTime'); breach_time=latest.get('breachTime'); goal_millis=latest.get('goalDuration',{}).get('millis')
-    def parse(ts):
-        for fmt in ('%Y-%m-%dT%H:%M:%S.%f%z','%Y-%m-%dT%H:%M:%S%z'):
-            try: return datetime.strptime(ts,fmt)
-            except Exception: continue
-        return None
-    elapsed=None
-    if start_time:
-        sdt=parse(start_time)
-        if breach_time:
-            bdt=parse(breach_time)
-            if sdt and bdt: elapsed=(bdt-sdt).total_seconds()/3600.0
-        else:
-            if sdt: elapsed=(datetime.now(timezone.utc)-sdt.replace(tzinfo=None)).total_seconds()/3600.0
-    goal=goal_millis/3600000.0 if goal_millis else None
-    breached=breach_time is not None
-    return (elapsed,goal,breached,n)
+    
+    # Try ongoing cycle first (for active SLAs)
+    ongoing = sla_field.get('ongoingCycle')
+    cycles = sla_field.get('completedCycles', [])
+    
+    # Use ongoing cycle if present, otherwise use latest completed
+    if ongoing:
+        cycle = ongoing
+        n = len(cycles)
+    elif cycles:
+        cycle = cycles[-1]
+        n = len(cycles)
+    else:
+        return (None, None, None, 0)
+    
+    # Extract time fields - handle both string and object formats
+    def get_time_value(time_field):
+        if isinstance(time_field, dict):
+            return time_field.get('iso8601') or time_field.get('jira')
+        return time_field
+    
+    # Use Jira's calculated elapsedTime which respects business hours
+    elapsed_millis = cycle.get('elapsedTime', {}).get('millis') if isinstance(cycle.get('elapsedTime'), dict) else None
+    goal_millis = cycle.get('goalDuration', {}).get('millis')
+    
+    # Check if breached
+    breached = cycle.get('breached', False)
+    
+    # Convert to hours
+    elapsed = elapsed_millis / 3600000.0 if elapsed_millis is not None else None
+    goal = goal_millis / 3600000.0 if goal_millis else None
+    
+    # Note: elapsedTime from Jira already respects business hours/calendar settings
+    # Trust Jira's calculation - even heavily breached tickets can legitimately exceed goal by large multiples
+    
+    return (elapsed, goal, breached, n)
 
 def generate_ticket_rows(issues,ws,we):
     now_str=datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
     rows=[]
+    # Support forced refresh of specific issue keys regardless of window bounds via env var FORCE_REFRESH_KEYS="KEY1,KEY2"
+    try:
+        FORCE_REFRESH_KEYS=set(k.strip() for k in os.environ.get('FORCE_REFRESH_KEYS','').split(',') if k.strip())
+        if FORCE_REFRESH_KEYS:
+            logging.info(f'FORCE_REFRESH_KEYS active: {len(FORCE_REFRESH_KEYS)} keys (sample: {list(FORCE_REFRESH_KEYS)[:3]})')
+    except Exception:
+        FORCE_REFRESH_KEYS=set()
     for item in issues:
         k=item.get('key')
         fields=item.get('fields',{})
@@ -530,7 +596,15 @@ def generate_ticket_rows(issues,ws,we):
             ref_dt=datetime.strptime(ref,'%Y-%m-%d %H:%M:%S')
             ref_dt = to_utc_aware(ref_dt)
         except Exception: continue
-        if not (ws <= ref_dt < we): continue
+        if k not in FORCE_REFRESH_KEYS and not (ws <= ref_dt < we):
+            continue
+        if k in FORCE_REFRESH_KEYS:
+            if not (ws <= ref_dt < we):
+                logging.info(f'Force including key {k} outside window {ws}->{we}')
+            # Log the resolution value we're getting
+            resolution_field = fields.get('customfield_13448')
+            resolution_value = get_field_value(resolution_field)
+            logging.info(f'Force refresh {k}: ITHD_Resolution raw={resolution_field} extracted={resolution_value}')
         sla={}
         for name,jid in SLA_FIELDS_MAP.items():
             e,g,b,c=extract_sla_metrics(fields.get(jid)); sla[name]=(e,g,b,c)
@@ -568,9 +642,10 @@ def generate_ticket_rows(issues,ws,we):
             'AppSupEscalation': get_field_value(fields.get(ESCALATION_FIELD)),
             # Story Points (customfield_10347) as integer when possible
             'StoryPoints': (None if fields.get('customfield_10347') is None else ((lambda v: (int(float(v)) if v is not None else None))(get_field_value(fields.get('customfield_10347'))))),
+            'ITHD_Resolution': get_field_value(fields.get('customfield_13448')),
         }
         for name,(e,g,b,c) in sla.items():
-            row[f'{name}_Elapsed']=e; row[f'{name}_Goal']=g; row[f'{name}_Breached']=b; row[f'{name}_Cycles']=c
+            row[f'{name}_Elapsed_hrs']=e; row[f'{name}_Goal_hrs']=g; row[f'{name}_Breached']=b; row[f'{name}_Cycles']=c
         rows.append(row)
     return rows
 
@@ -595,32 +670,49 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         ('Links','STRING','NULLABLE'),
         (SR_REF_BQ_NAME,'STRING','NULLABLE'),
         ('SyncTime','TIMESTAMP','NULLABLE'),
-        ('TimeToFirstResponse_Elapsed','FLOAT64','NULLABLE'),
-        ('TimeToFirstResponse_Goal','FLOAT64','NULLABLE'),
+        ('TimeToFirstResponse_Elapsed_hrs','FLOAT64','NULLABLE'),
+        ('TimeToFirstResponse_Goal_hrs','FLOAT64','NULLABLE'),
         ('TimeToFirstResponse_Breached','BOOL','NULLABLE'),
         ('TimeToFirstResponse_Cycles','INT64','NULLABLE'),
-        ('TimeToResolve_Elapsed','FLOAT64','NULLABLE'),
-        ('TimeToResolve_Goal','FLOAT64','NULLABLE'),
+        ('TimeToResolve_Elapsed_hrs','FLOAT64','NULLABLE'),
+        ('TimeToResolve_Goal_hrs','FLOAT64','NULLABLE'),
         ('TimeToResolve_Breached','BOOL','NULLABLE'),
         ('TimeToResolve_Cycles','INT64','NULLABLE'),
-        ('TimeToResolution_Elapsed','FLOAT64','NULLABLE'),
-        ('TimeToResolution_Goal','FLOAT64','NULLABLE'),
+        ('TimeToResolution_Elapsed_hrs','FLOAT64','NULLABLE'),
+        ('TimeToResolution_Goal_hrs','FLOAT64','NULLABLE'),
         ('TimeToResolution_Breached','BOOL','NULLABLE'),
         ('TimeToResolution_Cycles','INT64','NULLABLE'),
-        ('TimeToApproveNormalChange_Elapsed','FLOAT64','NULLABLE'),
-        ('TimeToApproveNormalChange_Goal','FLOAT64','NULLABLE'),
+        ('TimeToApproveNormalChange_Elapsed_hrs','FLOAT64','NULLABLE'),
+        ('TimeToApproveNormalChange_Goal_hrs','FLOAT64','NULLABLE'),
         ('TimeToApproveNormalChange_Breached','BOOL','NULLABLE'),
         ('TimeToApproveNormalChange_Cycles','INT64','NULLABLE'),
-        ('ProlongCase_Elapsed','FLOAT64','NULLABLE'),
-        ('ProlongCase_Goal','FLOAT64','NULLABLE'),
+        ('ProlongCase_Elapsed_hrs','FLOAT64','NULLABLE'),
+        ('ProlongCase_Goal_hrs','FLOAT64','NULLABLE'),
         ('ProlongCase_Breached','BOOL','NULLABLE'),
         ('ProlongCase_Cycles','INT64','NULLABLE'),
-        ('TimeToCloseAfterResolution_Elapsed','FLOAT64','NULLABLE'),
-        ('TimeToCloseAfterResolution_Goal','FLOAT64','NULLABLE'),
+        ('TimeToCloseAfterResolution_Elapsed_hrs','FLOAT64','NULLABLE'),
+        ('TimeToCloseAfterResolution_Goal_hrs','FLOAT64','NULLABLE'),
         ('TimeToCloseAfterResolution_Breached','BOOL','NULLABLE'),
         ('TimeToCloseAfterResolution_Cycles','INT64','NULLABLE'),
     ('AppSupEscalation','STRING','NULLABLE'),
     ('StoryPoints','INT64','NULLABLE'),
+    ('ITHD_TimeToFirstResponse_Elapsed_hrs','FLOAT64','NULLABLE'),
+    ('ITHD_TimeToFirstResponse_Goal_hrs','FLOAT64','NULLABLE'),
+    ('ITHD_TimeToFirstResponse_Breached','BOOL','NULLABLE'),
+    ('ITHD_TimeToFirstResponse_Cycles','INT64','NULLABLE'),
+    ('ITHD_TimeToResolution_Elapsed_hrs','FLOAT64','NULLABLE'),
+    ('ITHD_TimeToResolution_Goal_hrs','FLOAT64','NULLABLE'),
+    ('ITHD_TimeToResolution_Breached','BOOL','NULLABLE'),
+    ('ITHD_TimeToResolution_Cycles','INT64','NULLABLE'),
+    ('ITHD_ISMSIncidentResponse_Elapsed_hrs','FLOAT64','NULLABLE'),
+    ('ITHD_ISMSIncidentResponse_Goal_hrs','FLOAT64','NULLABLE'),
+    ('ITHD_ISMSIncidentResponse_Breached','BOOL','NULLABLE'),
+    ('ITHD_ISMSIncidentResponse_Cycles','INT64','NULLABLE'),
+    ('ITHD_ISMSIncidentResolution_Elapsed_hrs','FLOAT64','NULLABLE'),
+    ('ITHD_ISMSIncidentResolution_Goal_hrs','FLOAT64','NULLABLE'),
+    ('ITHD_ISMSIncidentResolution_Breached','BOOL','NULLABLE'),
+    ('ITHD_ISMSIncidentResolution_Cycles','INT64','NULLABLE'),
+    ('ITHD_Resolution','STRING','NULLABLE'),
     ]]
     # Ensure destination table exists and only perform schema ensure once per process
     table_key=f"{dataset}.{table}"
@@ -634,40 +726,72 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
 
     # Lazily create the temp table only when we actually have rows to insert
     temp_created=False
-    max_results=100; start=0; total=float('inf'); batch=2000; buffer=[]; inserted=0
-    while start<total:
-        data=fetch_issues_page(auth,jql,start,max_results)
+    page_size=200; next_token=None; batch=2000; buffer=[]; inserted=0
+    
+    # If FORCE_REFRESH_KEYS is set, fetch those specific keys first
+    force_keys_env = os.environ.get('FORCE_REFRESH_KEYS', '')
+    if force_keys_env.strip():
+        force_keys = [k.strip() for k in force_keys_env.split(',') if k.strip()]
+        if force_keys:
+            logging.info(f'Fetching {len(force_keys)} forced keys explicitly: {force_keys[:5]}...')
+            force_jql = f"key in ({','.join(force_keys)})"
+            force_data = fetch_issues_page(auth, force_jql, None, len(force_keys))
+            if force_data and force_data.get('issues'):
+                logging.info(f'Retrieved {len(force_data["issues"])} forced issues')
+                rows = generate_ticket_rows(force_data['issues'], ws, we)
+                for r in rows:
+                    buffer.append(r)
+                    if len(buffer) >= batch:
+                        if not temp_created:
+                            if not create_or_replace_table(client, dataset, temp, schema) or not wait_for_table(client, dataset, temp):
+                                return False, inserted
+                            temp_created = True
+                        if not insert_rows_with_retry(client, dataset, temp, buffer, schema):
+                            if temp_created:
+                                delete_table_quiet(client, dataset, temp)
+                            return False, inserted
+                        inserted += len(buffer)
+                        buffer = []
+    
+    while True:
+        data = fetch_issues_page(auth, jql, next_token, page_size)
         if data is None:
             if temp_created:
-                delete_table_quiet(client,dataset,temp)
-            return False,inserted
-        issues=data.get('issues',[]); total=data.get('total',0)
-        if not issues:
-            break
-        rows=generate_ticket_rows(issues,ws,we)
-        for r in rows:
-            buffer.append(r)
-            if len(buffer)>=batch:
-                if not temp_created:
-                    if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp):
-                        return False,inserted
-                    temp_created=True
-                if not insert_rows_with_retry(client,dataset,temp,buffer,schema):
-                    if temp_created:
-                        delete_table_quiet(client,dataset,temp)
-                    return False,inserted
-                inserted+=len(buffer); buffer=[]
+                delete_table_quiet(client, dataset, temp)
+            return False, inserted
+        issues = data.get('issues', [])
+        if issues:
+            rows = generate_ticket_rows(issues, ws, we)
+            for r in rows:
+                buffer.append(r)
+                if len(buffer) >= batch:
+                    if not temp_created:
+                        if not create_or_replace_table(client, dataset, temp, schema) or not wait_for_table(client, dataset, temp):
+                            return False, inserted
+                        temp_created = True
+                    if not insert_rows_with_retry(client, dataset, temp, buffer, schema):
+                        if temp_created:
+                            delete_table_quiet(client, dataset, temp)
+                        return False, inserted
+                    inserted += len(buffer)
+                    buffer = []
+        # flush any remaining buffer each page to avoid huge memory use
         if buffer:
-            if not temp_created and buffer:
-                if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp):
-                    return False,inserted
-                temp_created=True
-            if temp_created:
-                if not insert_rows_with_retry(client,dataset,temp,buffer,schema):
-                    delete_table_quiet(client,dataset,temp); return False,inserted
-                inserted+=len(buffer)
-            buffer=[]
-        start+=len(issues); time.sleep(0.2)
+            if not temp_created:
+                if not create_or_replace_table(client, dataset, temp, schema) or not wait_for_table(client, dataset, temp):
+                    return False, inserted
+                temp_created = True
+            if not insert_rows_with_retry(client, dataset, temp, buffer, schema):
+                if temp_created:
+                    delete_table_quiet(client, dataset, temp)
+                return False, inserted
+            inserted += len(buffer)
+            buffer = []
+        next_token = data.get('nextPageToken')
+        is_last = data.get('isLast')
+        if not next_token or is_last:
+            break
+        time.sleep(0.2)
     # If no rows were gathered for this window, skip MERGE to avoid unnecessary per-table quota usage
     if inserted==0:
         if temp_created:
@@ -698,54 +822,81 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         Links = S.Links,
         {SR_REF_BQ_NAME} = S.{SR_REF_BQ_NAME},
         SyncTime = S.SyncTime,
-        TimeToFirstResponse_Elapsed = S.TimeToFirstResponse_Elapsed,
-        TimeToFirstResponse_Goal = S.TimeToFirstResponse_Goal,
+        TimeToFirstResponse_Elapsed_hrs = S.TimeToFirstResponse_Elapsed_hrs,
+        TimeToFirstResponse_Goal_hrs = S.TimeToFirstResponse_Goal_hrs,
         TimeToFirstResponse_Breached = S.TimeToFirstResponse_Breached,
         TimeToFirstResponse_Cycles = S.TimeToFirstResponse_Cycles,
-        TimeToResolve_Elapsed = S.TimeToResolve_Elapsed,
-        TimeToResolve_Goal = S.TimeToResolve_Goal,
+        TimeToResolve_Elapsed_hrs = S.TimeToResolve_Elapsed_hrs,
+        TimeToResolve_Goal_hrs = S.TimeToResolve_Goal_hrs,
         TimeToResolve_Breached = S.TimeToResolve_Breached,
         TimeToResolve_Cycles = S.TimeToResolve_Cycles,
-        TimeToResolution_Elapsed = S.TimeToResolution_Elapsed,
-        TimeToResolution_Goal = S.TimeToResolution_Goal,
+        TimeToResolution_Elapsed_hrs = S.TimeToResolution_Elapsed_hrs,
+        TimeToResolution_Goal_hrs = S.TimeToResolution_Goal_hrs,
         TimeToResolution_Breached = S.TimeToResolution_Breached,
         TimeToResolution_Cycles = S.TimeToResolution_Cycles,
-        TimeToApproveNormalChange_Elapsed = S.TimeToApproveNormalChange_Elapsed,
-        TimeToApproveNormalChange_Goal = S.TimeToApproveNormalChange_Goal,
+        TimeToApproveNormalChange_Elapsed_hrs = S.TimeToApproveNormalChange_Elapsed_hrs,
+        TimeToApproveNormalChange_Goal_hrs = S.TimeToApproveNormalChange_Goal_hrs,
         TimeToApproveNormalChange_Breached = S.TimeToApproveNormalChange_Breached,
         TimeToApproveNormalChange_Cycles = S.TimeToApproveNormalChange_Cycles,
-        ProlongCase_Elapsed = S.ProlongCase_Elapsed,
-        ProlongCase_Goal = S.ProlongCase_Goal,
+        ProlongCase_Elapsed_hrs = S.ProlongCase_Elapsed_hrs,
+        ProlongCase_Goal_hrs = S.ProlongCase_Goal_hrs,
         ProlongCase_Breached = S.ProlongCase_Breached,
         ProlongCase_Cycles = S.ProlongCase_Cycles,
-        TimeToCloseAfterResolution_Elapsed = S.TimeToCloseAfterResolution_Elapsed,
-        TimeToCloseAfterResolution_Goal = S.TimeToCloseAfterResolution_Goal,
+        TimeToCloseAfterResolution_Elapsed_hrs = S.TimeToCloseAfterResolution_Elapsed_hrs,
+        TimeToCloseAfterResolution_Goal_hrs = S.TimeToCloseAfterResolution_Goal_hrs,
         TimeToCloseAfterResolution_Breached = S.TimeToCloseAfterResolution_Breached,
     TimeToCloseAfterResolution_Cycles = S.TimeToCloseAfterResolution_Cycles,
     AppSupEscalation = S.AppSupEscalation,
-    StoryPoints = S.StoryPoints
+    StoryPoints = S.StoryPoints,
+        ITHD_TimeToFirstResponse_Elapsed_hrs = S.ITHD_TimeToFirstResponse_Elapsed_hrs,
+        ITHD_TimeToFirstResponse_Goal_hrs = S.ITHD_TimeToFirstResponse_Goal_hrs,
+        ITHD_TimeToFirstResponse_Breached = S.ITHD_TimeToFirstResponse_Breached,
+        ITHD_TimeToFirstResponse_Cycles = S.ITHD_TimeToFirstResponse_Cycles,
+        ITHD_TimeToResolution_Elapsed_hrs = S.ITHD_TimeToResolution_Elapsed_hrs,
+        ITHD_TimeToResolution_Goal_hrs = S.ITHD_TimeToResolution_Goal_hrs,
+        ITHD_TimeToResolution_Breached = S.ITHD_TimeToResolution_Breached,
+        ITHD_TimeToResolution_Cycles = S.ITHD_TimeToResolution_Cycles,
+        ITHD_ISMSIncidentResponse_Elapsed_hrs = S.ITHD_ISMSIncidentResponse_Elapsed_hrs,
+        ITHD_ISMSIncidentResponse_Goal_hrs = S.ITHD_ISMSIncidentResponse_Goal_hrs,
+        ITHD_ISMSIncidentResponse_Breached = S.ITHD_ISMSIncidentResponse_Breached,
+        ITHD_ISMSIncidentResponse_Cycles = S.ITHD_ISMSIncidentResponse_Cycles,
+        ITHD_ISMSIncidentResolution_Elapsed_hrs = S.ITHD_ISMSIncidentResolution_Elapsed_hrs,
+        ITHD_ISMSIncidentResolution_Goal_hrs = S.ITHD_ISMSIncidentResolution_Goal_hrs,
+        ITHD_ISMSIncidentResolution_Breached = S.ITHD_ISMSIncidentResolution_Breached,
+        ITHD_ISMSIncidentResolution_Cycles = S.ITHD_ISMSIncidentResolution_Cycles,
+        ITHD_Resolution = S.ITHD_Resolution
     WHEN NOT MATCHED THEN INSERT (
     T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, RemedyTicketNumber, Links, {SR_REF_BQ_NAME}, SyncTime,
-        TimeToFirstResponse_Elapsed, TimeToFirstResponse_Goal, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles,
-        TimeToResolve_Elapsed, TimeToResolve_Goal, TimeToResolve_Breached, TimeToResolve_Cycles,
-        TimeToResolution_Elapsed, TimeToResolution_Goal, TimeToResolution_Breached, TimeToResolution_Cycles,
-        TimeToApproveNormalChange_Elapsed, TimeToApproveNormalChange_Goal, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles,
-        ProlongCase_Elapsed, ProlongCase_Goal, ProlongCase_Breached, ProlongCase_Cycles,
-        TimeToCloseAfterResolution_Elapsed, TimeToCloseAfterResolution_Goal, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles,
-    AppSupEscalation, StoryPoints
+        TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles,
+        TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles,
+        TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles,
+        TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles,
+        ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles,
+        TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles,
+    AppSupEscalation, StoryPoints,
+        ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles,
+        ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles,
+        ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles,
+        ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles,
+        ITHD_Resolution
     ) VALUES (
     S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, S.Component, S.RemedyTicketNumber, S.Links, S.{SR_REF_BQ_NAME}, S.SyncTime,
-        S.TimeToFirstResponse_Elapsed, S.TimeToFirstResponse_Goal, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles,
-        S.TimeToResolve_Elapsed, S.TimeToResolve_Goal, S.TimeToResolve_Breached, S.TimeToResolve_Cycles,
-        S.TimeToResolution_Elapsed, S.TimeToResolution_Goal, S.TimeToResolution_Breached, S.TimeToResolution_Cycles,
-        S.TimeToApproveNormalChange_Elapsed, S.TimeToApproveNormalChange_Goal, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles,
-        S.ProlongCase_Elapsed, S.ProlongCase_Goal, S.ProlongCase_Breached, S.ProlongCase_Cycles,
-    S.TimeToCloseAfterResolution_Elapsed, S.TimeToCloseAfterResolution_Goal, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles,
-    S.AppSupEscalation, S.StoryPoints
+        S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles,
+        S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles,
+        S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles,
+        S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles,
+        S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles,
+    S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles,
+    S.AppSupEscalation, S.StoryPoints,
+        S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles,
+        S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles,
+        S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles,
+        S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles,
+        S.ITHD_Resolution
     )
     """
     try:
-        client.query(merge).result()
+        execute_bq_query_with_retry(client, merge)
     except Exception as e:
         delete_table_quiet(client,dataset,temp); logging.exception(f'Merge failed: {e}'); return False,inserted
     delete_table_quiet(client,dataset,temp); return True,inserted
@@ -763,7 +914,7 @@ def flush_logs(client,dataset,table):
     if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp): return
     if not insert_rows_with_retry(client,dataset,temp,LOG_BUFFER,schema): return
     merge=f"MERGE `{dataset}.{table}` T USING (SELECT * FROM `{dataset}.{temp}`) S ON T.Timestamp=S.Timestamp AND T.RunID=S.RunID AND T.Message=S.Message WHEN MATCHED THEN UPDATE SET T.PipelineName=S.PipelineName,T.LogLevel=S.LogLevel,T.FunctionName=S.FunctionName,T.Details=S.Details WHEN NOT MATCHED THEN INSERT (Timestamp,PipelineName,RunID,LogLevel,Message,FunctionName,Details) VALUES (S.Timestamp,S.PipelineName,S.RunID,S.LogLevel,S.Message,S.FunctionName,S.Details)"
-    client.query(merge).result(); delete_table_quiet(client,dataset,temp)
+    execute_bq_query_with_retry(client, merge); delete_table_quiet(client,dataset,temp)
     # Clear buffer after successful flush
     try:
         LOG_BUFFER.clear()
@@ -789,11 +940,11 @@ def main():
     if not table_exists(client,dataset,progress): create_or_replace_table(client,dataset,progress,prog_schema)
     else:
         for col,ctype in [('Project','STRING'),('RowCount','INT64')]:
-            try: client.query(f"ALTER TABLE `{dataset}.{progress}` ADD COLUMN IF NOT EXISTS {col} {ctype}").result()
+            try: execute_bq_query_with_retry(client, f"ALTER TABLE `{dataset}.{progress}` ADD COLUMN IF NOT EXISTS {col} {ctype}")
             except Exception: pass
         # Ensure 429 metrics columns exist for alignment
         for col,ctype in [('Search429','INT64'),('Detail429','INT64')]:
-            try: client.query(f"ALTER TABLE `{dataset}.{progress}` ADD COLUMN IF NOT EXISTS {col} {ctype}").result()
+            try: execute_bq_query_with_retry(client, f"ALTER TABLE `{dataset}.{progress}` ADD COLUMN IF NOT EXISTS {col} {ctype}")
             except Exception: pass
     default_projects=[
         'GS&O Data Analytics',
@@ -812,16 +963,25 @@ def main():
         'Sherbet',
         'Customer Success Management',
         'Operational Case Reviews',
-        'QMS Documentation'
+        'QMS Documentation',
+        'IT Helpdesk',
+        'GS&O Strategic Initiatives'
     ]
     # External file override (InitialSync/JQL.txt)
     default_projects = load_projects_from_file(default_projects)
     
-    # Always use the embedded default_projects list. Ignore CLI args and environment overrides.
-    projects = default_projects
-    logging.info('Using embedded default_projects; CLI and ENV overrides ignored')
-    # NOTE: TEST_PROJECTS override removed — use the full project list unless
-    # overridden by CLI (--project / --projects) or env SINGLE_PROJECT / PROJECTS.
+    # Allow a SINGLE_PROJECT or PROJECTS env override to restrict scope if provided
+    env_single = os.environ.get('SINGLE_PROJECT') or os.environ.get('PROJECT')
+    env_projects = os.environ.get('PROJECTS')
+    if env_single:
+        projects = [env_single.strip()]
+        logging.info(f'Using SINGLE_PROJECT override: {projects[0]}')
+    elif env_projects:
+        projects = [p.strip() for p in env_projects.split(',') if p.strip()]
+        logging.info(f'Using PROJECTS override: {projects}')
+    else:
+        projects = default_projects
+        logging.info('Using embedded default_projects')
     logging.info(f'Final project list: {projects}')
     # Allow environment variable overrides for credentials
     user=os.environ.get('JIRA_USERNAME') or cfg.get('jira_username') or 'jjkli@consoleconnect.com'
@@ -831,6 +991,7 @@ def main():
     # Shared-filter logic removed per operator request — always use per-project JQL
     filter_jql = None
     use_filter = False
+    total_rows_merged = 0  # Track total rows merged across all projects/windows
     for proj in projects:
         logging.info(f'Starting backfill for project {proj}')
         ok, sc, msg = preflight_validate_project(auth, proj)
@@ -851,8 +1012,8 @@ def main():
                 "WHERE Project=@p AND Status NOT IN ('complete','degraded') "
                 "AND TIMESTAMP_DIFF(WindowEnd, WindowStart, SECOND) < @minsec"
             )
-            job=client.query(cleanup_sql,job_config=cleanup_cfg); job.result()
-            affected=getattr(job,'num_dml_affected_rows',None)
+            result = execute_bq_query_with_retry(client, cleanup_sql, job_config=cleanup_cfg)
+            affected=getattr(result,'num_dml_affected_rows',None)
             if affected:
                 logging.info(f'Project {proj}: cleaned up {affected} tiny progress windows (<{MIN_PROGRESS_WINDOW_SEC}s)')
         except Exception:
@@ -875,15 +1036,15 @@ def main():
             else:
                 try:
                     # Only pick outstanding windows that are not tiny; tiny ones are ignored (or cleaned up above)
-                    res=client.query(
+                    res=execute_bq_query_with_retry(client,
                         f"SELECT WindowStart,WindowEnd FROM `{dataset}.{progress}` WHERE Project=@p AND Status NOT IN ('complete','degraded') AND TIMESTAMP_DIFF(WindowEnd, WindowStart, SECOND) >= @minsec ORDER BY WindowStart ASC LIMIT 1",
                         job_config=cfgq_with_min
-                    ).result()
+                    )
                     for r in res: ws=r.WindowStart; we=r.WindowEnd; break
                 except Exception: pass
             adaptive=base_days
             try:
-                hist=list(client.query(f"SELECT RowCount,WindowStart,WindowEnd, IFNULL(Search429,0) Search429, IFNULL(Detail429,0) Detail429 FROM `{dataset}.{progress}` WHERE Project=@p AND Status IN ('complete','degraded') ORDER BY WindowEnd DESC LIMIT 5",job_config=cfgq).result())
+                hist=list(execute_bq_query_with_retry(client, f"SELECT RowCount,WindowStart,WindowEnd, IFNULL(Search429,0) Search429, IFNULL(Detail429,0) Detail429 FROM `{dataset}.{progress}` WHERE Project=@p AND Status IN ('complete','degraded') ORDER BY WindowEnd DESC LIMIT 5",job_config=cfgq))
                 if hist:
                     last=hist[0]; last_count=last.RowCount or 0
                     try: span_hours=max(0.01,(last.WindowEnd-last.WindowStart).total_seconds()/3600.0)
@@ -905,9 +1066,9 @@ def main():
             else:
                 latest=None
                 try:
-                    lr=client.query(f"SELECT WindowEnd FROM `{dataset}.{progress}` WHERE Project=@p ORDER BY WindowEnd DESC LIMIT 1",job_config=cfgq).result()
+                    lr=execute_bq_query_with_retry(client, f"SELECT WindowEnd FROM `{dataset}.{progress}` WHERE Project=@p ORDER BY WindowEnd DESC LIMIT 1",job_config=cfgq)
                     for r in lr: latest=r.WindowEnd; break
-                except Exception: pass
+                except (Exception, KeyboardInterrupt): pass
                 if latest:
                     overlap=timedelta(minutes=OVERLAP_MINUTES)
                     latest_aware = to_utc_aware(latest)
@@ -950,17 +1111,19 @@ def main():
                 pass
             if ws>=now: break
             proj_clause=f'project = "{proj}"' if any(ch in proj for ch in [' ','&']) else f'project = {proj}'
+            # Use (created OR updated) to capture all tickets in window, including those never updated
+            time_clause=f"(created >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" OR updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\") AND (created < \"{we.strftime('%Y/%m/%d %H:%M')}\" OR updated < \"{we.strftime('%Y/%m/%d %H:%M')}\")"
             if use_filter:
-                jql=f"({filter_jql}) AND updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
+                jql=f"({filter_jql}) AND {time_clause}"
             else:
-                jql=f"({proj_clause}) AND updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
+                jql=f"({proj_clause}) AND {time_clause}"
             try:
                 merge=(
                     f"MERGE `{dataset}.{progress}` T USING (SELECT TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS WindowStart, TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS WindowEnd, '{proj}' AS Project) S "
                     "ON T.WindowStart=S.WindowStart AND T.WindowEnd=S.WindowEnd AND T.Project=S.Project "
                     "WHEN MATCHED THEN UPDATE SET Status='in_progress', LastRun=CURRENT_TIMESTAMP(), Project=S.Project "
                     "WHEN NOT MATCHED THEN INSERT (WindowStart,WindowEnd,Status,LastRun,Project) VALUES (S.WindowStart,S.WindowEnd,'in_progress',CURRENT_TIMESTAMP(),S.Project)"
-                ); client.query(merge).result()
+                ); execute_bq_query_with_retry(client, merge)
                 logging.info(f'Project {proj} window {ws} -> {we} marked in_progress')
                 # window marked in progress; log RUNNING for this slice
                 log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Window in_progress", status="RUNNING", window_start=ws.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'))
@@ -984,9 +1147,11 @@ def main():
             upd=(
                 f"UPDATE `{dataset}.{progress}` SET Status='{status}', LastRun=CURRENT_TIMESTAMP(), RowCount={rc}, Search429={SEARCH_429_COUNT}, Detail429={DETAIL_429_COUNT} "
                 f"WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND Status!='complete'"
-            ); client.query(upd).result()
+            ); execute_bq_query_with_retry(client, upd)
             logging.info(f'Project {proj} window {ws}->{we} {status} rows={rc} 429_search={SEARCH_429_COUNT} 429_detail={DETAIL_429_COUNT}')
             log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level=("INFO" if success else "ERROR"), message=f'Window {status} {proj}', status=("SUCCESS" if success else "ERROR"), window_start=ws.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'), rows_merged=int(rc), duration_seconds=window_duration_seconds)
+            if success:
+                total_rows_merged += rc  # Accumulate successful window rows
             # If we used a TEST_WINDOW_START/END override, only run that single forced window then exit the project loop
             try:
                 if 'TEST_WINDOW_START' in os.environ and 'TEST_WINDOW_END' in os.environ:
@@ -1010,24 +1175,24 @@ def main():
                 if span_hours>(MIN_SHRINK_HOURS+0.05):
                     new_span=max(MIN_SHRINK_HOURS,span_hours*RATE_SHRINK_FACTOR); new_end=ws+timedelta(hours=new_span)
                     try:
-                        client.query(
+                        execute_bq_query_with_retry(client,
                             f"UPDATE `{dataset}.{progress}` SET WindowEnd=TIMESTAMP('{new_end.strftime('%Y-%m-%d %H:%M:%S.%f')}'), Status='failed' "
                             f"WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING)"
-                        ).result();
+                        );
                         continue
                     except Exception: break
                 else:
                     try:
-                        client.query(
+                        execute_bq_query_with_retry(client,
                             f"UPDATE `{dataset}.{progress}` SET Status='degraded' WHERE Project='{proj}' AND CAST(WindowStart AS STRING)=CAST(TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND CAST(WindowEnd AS STRING)=CAST(TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS STRING) AND Status='failed'"
-                        ).result()
+                        )
                     except Exception: pass
                     break
             # Legacy flush disabled (no-op)
         log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message=f"Project {proj} finished", status="SUCCESS")
     run_ended = datetime.now(timezone.utc)
     duration_seconds = (run_ended - run_started).total_seconds()
-    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Tickets pipeline finished", status="SUCCESS", duration_seconds=duration_seconds)
+    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Tickets pipeline finished", status="SUCCESS", rows_merged=total_rows_merged, duration_seconds=duration_seconds)
 
 if __name__=='__main__':
     main()

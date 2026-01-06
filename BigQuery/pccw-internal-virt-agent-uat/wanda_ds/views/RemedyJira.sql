@@ -533,7 +533,7 @@ LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
 LEFT JOIN (
   SELECT
     Team_Name,
-    COUNTIF(UPPER(Classify) = 'ENGINEER') AS Engineer_Count
+    COUNTIF(UPPER(Category1) = 'ENGINEER') AS Engineer_Count
   FROM `pccw-internal-virt-agent-uat.GSO.StaffListCleaned`
   GROUP BY Team_Name
 ) AS se

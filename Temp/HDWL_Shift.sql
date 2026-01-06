@@ -1,0 +1,325 @@
+SELECT
+  Incident_Number,
+  Status,
+  CaseType,
+  NOC,
+  Categorization_Tier_1,
+  Categorization_Tier_2,
+  Categorization_Tier_3,
+  GCSC_1st_Customer_Update,
+  GCSC_2nd_Customer_Update,
+  GCSC_3rd_Customer_Update,
+  Initial_Response_Time,
+  Second_Response_Time,
+  Third_Response_Time,
+  Prod_ID,
+  Fault_Cause,
+  Closed_Date,
+  Submit_Date,
+  Assignee,
+  Closed_By,
+  Submitter,
+  TrueMTTR_mins,
+  Cust_ID,
+  Carrier,
+  Customer_Name,
+  SRno,
+  LastResolvedDate,
+  ReportedDate,
+  RespondedDate,
+  FaultCauseDetail,
+  LastModifiedDate,
+  ReportedBy,
+  Product_Family,
+  ProductDescription,
+  GSMP_Circuit_ID,
+  NULL AS Work_Log_Type,
+  NULL AS WorkLog_ID,
+  NULL AS WorkLog_Submit_Date,
+  NULL AS Work_Log_Submitter,
+  NULL AS WorkLog_Last_Modified_Date,
+  NULL AS WorkLog_Last_Modified_By,
+  NULL AS ExtractedDescription,
+  NULL AS inserted_at,
+  Shift,
+  Date,
+  DoW,
+  Creation_FullName,
+  NULL AS Closure_FullName
+FROM (
+  SELECT
+    hd.Incident_Number,
+    hd.Status,
+    hd.CaseType,
+    hd.Assigned_Group AS NOC,
+    hd.Categorization_Tier_1,
+    hd.Categorization_Tier_2,
+    hd.Categorization_Tier_3,
+    hd.GCSC_1st_Customer_Update,
+    hd.GCSC_2nd_Customer_Update,
+    hd.GCSC_3rd_Customer_Update,
+    hd.Initial_Response_Time,
+    hd.Second_Response_Time,
+    hd.Third_Response_Time,
+    hd.Prod_ID,
+    hd.Fault_Cause,
+    hd.Closed_Date,
+    hd.Submit_Date,
+    hd.Assignee,
+    hd.Closed_By,
+    hd.Submitter,
+    hd.TrueMTTR_mins,
+    hd.Cust_ID,
+    hd.Carrier,
+    hd.Customer_Name,
+    hd.SRno,
+    hd.LastResolvedDate,
+    hd.ReportedDate,
+    hd.RespondedDate,
+    hd.FaultCauseDetail,
+    hd.LastModifiedDate,
+    hd.ReportedBy,
+    hd.Product_Family,
+    hd.ProductDescription,
+    hd.GSMP_Circuit_ID,
+    hd.Submitter AS Creation_FullName,
+    CASE
+      WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 0 AND 6 THEN FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date) || ' - 1 Morning'
+      WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 7 AND 14 THEN FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date) || ' - 2 Afternoon'
+      WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 15 AND 22 THEN FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date) || ' - 3 Evening'
+      WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 23 AND 23 THEN FORMAT_TIMESTAMP('%Y-%m-%d', DATE_ADD(hd.Submit_Date, INTERVAL 1 DAY)) || ' - 1 Morning'
+      ELSE FORMAT_TIMESTAMP('%Y-%m-%d', DATE_ADD(hd.Submit_Date, INTERVAL 1 DAY)) || ' - 1 Morning'
+    END AS Shift,
+    hd.Submit_Date AS Date,
+    CASE
+      WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 0 AND 6 THEN FORMAT_TIMESTAMP('%a', hd.Submit_Date)
+      WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 7 AND 14 THEN FORMAT_TIMESTAMP('%a', hd.Submit_Date)
+      WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 15 AND 22 THEN FORMAT_TIMESTAMP('%a', hd.Submit_Date)
+      WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 23 AND 23 THEN FORMAT_TIMESTAMP('%a', DATE_ADD(hd.Submit_Date, INTERVAL 1 DAY))
+      ELSE FORMAT_TIMESTAMP('%a', DATE_ADD(hd.Submit_Date, INTERVAL 1 DAY))
+    END AS DoW
+  FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` AS hd
+) AS creation
+
+UNION ALL
+
+SELECT
+  Incident_Number,
+  Status,
+  CaseType,
+  NOC,
+  Categorization_Tier_1,
+  Categorization_Tier_2,
+  Categorization_Tier_3,
+  GCSC_1st_Customer_Update,
+  GCSC_2nd_Customer_Update,
+  GCSC_3rd_Customer_Update,
+  Initial_Response_Time,
+  Second_Response_Time,
+  Third_Response_Time,
+  Prod_ID,
+  Fault_Cause,
+  Closed_Date,
+  Submit_Date,
+  Assignee,
+  Closed_By,
+  Submitter,
+  TrueMTTR_mins,
+  Cust_ID,
+  Carrier,
+  Customer_Name,
+  SRno,
+  LastResolvedDate,
+  ReportedDate,
+  RespondedDate,
+  FaultCauseDetail,
+  LastModifiedDate,
+  ReportedBy,
+  Product_Family,
+  ProductDescription,
+  GSMP_Circuit_ID,
+  NULL AS Work_Log_Type,
+  NULL AS WorkLog_ID,
+  NULL AS WorkLog_Submit_Date,
+  NULL AS Work_Log_Submitter,
+  NULL AS WorkLog_Last_Modified_Date,
+  NULL AS WorkLog_Last_Modified_By,
+  NULL AS ExtractedDescription,
+  NULL AS inserted_at,
+  Shift,
+  Date,
+  DoW,
+  NULL AS Creation_FullName,
+  Closure_FullName
+FROM (
+  SELECT
+    hd.Incident_Number,
+    hd.Status,
+    hd.CaseType,
+    hd.Assigned_Group AS NOC,
+    hd.Categorization_Tier_1,
+    hd.Categorization_Tier_2,
+    hd.Categorization_Tier_3,
+    hd.GCSC_1st_Customer_Update,
+    hd.GCSC_2nd_Customer_Update,
+    hd.GCSC_3rd_Customer_Update,
+    hd.Initial_Response_Time,
+    hd.Second_Response_Time,
+    hd.Third_Response_Time,
+    hd.Prod_ID,
+    hd.Fault_Cause,
+    hd.Closed_Date,
+    hd.Submit_Date,
+    hd.Assignee,
+    hd.Closed_By,
+    hd.Submitter,
+    hd.TrueMTTR_mins,
+    hd.Cust_ID,
+    hd.Carrier,
+    hd.Customer_Name,
+    hd.SRno,
+    hd.LastResolvedDate,
+    hd.ReportedDate,
+    hd.RespondedDate,
+    hd.FaultCauseDetail,
+    hd.LastModifiedDate,
+    hd.ReportedBy,
+    hd.Product_Family,
+    hd.ProductDescription,
+    hd.GSMP_Circuit_ID,
+    hd.Closed_By AS Closure_FullName,
+    CASE
+      WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 0 AND 6 THEN FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date) || ' - 1 Morning'
+      WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 7 AND 14 THEN FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date) || ' - 2 Afternoon'
+      WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 15 AND 22 THEN FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date) || ' - 3 Evening'
+      WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 23 AND 23 THEN FORMAT_TIMESTAMP('%Y-%m-%d', DATE_ADD(hd.Closed_Date, INTERVAL 1 DAY)) || ' - 1 Morning'
+      ELSE FORMAT_TIMESTAMP('%Y-%m-%d', DATE_ADD(hd.Closed_Date, INTERVAL 1 DAY)) || ' - 1 Morning'
+    END AS Shift,
+    hd.Closed_Date AS Date,
+    CASE
+      WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 0 AND 6 THEN FORMAT_TIMESTAMP('%a', hd.Closed_Date)
+      WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 7 AND 14 THEN FORMAT_TIMESTAMP('%a', hd.Closed_Date)
+      WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 15 AND 22 THEN FORMAT_TIMESTAMP('%a', hd.Closed_Date)
+      WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 23 AND 23 THEN FORMAT_TIMESTAMP('%a', DATE_ADD(hd.Closed_Date, INTERVAL 1 DAY))
+      ELSE FORMAT_TIMESTAMP('%a', DATE_ADD(hd.Closed_Date, INTERVAL 1 DAY))
+    END AS DoW
+  FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` AS hd
+  WHERE hd.Closed_Date IS NOT NULL
+) AS closure
+
+UNION ALL
+
+SELECT
+  Incident_Number,
+  Status,
+  CaseType,
+  NOC,
+  Categorization_Tier_1,
+  Categorization_Tier_2,
+  Categorization_Tier_3,
+  GCSC_1st_Customer_Update,
+  GCSC_2nd_Customer_Update,
+  GCSC_3rd_Customer_Update,
+  Initial_Response_Time,
+  Second_Response_Time,
+  Third_Response_Time,
+  Prod_ID,
+  Fault_Cause,
+  Closed_Date,
+  Submit_Date,
+  Assignee,
+  Closed_By,
+  Submitter,
+  TrueMTTR_mins,
+  Cust_ID,
+  Carrier,
+  Customer_Name,
+  SRno,
+  LastResolvedDate,
+  ReportedDate,
+  RespondedDate,
+  FaultCauseDetail,
+  LastModifiedDate,
+  ReportedBy,
+  Product_Family,
+  ProductDescription,
+  GSMP_Circuit_ID,
+  Work_Log_Type,
+  WorkLog_ID,
+  WorkLog_Submit_Date,
+  Work_Log_Submitter,
+  WorkLog_Last_Modified_Date,
+  WorkLog_Last_Modified_By,
+  ExtractedDescription,
+  inserted_at,
+  Shift,
+  Date,
+  DoW,
+  NULL AS Creation_FullName,
+  NULL AS Closure_FullName
+FROM (
+  SELECT
+    wl.Incident_Number,
+    hd.Status,
+    hd.CaseType,
+    hd.Assigned_Group AS NOC,
+    hd.Categorization_Tier_1,
+    hd.Categorization_Tier_2,
+    hd.Categorization_Tier_3,
+    hd.GCSC_1st_Customer_Update,
+    hd.GCSC_2nd_Customer_Update,
+    hd.GCSC_3rd_Customer_Update,
+    hd.Initial_Response_Time,
+    hd.Second_Response_Time,
+    hd.Third_Response_Time,
+    hd.Prod_ID,
+    hd.Fault_Cause,
+    hd.Closed_Date,
+    hd.Submit_Date,
+    hd.Assignee,
+    hd.Closed_By,
+    hd.Submitter,
+    hd.TrueMTTR_mins,
+    hd.Cust_ID,
+    hd.Carrier,
+    hd.Customer_Name,
+    hd.SRno,
+    hd.LastResolvedDate,
+    hd.ReportedDate,
+    hd.RespondedDate,
+    hd.FaultCauseDetail,
+    hd.LastModifiedDate,
+    hd.ReportedBy,
+    hd.Product_Family,
+    hd.ProductDescription,
+    hd.GSMP_Circuit_ID,
+    wl.WorkLog_Type AS Work_Log_Type,
+    wl.WorkLog_ID,
+    wl.WorkLog_Submit_Date,
+    wl.WorkLog_Submitter AS Work_Log_Submitter,
+    wl.Last_Modified_Date AS WorkLog_Last_Modified_Date,
+    wl.Last_Modified_By AS WorkLog_Last_Modified_By,
+    wl.ExtractedDescription,
+    wl.inserted_at,
+    CASE
+      WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 0 AND 6 THEN FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date) || ' - 1 Morning'
+      WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 7 AND 14 THEN FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date) || ' - 2 Afternoon'
+      WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 15 AND 22 THEN FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date) || ' - 3 Evening'
+      WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 23 AND 23 THEN FORMAT_TIMESTAMP('%Y-%m-%d', DATE_ADD(wl.WorkLog_Submit_Date, INTERVAL 1 DAY)) || ' - 1 Morning'
+      ELSE FORMAT_TIMESTAMP('%Y-%m-%d', DATE_ADD(wl.WorkLog_Submit_Date, INTERVAL 1 DAY)) || ' - 1 Morning'
+    END AS Shift,
+    wl.WorkLog_Submit_Date AS Date,
+    CASE
+      WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 0 AND 6 THEN FORMAT_TIMESTAMP('%a', wl.WorkLog_Submit_Date)
+      WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 7 AND 14 THEN FORMAT_TIMESTAMP('%a', wl.WorkLog_Submit_Date)
+      WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 15 AND 22 THEN FORMAT_TIMESTAMP('%a', wl.WorkLog_Submit_Date)
+      WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 23 AND 23 THEN FORMAT_TIMESTAMP('%a', DATE_ADD(wl.WorkLog_Submit_Date, INTERVAL 1 DAY))
+      ELSE FORMAT_TIMESTAMP('%a', DATE_ADD(wl.WorkLog_Submit_Date, INTERVAL 1 DAY))
+    END AS DoW
+  FROM `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` AS wl
+  LEFT JOIN `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` AS hd
+    ON wl.Incident_Number = hd.Incident_Number
+  WHERE wl.WorkLog_Submit_Date IS NOT NULL
+) AS work_logs
+
+ORDER BY Shift DESC

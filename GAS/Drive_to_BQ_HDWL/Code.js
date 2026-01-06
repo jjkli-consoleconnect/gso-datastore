@@ -1,5 +1,5 @@
 // --- GLOBAL VARIABLES ---
-var scriptName = "Automated Datapipe - HelpDeskAllNOC_and_Worklog_DriveSource";
+var scriptName = "DriveToBQ - HDWL";
 var projectId = "pccw-internal-virt-agent-uat";
 var folderId = "1-CN9TVdXLQlG033djKVG5slzbhADbpdA"; // Assuming this is for temporary JSON files on Drive
 var errorNotificationEmails = "jens-vertexai-aaaan3dj2p4fdro72c3fa2l3km@consoleconsole.org.slack.com";
@@ -12,6 +12,7 @@ var archiveDriveFolderId = "16RazUSdV7klL8ZAqNqVNUx7mWtpKkZi-";
 var pipelineRunsDatasetId = 'GSO';
 var pipelineRunsTableId = 'PipelineRuns';
 var currentRunId = null; // set in main()
+var scriptStartTime = null; // set in main()
 
 
 // --- CONFIGURATIONS FOR EACH CSV TYPE ---
@@ -88,6 +89,7 @@ function processDriveFiles() {
   console.log(`Starting data pipeline run from Google Drive folder: ${sourceDriveFolderId}`);
   if (!currentRunId) {
     currentRunId = Utilities.getUuid();
+    scriptStartTime = new Date();
     logPipelineRun(scriptName, currentRunId, 'RUNNING', 'INFO', 'Pipeline run started', null, null, null, null, null);
   }
 
@@ -113,6 +115,7 @@ function processDriveFiles() {
   let totalFilesProcessedSuccessfully = 0;
   let totalFilesArchivedSuccessfully = 0;
   let totalCSVsLoadedToBigQuery = 0; // Number of successful BigQuery loads for CSVs
+  let totalRowsMerged = 0;
   let anyProcessingIssueEncountered = false; // Flag for any non-critical failure that warrants a warning email
 
   // Convert iterator to array for easier handling and length check if needed
@@ -147,9 +150,10 @@ function processDriveFiles() {
     // Attempt to process the CSV file
     const processStatus = processCsvFile(file); // This new function replaces processAttachmentByType logic
 
-    if (processStatus === true) {
+    if (processStatus && processStatus.success === true) {
       totalFilesProcessedSuccessfully++;
       totalCSVsLoadedToBigQuery++; // Increment if BigQuery load/merge was successful for this CSV
+      totalRowsMerged += (processStatus.rowsMerged || 0);
 
       try {
         file.moveTo(archiveFolder);
@@ -172,6 +176,7 @@ function processDriveFiles() {
   console.log("\n--- Overall Processing Summary ---");
   console.log(`Total files found in source folder: ${totalFilesFound}`);
   console.log(`Total CSVs processed and loaded to BigQuery: ${totalCSVsLoadedToBigQuery}`);
+  console.log(`Total rows merged into BigQuery: ${totalRowsMerged}`);
   console.log(`Total files successfully archived: ${totalFilesArchivedSuccessfully}`);
 
   if (anyProcessingIssueEncountered || totalFilesArchivedSuccessfully < totalFilesProcessedSuccessfully) {
@@ -186,9 +191,9 @@ function processDriveFiles() {
   } else {
     console.log("All matching pending files processed successfully. No warning email sent.");
   }
-  console.log("Data pipeline run complete.");
-  // SUCCESS log with rows merged equal to total CSV loads
-  logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'Data pipeline run complete.', null, null, totalCSVsLoadedToBigQuery, null, null);
+  console.log("Pipeline finished");
+  // SUCCESS log with rows merged = actual BigQuery row count
+  logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'Pipeline finished', null, null, totalRowsMerged, null, null);
 }
 
 /**
@@ -210,9 +215,9 @@ function processCsvFile(file) {
           // Generic BigQuery load to staging
           loadJsonToBigQueryGeneric(jsonFileId, config);
           // Generic BigQuery merge to target
-          mergeTablesInBigQueryGeneric(config);
-          console.log(`  Successfully processed and loaded "${config.name}" data.`);
-          return true; // Successfully handled this attachment
+          const rowsMerged = mergeTablesInBigQueryGeneric(config);
+          console.log(`  Successfully processed and loaded "${config.name}" data. Rows merged: ${rowsMerged}`);
+          return { success: true, rowsMerged: rowsMerged }; // Successfully handled this attachment
         } else {
           console.error(`  JSON conversion resulted in null for: ${file.getName()}`);
           return false; // Conversion failed (e.g., empty CSV)
@@ -384,11 +389,23 @@ function mergeTablesInBigQueryGeneric(config) {
 
     const updateSetClause = config.allColumns
       .filter(col => !primaryKeys.includes(col)) // Don't update primary keys
-      .map(col => `T.${col} = H.${col}`)
+      .map(col => {
+        if (config.timestampFields.includes(col)) {
+          return `T.${col} = SAFE_CAST(H.${col} AS TIMESTAMP)`;
+        } else {
+          return `T.${col} = H.${col}`;
+        }
+      })
       .join(",\n        ");
 
     const insertColumns = config.allColumns.join(", ");
-    const insertValues = config.allColumns.map(col => `H.${col}`).join(", ");
+    const insertValues = config.allColumns.map(col => {
+      if (config.timestampFields.includes(col)) {
+        return `SAFE_CAST(H.${col} AS TIMESTAMP)`;
+      } else {
+        return `H.${col}`;
+      }
+    }).join(", ");
 
     const query = `
       MERGE \`${projectId}.${config.targetDatasetId}.${config.targetTableId}\` T
@@ -403,8 +420,14 @@ function mergeTablesInBigQueryGeneric(config) {
 
     console.log(`    Initiating BigQuery MERGE for ${config.name} into ${config.targetDatasetId}.${config.targetTableId}.`);
     const job = BigQuery.Jobs.insert({ configuration: { query: { query, useLegacySql: false } } }, projectId);
-    waitForJobCompletion(job);
-    console.log(`    BigQuery MERGE for ${config.name} completed successfully!`);
+    const completedJob = waitForJobCompletion(job);
+    
+    // Extract row counts from job statistics
+    const numDmlAffectedRows = completedJob.statistics && completedJob.statistics.query && completedJob.statistics.query.numDmlAffectedRows 
+      ? parseInt(completedJob.statistics.query.numDmlAffectedRows) : 0;
+    
+    console.log(`    BigQuery MERGE for ${config.name} completed successfully! Rows affected: ${numDmlAffectedRows}`);
+    return numDmlAffectedRows;
 
   } catch (error) {
     console.error(`    Error merging tables in BigQuery for ${config.name}: ${error.message}`);
@@ -439,27 +462,81 @@ function waitForJobCompletion(job) {
     const errorDetails = JSON.stringify(job.status.errors, null, 2);
     throw new Error(`BigQuery job ${jobId} failed: ${job.status.errorResult.message}. Details: \n${errorDetails}`);
   }
+  return job;
 }
 
-// Central PipelineRuns MERGE-based logger
+
+
+// Centralized PipelineRuns logger using MERGE to align with Python scripts
 function logPipelineRun(pipelineName, runId, status, logLevel, message, windowStartIso, windowEndIso, rowsMerged, errorCode, contextObj) {
   try {
-    var wsExpr = windowStartIso ? ("TIMESTAMP('" + windowStartIso + "')") : 'NULL';
-    var weExpr = windowEndIso ? ("TIMESTAMP('" + windowEndIso + "')") : 'NULL';
-    var rmExpr = (rowsMerged === 0 || rowsMerged) ? String(rowsMerged) : 'NULL';
-    var ecExpr = errorCode ? ("'" + escapeSqlLiteral(String(errorCode)) + "'") : 'NULL';
-    var lvl = logLevel ? escapeSqlLiteral(String(logLevel)) : '';
-    var msg = message ? escapeSqlLiteral(String(message)) : '';
-    var pname = escapeSqlLiteral(String(pipelineName));
-    var rid = escapeSqlLiteral(String(runId));
-    var stat = escapeSqlLiteral(String(status));
+    let durationSeconds = null;
+    if ((status === 'SUCCESS' || status === 'ERROR') && scriptStartTime) {
+      durationSeconds = (new Date().getTime() - scriptStartTime.getTime()) / 1000.0;
+    }
 
-    var query = "\n      MERGE `" + projectId + "." + pipelineRunsDatasetId + "." + pipelineRunsTableId + "` T\n      USING (SELECT '" + pname + "' AS PipelineName, '" + rid + "' AS RunID) S\n      ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID\n      WHEN MATCHED THEN UPDATE SET\n        RunTime = CURRENT_TIMESTAMP(),\n        WindowStart = " + wsExpr + ",\n        WindowEnd = " + weExpr + ",\n        RowsMerged = " + rmExpr + ",\n        LogLevel = '" + lvl + "',\n        Message = '" + msg + "',\n        Status = '" + stat + "',\n        ErrorCode = " + ecExpr + ",\n        Context = CAST(NULL AS JSON)\n      WHEN NOT MATCHED THEN\n        INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, Context)\n        VALUES (CURRENT_TIMESTAMP(), '" + pname + "', " + wsExpr + ", " + weExpr + ", " + rmExpr + ", '" + lvl + "', '" + msg + "', '" + rid + "', '" + stat + "', " + ecExpr + ", CAST(NULL AS JSON));\n    ";
+    const query = `
+      MERGE \`${projectId}.${pipelineRunsDatasetId}.${pipelineRunsTableId}\` T
+      USING (
+        SELECT
+          @pipeline AS PipelineName,
+          @ws AS WindowStart,
+          @we AS WindowEnd,
+          @rows AS RowsMerged,
+          @level AS LogLevel,
+          @msg AS Message,
+          @runid AS RunID,
+          @status AS Status,
+          @err AS ErrorCode,
+          @duration AS DurationSeconds,
+          CAST(NULL AS JSON) AS Context
+      ) S
+      ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID
+      WHEN MATCHED THEN UPDATE SET
+          T.WindowStart = COALESCE(S.WindowStart, T.WindowStart),
+          T.WindowEnd   = COALESCE(S.WindowEnd,   T.WindowEnd),
+          T.RowsMerged  = COALESCE(S.RowsMerged,  T.RowsMerged),
+          T.LogLevel    = COALESCE(S.LogLevel,    T.LogLevel),
+          T.Message     = COALESCE(S.Message,     T.Message),
+          T.Status      = COALESCE(S.Status,      T.Status),
+          T.ErrorCode   = COALESCE(S.ErrorCode,   T.ErrorCode),
+          T.DurationSeconds = COALESCE(S.DurationSeconds, T.DurationSeconds),
+          T.Context     = COALESCE(S.Context,     T.Context)
+      WHEN NOT MATCHED THEN
+        INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, DurationSeconds, Context)
+        VALUES (CURRENT_TIMESTAMP(), S.PipelineName, S.WindowStart, S.WindowEnd, S.RowsMerged, S.LogLevel, S.Message, S.RunID, S.Status, S.ErrorCode, S.DurationSeconds, S.Context)
+    `;
 
-    var job = BigQuery.Jobs.insert({ configuration: { query: { query: query, useLegacySql: false } } }, projectId);
-    waitForJobCompletion(job);
+    const queryRequest = {
+      query: query,
+      useLegacySql: false,
+      parameterMode: 'NAMED',
+      queryParameters: [
+        { name: 'pipeline', parameterType: { type: 'STRING' }, parameterValue: { value: pipelineName } },
+        { name: 'ws', parameterType: { type: 'TIMESTAMP' }, parameterValue: { value: windowStartIso } },
+        { name: 'we', parameterType: { type: 'TIMESTAMP' }, parameterValue: { value: windowEndIso } },
+        { name: 'rows', parameterType: { type: 'INT64' }, parameterValue: { value: (rowsMerged !== null && rowsMerged !== undefined) ? rowsMerged.toString() : null } },
+        { name: 'level', parameterType: { type: 'STRING' }, parameterValue: { value: logLevel } },
+        { name: 'msg', parameterType: { type: 'STRING' }, parameterValue: { value: message } },
+        { name: 'runid', parameterType: { type: 'STRING' }, parameterValue: { value: runId } },
+        { name: 'status', parameterType: { type: 'STRING' }, parameterValue: { value: status } },
+        { name: 'err', parameterType: { type: 'STRING' }, parameterValue: { value: errorCode } },
+        { name: 'duration', parameterType: { type: 'FLOAT64' }, parameterValue: { value: durationSeconds } }
+      ]
+    };
+
+    console.log(`Logging pipeline run: ${status} - ${message} (RunID: ${runId})`);
+    const job = BigQuery.Jobs.query(queryRequest, projectId);
+    
+    if (job.jobComplete) {
+      console.log(`Pipeline run logged successfully. Job ID: ${job.jobReference.jobId}`);
+    } else {
+      console.warn(`Pipeline run log job timed out (not complete). Job ID: ${job.jobReference.jobId}`);
+    }
+
   } catch (e) {
     console.warn('logPipelineRun failed: ' + e.message);
+    console.warn('Stack trace: ' + e.stack);
   }
 }
 
@@ -472,6 +549,7 @@ function escapeSqlLiteral(s) {
  */
 function main() {
   currentRunId = Utilities.getUuid();
+  scriptStartTime = new Date();
   logPipelineRun(scriptName, currentRunId, 'RUNNING', 'INFO', 'Pipeline run started', null, null, null, null, null);
   processDriveFiles();
 }

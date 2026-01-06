@@ -16,6 +16,8 @@ Sub_Team,
 Country, 
 Title, 
 Remark,
+bigquerysignaturesearch, 
+Ingestion_Time,
 CASE
   WHEN title IS NULL THEN 'Manager'
   WHEN REGEXP_CONTAINS(LOWER(title),
@@ -25,7 +27,7 @@ CASE
        r'\b(manager|lead|supervisor|director|vice president|vp|avp|head|chief|manager,|assistant vice president|manager \(|unit manager|operations manager)\b')
     THEN 'Manager'
   ELSE 'Manager'
-END AS Classify
+END AS Category1
 
 FROM `pccw-internal-virt-agent-uat.GSO.Staff` 
 

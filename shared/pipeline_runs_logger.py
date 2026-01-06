@@ -87,6 +87,12 @@ def log_pipeline_run(
             job = client.query(sql, job_config=job_config)
             job.result()
             return
+        except KeyboardInterrupt:
+            # KeyboardInterrupt during network calls is often a socket/SSL timeout
+            if attempt == max_retries:
+                raise
+            time.sleep(delay)
+            delay *= 2
         except Exception:
             if attempt == max_retries:
                 raise

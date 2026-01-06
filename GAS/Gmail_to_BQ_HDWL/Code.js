@@ -1,4 +1,4 @@
-var scriptName = "Automated Datapipe - HelpDeskAllNOC_and_Worklog";
+var scriptName = "GmailToBQ - HDWL";
 var subject = "BQ - GSO.HDWL";
 var sender = "noreply-bmchelix@onbmc.com";
 var label = "CloudWatch";
@@ -10,6 +10,9 @@ var archivedLabel = "ArchivedReports"; // Make sure this Gmail Label exists
 var pipelineRunsDatasetId = 'GSO';
 var pipelineRunsTableId = 'PipelineRuns';
 var currentRunId = null; // Set in main()
+var scriptStartTime = null; // Set in main()
+
+
 
 const csvTypeConfigurations = [
   {
@@ -73,6 +76,14 @@ const csvTypeConfigurations = [
 ];
 
 function searchForEmailAndAttachments() {
+  // Ensure we have a Run ID even if this function is called directly (skipping main)
+  if (!currentRunId) {
+    currentRunId = Utilities.getUuid();
+    scriptStartTime = new Date();
+    console.log(`Warning: searchForEmailAndAttachments called directly. Generated new RunID: ${currentRunId}`);
+    logPipelineRun(scriptName, currentRunId, 'RUNNING', 'INFO', 'Pipeline run started (direct invocation)', null, null, null, null, null);
+  }
+
   const cleanSubject = subject.trim();
   const cleanLabel = label.trim();
   const cleanSender = sender.trim();
@@ -87,7 +98,7 @@ function searchForEmailAndAttachments() {
     console.log("No new emails found conforming to search criteria. Exiting.");
     // Log completion with 0 rows if we had a RUNNING entry
     if (currentRunId) {
-      logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'No matching emails. Nothing to do.', null, null, 0, null, null);
+      logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'No matching emails', null, null, 0, null, null);
     }
     return;
   }
@@ -97,6 +108,7 @@ function searchForEmailAndAttachments() {
   let totalThreadsArchivedSuccessfully = 0;
   let totalMessagesWithProcessedCSVs = 0;
   let totalAttachmentsLoadedToBigQuery = 0;
+  let totalRowsMerged = 0;
   let anyProcessingIssueEncountered = false;
 
   for (const thread of threads) {
@@ -135,10 +147,11 @@ function searchForEmailAndAttachments() {
           if (attachment.getName().toLowerCase().endsWith(".csv")) {
             const processedThisAttachmentResult = processAttachmentByType(attachment, message);
 
-            if (processedThisAttachmentResult === true) { 
+            if (processedThisAttachmentResult && processedThisAttachmentResult.success === true) { 
               relevantAttachmentFoundInMessage = true;
               dataLoadedInThisMessage = true; 
               totalAttachmentsLoadedToBigQuery++;
+              totalRowsMerged += (processedThisAttachmentResult.rowsMerged || 0);
             } else if (processedThisAttachmentResult === "SKIPPED_NO_DATA") { 
               relevantAttachmentFoundInMessage = true; 
             } else if (processedThisAttachmentResult === false) { 
@@ -179,8 +192,8 @@ function searchForEmailAndAttachments() {
     }
 
     if (currentThreadFullyProcessed) {
-        console.log(`    All relevant messages in Thread ID: ${thread.getId()} processed. Waiting 5 seconds for Gmail state update...`);
-        Utilities.sleep(5000); 
+        console.log(`    All relevant messages in Thread ID: ${thread.getId()} processed. Waiting 15 seconds for Gmail state update...`);
+        Utilities.sleep(15000); 
 
         const refreshedThread = GmailApp.getThreadById(thread.getId());
 
@@ -211,6 +224,7 @@ function searchForEmailAndAttachments() {
   console.log(`Total threads fully processed and archived: ${totalThreadsArchivedSuccessfully}`);
   console.log(`Total unique messages with processed CSVs (containing data): ${totalMessagesWithProcessedCSVs}`);
   console.log(`Total CSV attachments loaded to BigQuery: ${totalAttachmentsLoadedToBigQuery}`);
+  console.log(`Total rows merged into BigQuery: ${totalRowsMerged}`);
 
   if (anyProcessingIssueEncountered || totalThreadsArchivedSuccessfully < threads.length) {
     const warningBody = `Some emails/threads were not fully processed or had errors during processing.
@@ -225,9 +239,9 @@ function searchForEmailAndAttachments() {
     console.log("All matching pending emails processed successfully. No warning email sent.");
   }
   console.log("Data pipeline run complete.");
-  // Final SUCCESS log with rows merged = total CSVs loaded
+  // Final SUCCESS log with rows merged = actual BigQuery row count
   if (currentRunId) {
-    logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'Data pipeline run complete.', null, null, totalAttachmentsLoadedToBigQuery, null, null);
+    logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'Pipeline Finished', null, null, totalRowsMerged, null, null);
   }
 }
 
@@ -241,9 +255,9 @@ function processAttachmentByType(attachment, message) {
         const jsonFileId = processAttachmentToJsonGeneric(attachment, config);
         if (jsonFileId) { 
           loadJsonToBigQueryGeneric(jsonFileId, config);
-          mergeTablesInBigQueryGeneric(config);
-          console.log(`    Successfully processed and loaded "${config.name}" data.`);
-          return true; 
+          const rowsMerged = mergeTablesInBigQueryGeneric(config);
+          console.log(`    Successfully processed and loaded "${config.name}" data. Rows merged: ${rowsMerged}`);
+          return { success: true, rowsMerged: rowsMerged }; 
         } else { 
           console.log(`    Successfully skipped empty/headers-only CSV: ${attachment.getName()}. No data to load.`);
           return "SKIPPED_NO_DATA"; 
@@ -657,8 +671,14 @@ function mergeTablesInBigQueryGeneric(config) {
 
     console.log(`    Initiating BigQuery MERGE for ${config.name} into ${config.targetDatasetId}.${config.targetTableId}.`);
     const job = BigQuery.Jobs.insert({ configuration: { query: { query, useLegacySql: false } } }, projectId);
-    waitForJobCompletion(job);
-    console.log(`    BigQuery MERGE for ${config.name} completed successfully!`);
+    const completedJob = waitForJobCompletion(job);
+    
+    // Extract row counts from job statistics
+    const numDmlAffectedRows = completedJob.statistics && completedJob.statistics.query && completedJob.statistics.query.numDmlAffectedRows 
+      ? parseInt(completedJob.statistics.query.numDmlAffectedRows) : 0;
+    
+    console.log(`    BigQuery MERGE for ${config.name} completed successfully! Rows affected: ${numDmlAffectedRows}`);
+    return numDmlAffectedRows;
 
   } catch (error) {
     console.error(`    Error merging tables in BigQuery for ${config.name}: ${error.message}`);
@@ -688,29 +708,79 @@ function waitForJobCompletion(job) {
     const errorDetails = JSON.stringify(job.status.errors, null, 2);
     throw new Error(`BigQuery job ${jobId} failed: ${job.status.errorResult.message}. Details: \n${errorDetails}`);
   }
+  return job;
 }
 
-// New centralized PipelineRuns logger using MERGE
+// Centralized PipelineRuns logger using MERGE to align with Python scripts
 function logPipelineRun(pipelineName, runId, status, logLevel, message, windowStartIso, windowEndIso, rowsMerged, errorCode, contextObj) {
   try {
-    var wsExpr = windowStartIso ? ("TIMESTAMP('" + windowStartIso + "')") : 'NULL';
-    var weExpr = windowEndIso ? ("TIMESTAMP('" + windowEndIso + "')") : 'NULL';
-    var rmExpr = (rowsMerged === 0 || rowsMerged) ? String(rowsMerged) : 'NULL';
-    var ecExpr = errorCode ? ("'" + escapeSqlLiteral(String(errorCode)) + "'") : 'NULL';
-    var lvl = logLevel ? escapeSqlLiteral(String(logLevel)) : '';
-    var msg = message ? escapeSqlLiteral(String(message)) : '';
-    var pname = escapeSqlLiteral(String(pipelineName));
-    var rid = escapeSqlLiteral(String(runId));
-    var stat = escapeSqlLiteral(String(status));
+    let durationSeconds = null;
+    if ((status === 'SUCCESS' || status === 'ERROR') && scriptStartTime) {
+      durationSeconds = (new Date().getTime() - scriptStartTime.getTime()) / 1000.0;
+    }
 
-    var query = "\n      MERGE `" + projectId + "." + pipelineRunsDatasetId + "." + pipelineRunsTableId + "` T\n      USING (SELECT '" + pname + "' AS PipelineName, '" + rid + "' AS RunID) S\n      ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID\n      WHEN MATCHED THEN UPDATE SET\n        RunTime = CURRENT_TIMESTAMP(),\n        WindowStart = " + wsExpr + ",\n        WindowEnd = " + weExpr + ",\n        RowsMerged = " + rmExpr + ",\n        LogLevel = '" + lvl + "',\n        Message = '" + msg + "',\n        Status = '" + stat + "',\n        ErrorCode = " + ecExpr + ",\n        Context = CAST(NULL AS JSON)\n      WHEN NOT MATCHED THEN\n        INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, Context)\n        VALUES (CURRENT_TIMESTAMP(), '" + pname + "', " + wsExpr + ", " + weExpr + ", " + rmExpr + ", '" + lvl + "', '" + msg + "', '" + rid + "', '" + stat + "', " + ecExpr + ", CAST(NULL AS JSON));\n    ";
+    const query = `
+      MERGE \`${projectId}.${pipelineRunsDatasetId}.${pipelineRunsTableId}\` T
+      USING (
+        SELECT
+          @pipeline AS PipelineName,
+          @ws AS WindowStart,
+          @we AS WindowEnd,
+          @rows AS RowsMerged,
+          @level AS LogLevel,
+          @msg AS Message,
+          @runid AS RunID,
+          @status AS Status,
+          @err AS ErrorCode,
+          @duration AS DurationSeconds,
+          CAST(NULL AS JSON) AS Context
+      ) S
+      ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID
+      WHEN MATCHED THEN UPDATE SET
+          T.WindowStart = COALESCE(S.WindowStart, T.WindowStart),
+          T.WindowEnd   = COALESCE(S.WindowEnd,   T.WindowEnd),
+          T.RowsMerged  = COALESCE(S.RowsMerged,  T.RowsMerged),
+          T.LogLevel    = COALESCE(S.LogLevel,    T.LogLevel),
+          T.Message     = COALESCE(S.Message,     T.Message),
+          T.Status      = COALESCE(S.Status,      T.Status),
+          T.ErrorCode   = COALESCE(S.ErrorCode,   T.ErrorCode),
+          T.DurationSeconds = COALESCE(S.DurationSeconds, T.DurationSeconds),
+          T.Context     = COALESCE(S.Context,     T.Context)
+      WHEN NOT MATCHED THEN
+        INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, DurationSeconds, Context)
+        VALUES (CURRENT_TIMESTAMP(), S.PipelineName, S.WindowStart, S.WindowEnd, S.RowsMerged, S.LogLevel, S.Message, S.RunID, S.Status, S.ErrorCode, S.DurationSeconds, S.Context)
+    `;
 
-    var job = BigQuery.Jobs.insert({ configuration: { query: { query: query, useLegacySql: false } } }, projectId);
-    // Best-effort wait, but do not throw if it fails
-    waitForJobCompletion(job);
+    const queryRequest = {
+      query: query,
+      useLegacySql: false,
+      parameterMode: 'NAMED',
+      queryParameters: [
+        { name: 'pipeline', parameterType: { type: 'STRING' }, parameterValue: { value: pipelineName } },
+        { name: 'ws', parameterType: { type: 'TIMESTAMP' }, parameterValue: { value: windowStartIso } },
+        { name: 'we', parameterType: { type: 'TIMESTAMP' }, parameterValue: { value: windowEndIso } },
+        { name: 'rows', parameterType: { type: 'INT64' }, parameterValue: { value: (rowsMerged !== null && rowsMerged !== undefined) ? rowsMerged.toString() : null } },
+        { name: 'level', parameterType: { type: 'STRING' }, parameterValue: { value: logLevel } },
+        { name: 'msg', parameterType: { type: 'STRING' }, parameterValue: { value: message } },
+        { name: 'runid', parameterType: { type: 'STRING' }, parameterValue: { value: runId } },
+        { name: 'status', parameterType: { type: 'STRING' }, parameterValue: { value: status } },
+        { name: 'err', parameterType: { type: 'STRING' }, parameterValue: { value: errorCode } },
+        { name: 'duration', parameterType: { type: 'FLOAT64' }, parameterValue: { value: durationSeconds } }
+      ]
+    };
+
+    console.log(`Logging pipeline run: ${status} - ${message} (RunID: ${runId})`);
+    const job = BigQuery.Jobs.query(queryRequest, projectId);
+    
+    if (job.jobComplete) {
+      console.log(`Pipeline run logged successfully. Job ID: ${job.jobReference.jobId}`);
+    } else {
+      console.warn(`Pipeline run log job timed out (not complete). Job ID: ${job.jobReference.jobId}`);
+    }
+
   } catch (e) {
-    // Swallow logging errors to avoid breaking main flow
     console.warn('logPipelineRun failed: ' + e.message);
+    console.warn('Stack trace: ' + e.stack);
   }
 }
 
@@ -722,6 +792,7 @@ function escapeSqlLiteral(s) {
 
 function main() {
   currentRunId = Utilities.getUuid();
+  scriptStartTime = new Date();
   logPipelineRun(scriptName, currentRunId, 'RUNNING', 'INFO', 'Pipeline run started', null, null, null, null, null);
   searchForEmailAndAttachments();
 }

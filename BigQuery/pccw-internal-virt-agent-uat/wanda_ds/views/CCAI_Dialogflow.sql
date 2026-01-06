@@ -3,9 +3,9 @@ WITH UserFirstUse AS (
         JSON_VALUE(df.request, "$.queryParams.payload.data.user_id") AS slack_user_id,
         MIN(cc.startTimestamp) AS first_use_timestamp
     FROM
-        `pccw-internal-virt-agent-uat.wanda_ds.ccai_insights` cc
+        `pccw-internal-virtual-agent.wanda_ds.ccai_insights` cc
     JOIN
-        `pccw-internal-virt-agent-uat.wanda_ds.dialogflow_bigquery_export_data` df
+        `pccw-internal-virtual-agent.wanda_ds.dialogflow_bigquery_export_data` df
     ON REGEXP_EXTRACT(df.conversation_name, r'sessions\/([^\/]+)') = REGEXP_EXTRACT(cc.conversationName, r"conversations\/([a-zA-Z0-9-_]+)$")
     WHERE
         JSON_VALUE(df.request, "$.queryParams.payload.data.user_id") IS NOT NULL
@@ -68,9 +68,66 @@ BaseConversationData AS (
         CAST(JSON_VALUE(df.response, "$.features[0].metrics.playbook.total_input_tokens_count") AS INT64) AS playbook_total_input_tokens,
         CAST(JSON_VALUE(df.response, "$.features[0].metrics.playbook.total_output_tokens_count") AS INT64) AS playbook_total_output_tokens,
         JSON_QUERY(df.response, "$.queryResult.advancedSettings.audioExportGcsDestination") AS audio_export_destination,
-        TIMESTAMP_SECONDS(CAST(JSON_VALUE(df.response, "$.queryResult.generativeInfo.actionTracingInfo.actions[1].completeTime.seconds") AS INT64))
-        + INTERVAL CAST(FLOOR(CAST(JSON_VALUE(df.response, "$.queryResult.generativeInfo.actionTracingInfo.actions[1].completeTime.nanos") AS FLOAT64) / 1e6) AS INT64) MICROSECOND
-        AS action_2_complete_timestamp,
+        -- Optimized action_2_complete_timestamp: choose latest from generativeInfo or traceBlocks
+        CASE
+          WHEN (
+            SELECT MAX(
+              CASE WHEN JSON_VALUE(a, '$.completeTime.seconds') IS NOT NULL THEN
+                TIMESTAMP_SECONDS(CAST(JSON_VALUE(a, '$.completeTime.seconds') AS INT64))
+                + INTERVAL CAST(FLOOR(CAST(IFNULL(JSON_VALUE(a,'$.completeTime.nanos'),'0') AS FLOAT64) / 1e6) AS INT64) MICROSECOND
+              ELSE NULL END
+            )
+            FROM UNNEST(JSON_EXTRACT_ARRAY(TO_JSON_STRING(df.response), '$.queryResult.generativeInfo.actionTracingInfo.actions')) AS a
+          ) IS NULL THEN (
+            SELECT MAX(
+              CASE WHEN JSON_VALUE(a2, '$.completeTime.seconds') IS NOT NULL THEN
+                TIMESTAMP_SECONDS(CAST(JSON_VALUE(a2, '$.completeTime.seconds') AS INT64))
+                + INTERVAL CAST(FLOOR(CAST(IFNULL(JSON_VALUE(a2,'$.completeTime.nanos'),'0') AS FLOAT64) / 1e6) AS INT64) MICROSECOND
+              ELSE NULL END
+            )
+            FROM UNNEST(JSON_EXTRACT_ARRAY(TO_JSON_STRING(df.response), '$.queryResult.traceBlocks')) AS block
+            CROSS JOIN UNNEST(JSON_EXTRACT_ARRAY(block, '$.actions')) AS a2
+          )
+          WHEN (
+            SELECT MAX(
+              CASE WHEN JSON_VALUE(a2, '$.completeTime.seconds') IS NOT NULL THEN
+                TIMESTAMP_SECONDS(CAST(JSON_VALUE(a2, '$.completeTime.seconds') AS INT64))
+                + INTERVAL CAST(FLOOR(CAST(IFNULL(JSON_VALUE(a2,'$.completeTime.nanos'),'0') AS FLOAT64) / 1e6) AS INT64) MICROSECOND
+              ELSE NULL END
+            )
+            FROM UNNEST(JSON_EXTRACT_ARRAY(TO_JSON_STRING(df.response), '$.queryResult.traceBlocks')) AS block
+            CROSS JOIN UNNEST(JSON_EXTRACT_ARRAY(block, '$.actions')) AS a2
+          ) IS NULL THEN (
+            SELECT MAX(
+              CASE WHEN JSON_VALUE(a, '$.completeTime.seconds') IS NOT NULL THEN
+                TIMESTAMP_SECONDS(CAST(JSON_VALUE(a, '$.completeTime.seconds') AS INT64))
+                + INTERVAL CAST(FLOOR(CAST(IFNULL(JSON_VALUE(a,'$.completeTime.nanos'),'0') AS FLOAT64) / 1e6) AS INT64) MICROSECOND
+              ELSE NULL END
+            )
+            FROM UNNEST(JSON_EXTRACT_ARRAY(TO_JSON_STRING(df.response), '$.queryResult.generativeInfo.actionTracingInfo.actions')) AS a
+          )
+          ELSE GREATEST(
+            (
+              SELECT MAX(
+                CASE WHEN JSON_VALUE(a, '$.completeTime.seconds') IS NOT NULL THEN
+                  TIMESTAMP_SECONDS(CAST(JSON_VALUE(a, '$.completeTime.seconds') AS INT64))
+                  + INTERVAL CAST(FLOOR(CAST(IFNULL(JSON_VALUE(a,'$.completeTime.nanos'),'0') AS FLOAT64) / 1e6) AS INT64) MICROSECOND
+                ELSE NULL END
+              )
+              FROM UNNEST(JSON_EXTRACT_ARRAY(TO_JSON_STRING(df.response), '$.queryResult.generativeInfo.actionTracingInfo.actions')) AS a
+            ),
+            (
+              SELECT MAX(
+                CASE WHEN JSON_VALUE(a2, '$.completeTime.seconds') IS NOT NULL THEN
+                  TIMESTAMP_SECONDS(CAST(JSON_VALUE(a2, '$.completeTime.seconds') AS INT64))
+                  + INTERVAL CAST(FLOOR(CAST(IFNULL(JSON_VALUE(a2,'$.completeTime.nanos'),'0') AS FLOAT64) / 1e6) AS INT64) MICROSECOND
+                ELSE NULL END
+              )
+              FROM UNNEST(JSON_EXTRACT_ARRAY(TO_JSON_STRING(df.response), '$.queryResult.traceBlocks')) AS block
+              CROSS JOIN UNNEST(JSON_EXTRACT_ARRAY(block, '$.actions')) AS a2
+            )
+          )
+        END AS action_2_complete_timestamp,
         JSON_VALUE(df.response, "$.queryResult.generativeInfo.actionTracingInfo.actions[1].playbookInvocation.displayName") AS PlaybookName,
         JSON_VALUE(df.response, "$.queryResult.generativeInfo.actionTracingInfo.actions[1].playbookInvocation.playbook") AS playbook_invocation_playbook,
         JSON_QUERY(df.response, "$.queryResult.generativeInfo.actionTracingInfo.actions[1].playbookInvocation.playbookInput.actionParameters") AS playbook_invocation_input_parameters,
@@ -130,13 +187,18 @@ BaseConversationData AS (
                  OR JSON_VALUE(df.derived_data, "$.agentUtterances") LIKE 'Unfortunately%'
                  OR JSON_VALUE(df.derived_data, "$.agentUtterances") LIKE '%sorry%'
                  OR JSON_VALUE(df.derived_data, "$.agentUtterances") LIKE '%apologize%'
-            THEN 1
-            ELSE 0
-        END AS is_event_failed_response
+                 OR JSON_VALUE(df.derived_data, "$.agentUtterances") LIKE '%error%'
+            THEN JSON_VALUE(df.response, "$.responseId")
+            ELSE null
+        END AS is_event_failed_response,
+        JSON_QUERY(df.bot_answer_feedback, "$") AS bot_answer_feedback,
+        JSON_VALUE(df.bot_answer_feedback, "$.rating") AS bot_feedback_rating,
+        JSON_VALUE(df.bot_answer_feedback, "$.ratingReason.feedback") AS bot_feedback_reason,
+        JSON_VALUE(df.bot_answer_feedback, "$.ratingReason.reasonLabels[0]") AS bot_feedback_reason_labels
     FROM
-        `pccw-internal-virt-agent-uat.wanda_ds.ccai_insights` cc
+        `pccw-internal-virtual-agent.wanda_ds.ccai_insights` cc
     LEFT JOIN
-        `pccw-internal-virt-agent-uat.wanda_ds.dialogflow_bigquery_export_data` df
+        `pccw-internal-virtual-agent.wanda_ds.dialogflow_bigquery_export_data` df
     ON REGEXP_EXTRACT(df.conversation_name, r'sessions\/([^\/]+)') = REGEXP_EXTRACT(cc.conversationName, r"conversations\/([a-zA-Z0-9-_]+)$")
 )
 SELECT
@@ -164,12 +226,11 @@ SELECT
     b.requisitionStartTime,
     b.requisitionDuration_sec,
      TIMESTAMP_DIFF(
-        LAST_VALUE(b.action_2_complete_timestamp IGNORE NULLS) OVER (
-            PARTITION BY b.conversation_id
-            ORDER BY b.turn_position
-            ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+        COALESCE(
+          MAX(b.action_2_complete_timestamp) OVER (PARTITION BY b.conversation_id),
+          COALESCE(b.conversationStartTime, b.requisitionStartTime)
         ),
-        b.conversationStartTime,
+        COALESCE(b.conversationStartTime, b.requisitionStartTime),
         MICROSECOND
     ) / 1000000.0
     AS conversationDuration_sec,
@@ -237,13 +298,14 @@ SELECT
     b.time_zone,
     b.webhook_payloads,
     b.webhook_statuses,
-    b.is_event_failed_response
+    b.is_event_failed_response,
+    b.bot_answer_feedback,
+    b.bot_feedback_rating,
+    b.bot_feedback_reason,
+    b.bot_feedback_reason_labels
 FROM
     BaseConversationData b
 LEFT JOIN
     UserFirstUse ufu ON b.slack_user_id = ufu.slack_user_id
-
-
-
 
 ORDER BY b.requisitionStartTime DESC

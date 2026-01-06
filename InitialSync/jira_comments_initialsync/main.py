@@ -485,7 +485,11 @@ def main():
     'Mobility SMS - CE',
     'Managed Security Services',
     'Sherbet',
-    'Customer Success Management'
+    'Customer Success Management',
+    'Operational Case Reviews',
+    'QMS Documentation',
+    'IT Helpdesk',
+    'GS&O Strategic Initiatives'
     ]
     # External file override removed: always use embedded defaults
     default_projects = load_projects_from_file(default_projects)

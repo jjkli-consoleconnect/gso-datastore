@@ -5,7 +5,7 @@ const PROCESSED_PROPERTY_KEY = 'verification_report_processed_at';
 const REPORT_CONFIGS = [
 	{
 		label: 'Verifier Performance Report',
-		filePattern: /^Verifier Performance Report\s+(\d{6})/i,
+		filePattern: /^IS Performance Report\s+(\d{6})/i,
 		target: {
 			projectId: 'pccw-internal-virt-agent-uat',
 			datasetId: 'GSO',

@@ -37,6 +37,6 @@ SELECT
 FROM
   `pccw-internal-virtual-agent.BMC.UserList`
 
-WHERE LOWER(EmailAddress) LIKE '%pccw%'
+WHERE LOWER(EmailAddress) NOT LIKE '%bmc%'
 
 ORDER BY FullName ASC;

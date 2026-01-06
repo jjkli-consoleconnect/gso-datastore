@@ -5,7 +5,7 @@
   "datasets": [],
   "outputDir": "BigQuery",
   "location": "",
-  "credentialsFile": "service-account.json",
+  "credentialsFile": "shared/service-account.json",
   "include": {
     "views": true,
     "materializedViews": true,

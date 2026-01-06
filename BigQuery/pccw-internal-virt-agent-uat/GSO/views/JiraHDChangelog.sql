@@ -19,7 +19,12 @@ WITH ordered AS (
   FROM `pccw-internal-virt-agent-uat.GSO.JiraChangelog` cl
   LEFT JOIN `pccw-internal-virt-agent-uat.GSO.JIRA_HD` hd
     ON cl.Issue_Key = hd.Key
-  WHERE cl.Issue_Key LIKE 'CSM%'
+  WHERE cl.Issue_Key LIKE 'CCAS%'
+     OR cl.Issue_Key LIKE 'TAC%'
+     OR cl.Issue_Key LIKE 'VOICECE%'
+     OR cl.Issue_Key LIKE 'IOTCE%'
+     OR cl.Issue_Key LIKE 'TXCE%'
+     OR cl.Issue_Key LIKE 'SMSCE%'
 ),
 entered_status AS (
   -- duration in the status that starts at each transition
@@ -50,7 +55,7 @@ no_changelog AS (
     hd.Created AS status_start,
     COALESCE(hd.Resolved, CURRENT_TIMESTAMP()) AS status_end
   FROM `pccw-internal-virt-agent-uat.GSO.JIRA_HD` hd
-  WHERE hd.Key LIKE 'CSM%'
+  WHERE (hd.Key LIKE 'CCAS%' OR hd.Key LIKE 'TAC%' OR hd.Key LIKE 'VOICECE%' OR hd.Key LIKE 'IOTCE%' OR hd.Key LIKE 'TXCE%' OR hd.Key LIKE 'SMSCE%')
     AND NOT EXISTS (
       SELECT 1 FROM ordered o WHERE o.Issue_Key = hd.Key
     )
@@ -79,5 +84,6 @@ SELECT
 FROM `pccw-internal-virt-agent-uat.GSO.JIRA_HD` hd
 LEFT JOIN filtered_durations
   ON filtered_durations.Issue_Key = hd.Key
-WHERE REGEXP_CONTAINS(hd.Key, r'^CSM')
+WHERE REGEXP_CONTAINS(hd.Key, r'^(CCAS|TAC|VOICECE|IOTCE|TXCE|SMSCE)')
 ORDER BY hd.Key, filtered_durations.status_start;
+

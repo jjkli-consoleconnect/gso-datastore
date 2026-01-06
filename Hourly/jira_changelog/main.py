@@ -169,20 +169,23 @@ def wait_for_table(client, dataset_id, table_id, retries=10, delay=5):
 
 def insert_rows_with_retry(client, dataset_id, table_id, rows, retries=5, delay=5):
     if not rows:
-        logging.info(f"No rows to insert into '{client.project}.{dataset_id}.{table_id}'.")
+        logging.info(f"No rows to insert into '{dataset_id}.{table_id}'.")
         return True
+    
     for attempt in range(retries):
         try:
-            errors = client.insert_rows_json(f"{client.project}.{dataset_id}.{table_id}", rows)
+            # Use table reference object instead of string to avoid project number issues
+            table_ref = client.dataset(dataset_id).table(table_id)
+            errors = client.insert_rows_json(table_ref, rows)
             if not errors:
-                logging.info(f"Successfully inserted {len(rows)} rows into '{client.project}.{dataset_id}.{table_id}'.")
+                logging.info(f"Successfully inserted {len(rows)} rows into '{dataset_id}.{table_id}'.")
                 return True
             logging.error(f"Errors occurred while inserting rows: {errors}")
         except Exception as e:
             logging.exception(f"Error inserting rows into BigQuery: {e}")
-        logging.info(f"Retrying insert rows into table '{client.project}.{dataset_id}.{table_id}' after 5 seconds. Attempt {attempt + 1}/{retries}")
+        logging.info(f"Retrying insert rows into table '{dataset_id}.{table_id}' after 5 seconds. Attempt {attempt + 1}/{retries}")
         time.sleep(5)
-    logging.error(f"Failed to insert rows into '{client.project}.{dataset_id}.{table_id}' after {retries} retries.")
+    logging.error(f"Failed to insert rows into '{dataset_id}.{table_id}' after {retries} retries.")
     return False
 
 def fetch_issue_history(jira_url, issue_key, username, api_token):
@@ -458,7 +461,9 @@ def main():
     'project = Sherbet OR '\
     'project = "Google Contact Center AI Solution" OR '\
     'project = "QMS Documentation" OR '\
-    'project = "Operational Case Reviews" '
+    'project = "Operational Case Reviews" OR '\
+    'project = "IT Helpdesk" OR '\
+    'project = "GS&O Strategic Initiatives" '
         ')'
     )
     base_jql = load_base_jql(default_text=base_default)

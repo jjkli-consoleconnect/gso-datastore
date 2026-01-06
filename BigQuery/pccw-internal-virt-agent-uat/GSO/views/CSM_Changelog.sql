@@ -81,3 +81,4 @@ LEFT JOIN filtered_durations
   ON filtered_durations.Issue_Key = hd.Ticket_Key
 WHERE REGEXP_CONTAINS(hd.Ticket_Key, r'^CSM')
 ORDER BY hd.Ticket_Key, filtered_durations.status_start;
+

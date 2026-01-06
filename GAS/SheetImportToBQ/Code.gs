@@ -161,22 +161,48 @@ function ensureTableExists(headers) {
     return;
   }
 
-  // Check for missing columns and add them
+  // Determine which columns to add and which to drop to replicate the sheet
+  // Preserve KEY_COLUMN and optional ingestion_time even if not present in the sheet
+  const preserve = new Set([KEY_COLUMN]);
+  if (typeof USE_INGESTION_TIMESTAMP !== 'undefined' && USE_INGESTION_TIMESTAMP) {
+    preserve.add('ingestion_time');
+  }
+
   const missingFields = headers.filter(h => !existingFields.includes(h));
+  const extraneousFields = existingFields.filter(f => !headers.includes(f) && !preserve.has(f));
+
+  // Add missing columns
   if (missingFields.length > 0) {
     console.log('Adding missing columns to table: ' + missingFields.join(', '));
-    const alterSql = `ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.${TABLE_ID}\` ` +
+    const addSql = `ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.${TABLE_ID}\` ` +
       missingFields.map(col => `ADD COLUMN ${col} STRING`).join(', ');
     try {
-      const jobId = runQueryJob(alterSql);
+      const jobId = runQueryJob(addSql);
       waitForJob(PROJECT_ID, jobId, 120000); // wait up to 2 minutes
       console.log('Added columns to table: ' + missingFields.join(', '));
     } catch (err) {
-      console.error('Failed to alter table: ', err);
+      console.error('Failed to add columns: ', err);
       throw err;
     }
-  } else {
-    console.log('Table schema matches sheet headers.');
+  }
+
+  // Drop columns that are no longer present in the sheet (excluding preserved ones)
+  if (extraneousFields.length > 0) {
+    console.log('Dropping columns no longer in sheet: ' + extraneousFields.join(', '));
+    const dropSql = `ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.${TABLE_ID}\` ` +
+      extraneousFields.map(col => `DROP COLUMN ${col}`).join(', ');
+    try {
+      const jobId = runQueryJob(dropSql);
+      waitForJob(PROJECT_ID, jobId, 120000); // wait up to 2 minutes
+      console.log('Dropped columns from table: ' + extraneousFields.join(', '));
+    } catch (err) {
+      console.error('Failed to drop columns: ', err);
+      throw err;
+    }
+  }
+
+  if (missingFields.length === 0 && extraneousFields.length === 0) {
+    console.log('Table schema already matches sheet headers (with preserved columns).');
   }
 }
 

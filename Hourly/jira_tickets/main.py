@@ -292,18 +292,26 @@ def fetch_and_sync_jira_data():
             'project = Sherbet OR '\
             'project = "Google Contact Center AI Solution" OR '\
             'project = "QMS Documentation" OR '\
-            'project = "Operational Case Reviews" '
+            'project = "Operational Case Reviews" OR '\
+            'project = "IT Helpdesk" OR '\
+            'project = "GS&O Strategic Initiatives" '
             ')'
         )
         base_jql = load_base_jql(default_text=base_default)
         logging.info(f"Resolved base_jql for hourly tickets job: {base_jql}")
         if not base_jql:
             return
-        jql_query = build_jql(base_jql, "updated >= -1h", joiner='AND')
-        logging.info(f"Final jql_query for tickets: {jql_query}")
+        # Optimized approach: two passes
+        # Pass 1: updated within last 3 hours (captures active + recently resolved tickets)
+        jql_updated = build_jql(base_jql, "updated >= -3h", joiner='AND')
+        # Pass 2: recently resolved tickets whose updates may have stopped (last 6 hours)
+        jql_resolved = build_jql(base_jql, "resolutiondate >= -6h", joiner='AND')
+        logging.info(f"Hourly tickets JQL (updated window): {jql_updated}")
+        logging.info(f"Hourly tickets JQL (recently resolved window): {jql_resolved}")
 
         # Expected JQL time window (relative -1h): [run_started-1h, run_started]
-        jql_window_start = run_started - timedelta(hours=1)
+        # Define expected window for logging (based on broader updated scope)
+        jql_window_start = run_started - timedelta(hours=3)
         jql_window_end = run_started
 
         # --- Log pipeline start ---
@@ -335,32 +343,49 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToFirstResponse_Elapsed", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToFirstResponse_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToFirstResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToFirstResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("TimeToFirstResponse_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToResolve_Elapsed", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToResolve_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolve_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolve_Goal_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToResolve_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("TimeToResolve_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToResolution_Elapsed", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToResolution_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToResolution_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("TimeToResolution_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToApproveNormalChange_Elapsed", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToApproveNormalChange_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToApproveNormalChange_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToApproveNormalChange_Goal_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToApproveNormalChange_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("TimeToApproveNormalChange_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("ProlongCase_Elapsed", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ProlongCase_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ProlongCase_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ProlongCase_Goal_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("ProlongCase_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("ProlongCase_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToCloseAfterResolution_Elapsed", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToCloseAfterResolution_Goal", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToCloseAfterResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeToCloseAfterResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToCloseAfterResolution_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("TimeToCloseAfterResolution_Cycles", "INT64", mode="NULLABLE"),
             bigquery.SchemaField("AppSupEscalation", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("StoryPoints", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_TimeToFirstResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_TimeToFirstResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_TimeToFirstResponse_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_TimeToResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_TimeToResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_TimeToResolution_Breached", "BOOL", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_TimeToResolution_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Breached", "BOOL", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Breached", "BOOL", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("ITHD_Resolution", "STRING", mode="NULLABLE"),
         ]
         if not create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
             logging.error("Setup failed: Could not create temp table.")
@@ -372,48 +397,51 @@ def fetch_and_sync_jira_data():
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         rows_to_insert = []
-        total_issues = float('inf')
-        start_at = 0
-        max_results = 100
-        issues_processed = 0
+        issue_keys_total = set()  # distinct issue keys across both passes
         BULK_FETCH_SIZE = 50  # Number of issues to fetch details for in parallel (tune as needed)
 
         def extract_sla_metrics(sla_field):
             if not isinstance(sla_field, dict):
                 return None, None, None, None
-            cycles = sla_field.get('completedCycles', [])
-            num_cycles = len(cycles)
-            if num_cycles == 0:
+            
+            # Try ongoing cycle first (for active SLAs)
+            ongoing = sla_field.get('ongoingCycle')
+            completed_cycles = sla_field.get('completedCycles', [])
+            
+            # Use ongoing cycle if present, otherwise use latest completed
+            if ongoing:
+                cycle = ongoing
+                num_cycles = len(completed_cycles)
+            elif completed_cycles:
+                cycle = completed_cycles[-1]
+                num_cycles = len(completed_cycles)
+            else:
                 return None, None, None, 0
-            latest_cycle = cycles[-1]
-            start_time = latest_cycle.get('startTime')
-            breach_time = latest_cycle.get('breachTime')
-            goal_duration = latest_cycle.get('goalDuration', {}).get('millis')
-            breached = breach_time is not None
-            def parse_jira_time(ts):
-                try:
-                    return datetime.strptime(ts, '%Y-%m-%dT%H:%M:%S.%f%z')
-                except Exception:
-                    try:
-                        return datetime.strptime(ts, '%Y-%m-%dT%H:%M:%S%z')
-                    except Exception:
-                        return None
-            elapsed = None
-            if start_time:
-                start_dt = parse_jira_time(start_time)
-                if breached and breach_time:
-                    breach_dt = parse_jira_time(breach_time)
-                    if start_dt and breach_dt:
-                        elapsed = (breach_dt - start_dt).total_seconds() / 3600.0
-                else:
-                    now_dt = datetime.utcnow()
-                    if start_dt:
-                        elapsed = (now_dt - start_dt.replace(tzinfo=None)).total_seconds() / 3600.0
-            goal = goal_duration / 3600000.0 if goal_duration else None
+            
+            # Extract time fields - handle both string and object formats
+            def get_time_value(time_field):
+                if isinstance(time_field, dict):
+                    return time_field.get('iso8601') or time_field.get('jira')
+                return time_field
+            
+            # Use Jira's calculated elapsedTime which respects business hours
+            elapsed_millis = cycle.get('elapsedTime', {}).get('millis') if isinstance(cycle.get('elapsedTime'), dict) else None
+            goal_millis = cycle.get('goalDuration', {}).get('millis')
+            
+            # Check if breached
+            breached = cycle.get('breached', False)
+            
+            # Convert to hours
+            elapsed = elapsed_millis / 3600000.0 if elapsed_millis is not None else None
+            goal = goal_millis / 3600000.0 if goal_millis else None
+            
+            # Note: elapsedTime from Jira already respects business hours/calendar settings
+            # Trust Jira's calculation - even heavily breached tickets can legitimately exceed goal by large multiples
+            
             return elapsed, goal, breached, num_cycles
 
         def fetch_issue_detail(issue_key):
-            issue_url = f"https://consoleconnect.atlassian.net/rest/api/latest/issue/{issue_key}"
+            issue_url = f"https://consoleconnect.atlassian.net/rest/api/3/issue/{issue_key}"
             headers = {"Accept": "application/json", "Content-Type": "application/json"}
             auth = (username, api_token)
             try:
@@ -428,9 +456,17 @@ def fetch_and_sync_jira_data():
                     'TimeToApproveNormalChange': fields.get('customfield_10640'),
                     'ProlongCase': fields.get('customfield_10560'),
                     'TimeToCloseAfterResolution': fields.get('customfield_10552'),
+                    'ITHD_TimeToFirstResponse': fields.get('customfield_10627'),
+                    'ITHD_TimeToResolution': fields.get('customfield_10668'),
+                    'ITHD_ISMSIncidentResponse': fields.get('customfield_13449'),
+                    'ITHD_ISMSIncidentResolution': fields.get('customfield_13450'),
                 }
+                # Note: ITHD_Resolution (customfield_13448) is fetched as part of full issue detail
                 sla_metrics = {}
                 for k, v in sla_fields.items():
+                    # Debug: log first SLA field structure for first issue
+                    if k == 'TimeToFirstResponse' and v and issue_key:
+                        logging.debug(f"SLA field '{k}' for {issue_key}: {json.dumps(v, indent=2)}")
                     elapsed, goal, breached, cycles = extract_sla_metrics(v)
                     sla_metrics[f'{k}_Elapsed'] = elapsed
                     sla_metrics[f'{k}_Goal'] = goal
@@ -468,28 +504,28 @@ def fetch_and_sync_jira_data():
                     "Resolution": get_field_value(fields.get('resolution')),
                     "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
                     # SLA fields
-                    "TimeToFirstResponse_Elapsed": sla_metrics['TimeToFirstResponse_Elapsed'],
-                    "TimeToFirstResponse_Goal": sla_metrics['TimeToFirstResponse_Goal'],
+                    "TimeToFirstResponse_Elapsed_hrs": sla_metrics['TimeToFirstResponse_Elapsed'],
+                    "TimeToFirstResponse_Goal_hrs": sla_metrics['TimeToFirstResponse_Goal'],
                     "TimeToFirstResponse_Breached": sla_metrics['TimeToFirstResponse_Breached'],
                     "TimeToFirstResponse_Cycles": sla_metrics['TimeToFirstResponse_Cycles'],
-                    "TimeToResolve_Elapsed": sla_metrics['TimeToResolve_Elapsed'],
-                    "TimeToResolve_Goal": sla_metrics['TimeToResolve_Goal'],
+                    "TimeToResolve_Elapsed_hrs": sla_metrics['TimeToResolve_Elapsed'],
+                    "TimeToResolve_Goal_hrs": sla_metrics['TimeToResolve_Goal'],
                     "TimeToResolve_Breached": sla_metrics['TimeToResolve_Breached'],
                     "TimeToResolve_Cycles": sla_metrics['TimeToResolve_Cycles'],
-                    "TimeToResolution_Elapsed": sla_metrics['TimeToResolution_Elapsed'],
-                    "TimeToResolution_Goal": sla_metrics['TimeToResolution_Goal'],
+                    "TimeToResolution_Elapsed_hrs": sla_metrics['TimeToResolution_Elapsed'],
+                    "TimeToResolution_Goal_hrs": sla_metrics['TimeToResolution_Goal'],
                     "TimeToResolution_Breached": sla_metrics['TimeToResolution_Breached'],
                     "TimeToResolution_Cycles": sla_metrics['TimeToResolution_Cycles'],
-                    "TimeToApproveNormalChange_Elapsed": sla_metrics['TimeToApproveNormalChange_Elapsed'],
-                    "TimeToApproveNormalChange_Goal": sla_metrics['TimeToApproveNormalChange_Goal'],
+                    "TimeToApproveNormalChange_Elapsed_hrs": sla_metrics['TimeToApproveNormalChange_Elapsed'],
+                    "TimeToApproveNormalChange_Goal_hrs": sla_metrics['TimeToApproveNormalChange_Goal'],
                     "TimeToApproveNormalChange_Breached": sla_metrics['TimeToApproveNormalChange_Breached'],
                     "TimeToApproveNormalChange_Cycles": sla_metrics['TimeToApproveNormalChange_Cycles'],
-                    "ProlongCase_Elapsed": sla_metrics['ProlongCase_Elapsed'],
-                    "ProlongCase_Goal": sla_metrics['ProlongCase_Goal'],
+                    "ProlongCase_Elapsed_hrs": sla_metrics['ProlongCase_Elapsed'],
+                    "ProlongCase_Goal_hrs": sla_metrics['ProlongCase_Goal'],
                     "ProlongCase_Breached": sla_metrics['ProlongCase_Breached'],
                     "ProlongCase_Cycles": sla_metrics['ProlongCase_Cycles'],
-                    "TimeToCloseAfterResolution_Elapsed": sla_metrics['TimeToCloseAfterResolution_Elapsed'],
-                    "TimeToCloseAfterResolution_Goal": sla_metrics['TimeToCloseAfterResolution_Goal'],
+                    "TimeToCloseAfterResolution_Elapsed_hrs": sla_metrics['TimeToCloseAfterResolution_Elapsed'],
+                    "TimeToCloseAfterResolution_Goal_hrs": sla_metrics['TimeToCloseAfterResolution_Goal'],
                     "TimeToCloseAfterResolution_Breached": sla_metrics['TimeToCloseAfterResolution_Breached'],
                     "TimeToCloseAfterResolution_Cycles": sla_metrics['TimeToCloseAfterResolution_Cycles'],
                     # Escalation field
@@ -498,6 +534,24 @@ def fetch_and_sync_jira_data():
                     "StoryPoints": (None if fields.get('customfield_10347') is None else (
                         (lambda v: (int(float(v)) if v is not None else None))(get_field_value(fields.get('customfield_10347')))
                     )),
+                    # ITHD SLA fields
+                    "ITHD_TimeToFirstResponse_Elapsed_hrs": sla_metrics['ITHD_TimeToFirstResponse_Elapsed'],
+                    "ITHD_TimeToFirstResponse_Goal_hrs": sla_metrics['ITHD_TimeToFirstResponse_Goal'],
+                    "ITHD_TimeToFirstResponse_Breached": sla_metrics['ITHD_TimeToFirstResponse_Breached'],
+                    "ITHD_TimeToFirstResponse_Cycles": sla_metrics['ITHD_TimeToFirstResponse_Cycles'],
+                    "ITHD_TimeToResolution_Elapsed_hrs": sla_metrics['ITHD_TimeToResolution_Elapsed'],
+                    "ITHD_TimeToResolution_Goal_hrs": sla_metrics['ITHD_TimeToResolution_Goal'],
+                    "ITHD_TimeToResolution_Breached": sla_metrics['ITHD_TimeToResolution_Breached'],
+                    "ITHD_TimeToResolution_Cycles": sla_metrics['ITHD_TimeToResolution_Cycles'],
+                    "ITHD_ISMSIncidentResponse_Elapsed_hrs": sla_metrics['ITHD_ISMSIncidentResponse_Elapsed'],
+                    "ITHD_ISMSIncidentResponse_Goal_hrs": sla_metrics['ITHD_ISMSIncidentResponse_Goal'],
+                    "ITHD_ISMSIncidentResponse_Breached": sla_metrics['ITHD_ISMSIncidentResponse_Breached'],
+                    "ITHD_ISMSIncidentResponse_Cycles": sla_metrics['ITHD_ISMSIncidentResponse_Cycles'],
+                    "ITHD_ISMSIncidentResolution_Elapsed_hrs": sla_metrics['ITHD_ISMSIncidentResolution_Elapsed'],
+                    "ITHD_ISMSIncidentResolution_Goal_hrs": sla_metrics['ITHD_ISMSIncidentResolution_Goal'],
+                    "ITHD_ISMSIncidentResolution_Breached": sla_metrics['ITHD_ISMSIncidentResolution_Breached'],
+                    "ITHD_ISMSIncidentResolution_Cycles": sla_metrics['ITHD_ISMSIncidentResolution_Cycles'],
+                    "ITHD_Resolution": get_field_value(fields.get('customfield_13448')),
                 }
                 return row
             except Exception as e:
@@ -508,57 +562,62 @@ def fetch_and_sync_jira_data():
         observed_min_updated = None
         observed_max_updated = None
 
-        while start_at < total_issues:
-            payload = json.dumps({
-                "jql": jql_query,
-                "startAt": start_at,
-                "maxResults": max_results,
-                "fields": ["key"]
-            })
-            headers = {"Accept": "application/json", "Content-Type": "application/json"}
-            auth = (username, api_token)
+        def search_issue_keys(jql: str, label: str):
+            """Single page fetch (maxResults=100) for given JQL; returns list of keys.
+            NOTE: Endpoint variant may not supply total; we keep first page for efficiency & API limits."""
+            headers_local = {'Accept': 'application/json'}
+            params_local = {'jql': jql, 'startAt': 0, 'maxResults': 100, 'fields': 'key'}
+            auth_local = (username, api_token)
             try:
-                params = {'jql': jql_query, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
-                response = requests.get(jira_url, headers={'Accept': 'application/json'}, auth=auth, params=params, timeout=120)
-                if response.status_code == 429:
-                    ra = int(response.headers.get('Retry-After', 30) or 30)
-                    logging.warning(f'Jira search 429; sleeping {ra}s')
+                resp = requests.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=60)
+                if resp.status_code == 429:
+                    ra = int(resp.headers.get('Retry-After', 30) or 30)
+                    logging.warning(f"429 {label} search; sleeping {ra}s")
                     time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
-                    continue
-                response.raise_for_status()
-                data = response.json()
-                issues = data.get('issues', [])
-                total_issues = data.get('total', 0)
-                issue_keys = [issue.get('key') for issue in issues if issue.get('key')]
-                # Bulk fetch issue details in parallel
-                with ThreadPoolExecutor(max_workers=10) as executor:
-                    future_to_key = {executor.submit(fetch_issue_detail, key): key for key in issue_keys}
-                    for future in as_completed(future_to_key):
-                        row = future.result()
-                        if row:
-                            rows_to_insert.append(row)
-                            # Update observed min/max based on Updated
-                            try:
-                                upd_str = row.get("Updated")
-                                if upd_str:
-                                    dt = datetime.strptime(upd_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
-                                    if observed_min_updated is None or dt < observed_min_updated:
-                                        observed_min_updated = dt
-                                    if observed_max_updated is None or dt > observed_max_updated:
-                                        observed_max_updated = dt
-                            except Exception:
-                                pass
-                start_at += len(issues)
-                issues_processed += len(issues)
-                logging.info(f"Fetched and processed {len(issues)} issues (startAt: {start_at}) out of total {total_issues}")
-                if not issues:
-                    break
-            except requests.RequestException as e:
-                logging.error(f"Error fetching issues from Jira: {e}")
-                break
+                    return []
+                resp.raise_for_status()
+                data_local = resp.json()
+                issues_local = data_local.get('issues', [])
+                keys = [i.get('key') for i in issues_local if i.get('key')]
+                logging.info(f"{label} pass fetched {len(keys)} issue keys")
+                return keys
             except Exception as e:
-                logging.error(f"Unexpected error during Jira fetch: {e}")
-                break
+                logging.error(f"{label} pass error: {e}")
+                return []
+
+        # Pass 1: updated window
+        updated_keys = search_issue_keys(jql_updated, 'updated')
+        for k in updated_keys: issue_keys_total.add(k)
+        # Pass 2: recently resolved window (add only new keys)
+        resolved_keys = search_issue_keys(jql_resolved, 'resolved')
+        new_resolved = [k for k in resolved_keys if k not in issue_keys_total]
+        for k in new_resolved: issue_keys_total.add(k)
+        logging.info(f"Distinct issue keys to detail fetch (union): {len(issue_keys_total)}")
+
+        # Detail fetch in parallel (bounded by BULK_FETCH_SIZE batches)
+        issue_key_list = list(issue_keys_total)
+        issues_processed = 0
+        for i in range(0, len(issue_key_list), BULK_FETCH_SIZE):
+            batch_keys = issue_key_list[i:i+BULK_FETCH_SIZE]
+            with ThreadPoolExecutor(max_workers=min(10, len(batch_keys))) as executor:
+                fut_map = {executor.submit(fetch_issue_detail, key): key for key in batch_keys}
+                for fut in as_completed(fut_map):
+                    row = fut.result()
+                    if row:
+                        rows_to_insert.append(row)
+                        issues_processed += 1
+                        # Track min/max Updated for window summary
+                        try:
+                            upd_str = row.get("Updated")
+                            if upd_str:
+                                dt = datetime.strptime(upd_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                                if observed_min_updated is None or dt < observed_min_updated:
+                                    observed_min_updated = dt
+                                if observed_max_updated is None or dt > observed_max_updated:
+                                    observed_max_updated = dt
+                        except Exception:
+                            pass
+            logging.info(f"Detail fetched batch {i//BULK_FETCH_SIZE + 1}; cumulative rows={issues_processed}")
 
         if rows_to_insert:
             if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, bq_schema, retries=5, delay=5):
@@ -568,26 +627,41 @@ def fetch_and_sync_jira_data():
 
         # --- Merge temp table into final table ---
         try:
-            merge_fields = [
-                "T", "Project", "Key", "Summary", "Status", "Priority", "Resolution", "Created", "Updated", "Resolved", "Reporter", "Assignee", "Component", "RemedyTicketNumber", "Links", SR_REF_BQ_NAME, "SyncTime",
-                "TimeToFirstResponse_Elapsed", "TimeToFirstResponse_Goal", "TimeToFirstResponse_Breached", "TimeToFirstResponse_Cycles",
-                "TimeToResolve_Elapsed", "TimeToResolve_Goal", "TimeToResolve_Breached", "TimeToResolve_Cycles",
-                "TimeToResolution_Elapsed", "TimeToResolution_Goal", "TimeToResolution_Breached", "TimeToResolution_Cycles",
-                "TimeToApproveNormalChange_Elapsed", "TimeToApproveNormalChange_Goal", "TimeToApproveNormalChange_Breached", "TimeToApproveNormalChange_Cycles",
-                "ProlongCase_Elapsed", "ProlongCase_Goal", "ProlongCase_Breached", "ProlongCase_Cycles",
-                "TimeToCloseAfterResolution_Elapsed", "TimeToCloseAfterResolution_Goal", "TimeToCloseAfterResolution_Breached", "TimeToCloseAfterResolution_Cycles",
-                "AppSupEscalation", "StoryPoints"
+            # Fields that should use COALESCE (preserve old value if new is NULL)
+            coalesce_fields = [
+                "T", "Project", "Summary", "Priority", "Resolution", "Created", "Reporter", "Component", "RemedyTicketNumber", "Links", SR_REF_BQ_NAME, "AppSupEscalation", "StoryPoints", "ITHD_Resolution"
             ]
+            # Fields that should always update (even with NULL) - includes all SLA metrics
+            always_update_fields = [
+                "Status", "Updated", "Resolved", "Assignee", "SyncTime",
+                "TimeToFirstResponse_Elapsed_hrs", "TimeToFirstResponse_Goal_hrs", "TimeToFirstResponse_Breached", "TimeToFirstResponse_Cycles",
+                "TimeToResolve_Elapsed_hrs", "TimeToResolve_Goal_hrs", "TimeToResolve_Breached", "TimeToResolve_Cycles",
+                "TimeToResolution_Elapsed_hrs", "TimeToResolution_Goal_hrs", "TimeToResolution_Breached", "TimeToResolution_Cycles",
+                "TimeToApproveNormalChange_Elapsed_hrs", "TimeToApproveNormalChange_Goal_hrs", "TimeToApproveNormalChange_Breached", "TimeToApproveNormalChange_Cycles",
+                "ProlongCase_Elapsed_hrs", "ProlongCase_Goal_hrs", "ProlongCase_Breached", "ProlongCase_Cycles",
+                "TimeToCloseAfterResolution_Elapsed_hrs", "TimeToCloseAfterResolution_Goal_hrs", "TimeToCloseAfterResolution_Breached", "TimeToCloseAfterResolution_Cycles",
+                "ITHD_TimeToFirstResponse_Elapsed_hrs", "ITHD_TimeToFirstResponse_Goal_hrs", "ITHD_TimeToFirstResponse_Breached", "ITHD_TimeToFirstResponse_Cycles",
+                "ITHD_TimeToResolution_Elapsed_hrs", "ITHD_TimeToResolution_Goal_hrs", "ITHD_TimeToResolution_Breached", "ITHD_TimeToResolution_Cycles",
+                "ITHD_ISMSIncidentResponse_Elapsed_hrs", "ITHD_ISMSIncidentResponse_Goal_hrs", "ITHD_ISMSIncidentResponse_Breached", "ITHD_ISMSIncidentResponse_Cycles",
+                "ITHD_ISMSIncidentResolution_Elapsed_hrs", "ITHD_ISMSIncidentResolution_Goal_hrs", "ITHD_ISMSIncidentResolution_Breached", "ITHD_ISMSIncidentResolution_Cycles",
+            ]
+            all_merge_fields = coalesce_fields + always_update_fields
+            
+            # Build UPDATE SET clause with different logic for different field types
+            update_clauses = []
+            update_clauses.extend([f'T.{f} = COALESCE(S.{f}, T.{f})' for f in coalesce_fields])
+            update_clauses.extend([f'T.{f} = S.{f}' for f in always_update_fields])
+            
             merge_query = f'''
                 MERGE `{dataset_id}.{table_id}` T
                 USING `{dataset_id}.{temp_table_id}` S
                 ON T.Key = S.Key
                 WHEN MATCHED THEN
                   UPDATE SET
-                    {', '.join([f'T.{f} = COALESCE(S.{f}, T.{f})' for f in merge_fields])}
+                    {', '.join(update_clauses)}
                 WHEN NOT MATCHED THEN
-                  INSERT ({', '.join(merge_fields)})
-                  VALUES ({', '.join([f'S.{f}' for f in merge_fields])})
+                  INSERT ({', '.join(all_merge_fields)})
+                  VALUES ({', '.join([f'S.{f}' for f in all_merge_fields])})
             '''
             client.query(merge_query).result()
             logging.info(f"Merged temp table '{dataset_id}.{temp_table_id}' into '{dataset_id}.{table_id}'.")

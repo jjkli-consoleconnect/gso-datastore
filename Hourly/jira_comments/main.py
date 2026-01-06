@@ -653,7 +653,9 @@ def main():
             'project = Sherbet OR '\
             'project = "Google Contact Center AI Solution" OR '\
             'project = "QMS Documentation" OR '\
-            'project = "Operational Case Reviews" '
+            'project = "Operational Case Reviews" OR '\
+            'project = "IT Helpdesk" OR '\
+            'project = "GS&O Strategic Initiatives" '
             ')'
         )
         base_jql = load_base_jql(default_text=base_default)

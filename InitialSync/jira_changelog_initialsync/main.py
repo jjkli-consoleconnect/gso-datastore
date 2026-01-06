@@ -658,7 +658,9 @@ def main():
         'Sherbet',
         'Customer Success Management',
         'Operational Case Reviews',
-        'QMS Documentation'
+        'QMS Documentation',
+        'IT Helpdesk',
+        'GS&O Strategic Initiatives'
     ]
     # Ignore external file override and CLI args; always use embedded defaults
     project_list_default = load_projects_from_file(project_list_default)

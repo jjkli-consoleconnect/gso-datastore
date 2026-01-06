@@ -16,7 +16,7 @@ WITH FlattenedTierTwo AS (
   FROM
     `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
     LEFT JOIN UNNEST(t.RemedyTicketNumber) AS remedy_incident
-  WHERE NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC|OCR|QMS|CSM)')
+  WHERE NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC|OCR|QMS|CSM|GSOSI)')
 )
 
 SELECT
@@ -144,4 +144,5 @@ FULL OUTER JOIN FlattenedTierTwo AS st
   ON hd.Incident_Number = st.RemedyTicketNumber_flat
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON CONCAT('SR', st.SR_Ref) = shr.SRNo
+
 

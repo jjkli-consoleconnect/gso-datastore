@@ -9,7 +9,7 @@ if (-not $scriptDir -or -not (Test-Path -LiteralPath $scriptDir)) { $scriptDir =
 Set-Location -LiteralPath $scriptDir
 
 # Images to run (use the hourly builds which are newer on the host)
-$images = @('jira_tickets_hourly', 'jira_comments_hourly', 'jira_changelog_hourly')
+$images = @('jira_tickets:latest', 'jira_comments:latest', 'jira_changelog:latest')
 
 # Find docker executable: prefer bundled path, otherwise rely on PATH
 $dockerCandidate = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'

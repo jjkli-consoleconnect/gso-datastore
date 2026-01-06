@@ -15,7 +15,7 @@ function deriveSchemaFromSample(headers, sampleRow) {
 }
 
 // Toggle verbose troubleshooting logs. Set to true only when actively debugging.
-const DEBUG = false;
+const DEBUG = true;
 
 /**
  * Main function to process new Excel files uploaded to the Drive folder.
@@ -63,11 +63,12 @@ function processNewFiles() {
     // Check 'all' pattern
     let m = fileName.match(patternAll);
     if (m) {
-      const dateStr = m[1];
-      if (effectiveTimestamp <= lastProcessed) {
-        Logger.log('Skipping ALL file (timestamp <= lastProcessed): ' + fileName + ' effective=' + effectiveIso + ' lastProcessed=' + lastProcessedIso + ' diff=' + (effectiveTimestamp - lastProcessed));
+      const dateStr = m[2]; // m[1] is (all_)? group, m[2] is the date
+      const fileNameDate = new Date(dateStr).getTime();
+      if (fileNameDate <= lastProcessed) {
+        Logger.log('Skipping ALL file (filename date <= lastProcessed): ' + fileName + ' fileDate=' + dateStr + ' lastProcessed=' + lastProcessedIso + ' diff=' + (fileNameDate - lastProcessed));
       } else {
-        Logger.log('Queueing ALL file: ' + fileName + ' effective=' + effectiveIso);
+        Logger.log('Queueing ALL file: ' + fileName + ' fileDate=' + dateStr);
         candidatesAll.push({ file: file, name: fileName, date: dateStr, timestamp: effectiveTimestamp });
         if (effectiveTimestamp > processedNewestTimestamp) processedNewestTimestamp = effectiveTimestamp;
       }
@@ -78,10 +79,11 @@ function processNewFiles() {
     m = fileName.match(patternToBe);
     if (m) {
       const dateStr = m[1];
-      if (effectiveTimestamp <= lastProcessed) {
-        Logger.log('Skipping TO-BE file (timestamp <= lastProcessed): ' + fileName + ' effective=' + effectiveIso + ' lastProcessed=' + lastProcessedIso + ' diff=' + (effectiveTimestamp - lastProcessed));
+      const fileNameDate = new Date(dateStr).getTime();
+      if (fileNameDate <= lastProcessed) {
+        Logger.log('Skipping TO-BE file (filename date <= lastProcessed): ' + fileName + ' fileDate=' + dateStr + ' lastProcessed=' + lastProcessedIso + ' diff=' + (fileNameDate - lastProcessed));
       } else {
-        if (DEBUG) Logger.log('Queueing TO-BE file: ' + fileName + ' effective=' + effectiveIso);
+        if (DEBUG) Logger.log('Queueing TO-BE file: ' + fileName + ' fileDate=' + dateStr);
         candidatesToBe.push({ file: file, name: fileName, date: dateStr, timestamp: effectiveTimestamp });
         if (effectiveTimestamp > processedNewestTimestamp) processedNewestTimestamp = effectiveTimestamp;
       }
@@ -91,7 +93,7 @@ function processNewFiles() {
 
   if (DEBUG) Logger.log('Scanned ' + scannedCount + ' total file(s) in source folder.');
 
-  // For 'all' expired, pick the single latest file by the date in the filename (not metadata)
+  // For 'all' expired, pick the single latest (newest) file by the date in the filename (not metadata)
   let latestAll = null;
   let latestAllDate = null;
   candidatesAll.forEach(c => {
@@ -104,7 +106,7 @@ function processNewFiles() {
 
   const selectedAllFiles = latestAll ? [latestAll.file] : [];
 
-  // For to-be-expired, pick the single latest file by the date in the filename (not metadata)
+  // For to-be-expired, pick the single latest (newest) file by the date in the filename (not metadata)
   let latestToBe = null;
   let latestToBeDate = null;
   candidatesToBe.forEach(c => {
@@ -274,9 +276,29 @@ function processAndMergeFiles(files, targetTableId) {
     const rows = data.slice(1);
     rows.forEach(r => {
       const obj = {};
+      // Map file headers to values
+      const fileHeaderMap = {};
+      headers.forEach((h, i) => {
+        fileHeaderMap[h] = r[i];
+      });
+      // Use commonHeaders and fill missing with null
       commonHeaders.forEach((h, i) => {
-        let v = r[i];
-        if (v instanceof Date) v = v.toISOString().split('T')[0];
+        let v = fileHeaderMap[h];
+        // Parse date strings (e.g., '1/12/2025' or '7/12/2016') to YYYY-MM-DD
+        if (typeof v === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(v)) {
+          const parts = v.split('/');
+          if (parts.length === 3) {
+            const day = parseInt(parts[0], 10);
+            const month = parseInt(parts[1], 10) - 1; // JS months are 0-based
+            const year = parseInt(parts[2], 10);
+            const date = new Date(year, month, day);
+            if (!isNaN(date.getTime())) {
+              v = date.toISOString().split('T')[0];
+            }
+          }
+        } else if (v instanceof Date) {
+          v = v.toISOString().split('T')[0];
+        }
         obj[h] = (v === '' || v === undefined) ? null : v;
       });
       // If expire_type column is missing, infer from filename (all files are 'Expired')
@@ -285,10 +307,24 @@ function processAndMergeFiles(files, targetTableId) {
     });
   });
 
-  // Ensure expire_type is in commonHeaders for schema creation
-  if (commonHeaders && commonHeaders.indexOf('expire_type') === -1) {
-    commonHeaders.push('expire_type');
-  }
+  // Add all possible columns from to-be-expired schema that expired files don't have
+  const extraColumns = ['expire_type', 'salesrecord', 'gcid', 'sequence', 'rateusd', 'receivingyear', 'reqdetailid', 
+                        'cost_type_desc', 'rpttype', 'next_br', 'next_brstatus', 'next_brsubmitdate', 'next_brapprovalinfo',
+                        'next_pr', 'next_prstatus', 'next_prsubmitdate', 'next_prverifyinfo', 'next_prapprovalinfo',
+                        'vendormanager', 'vendormanageremail', 'next_ct', 'next_ctstatus', 'org_costitemid', 
+                        'org_costitemcreatedate', 'this_costitemcreatedate', 'expired_calendar_months', 'estimated_accrual_usd'];
+  
+  extraColumns.forEach(col => {
+    if (commonHeaders && commonHeaders.indexOf(col) === -1) {
+      commonHeaders.push(col);
+      // Fill all existing rows with null for this column
+      allJsonRows.forEach(row => {
+        if (!row.json.hasOwnProperty(col)) {
+          row.json[col] = null;
+        }
+      });
+    }
+  });
 
   if (!commonHeaders || allJsonRows.length === 0) {
     Logger.log('No rows found to stage.');
@@ -300,8 +336,15 @@ function processAndMergeFiles(files, targetTableId) {
   const schemaFields = commonHeaders.map(h => {
     const v = sampleRow[h];
     let type = 'STRING';
-    if (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) type = 'DATE';
-    else if (typeof v === 'number') type = 'FLOAT64';
+    // Force certain columns to always be STRING to avoid type conflicts
+    const lowerH = h.toLowerCase();
+    if (lowerH === 'org_costitemid' || lowerH === 'org_costitemcreatedate') {
+      type = 'STRING';
+    } else if (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+      type = 'DATE';
+    } else if (typeof v === 'number') {
+      type = 'FLOAT64';
+    }
     return { name: h, type: type };
   });
 
@@ -350,7 +393,21 @@ function processAndMergeToBeExpired(file, targetTableId) {
     const obj = {};
     headers.forEach((h, i) => {
       let v = r[i];
-      if (v instanceof Date) v = v.toISOString().split('T')[0];
+      // Parse date strings (e.g., '1/12/2025' or '7/12/2016') to YYYY-MM-DD
+      if (typeof v === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(v)) {
+        const parts = v.split('/');
+        if (parts.length === 3) {
+          const day = parseInt(parts[0], 10);
+          const month = parseInt(parts[1], 10) - 1; // JS months are 0-based
+          const year = parseInt(parts[2], 10);
+          const date = new Date(year, month, day);
+          if (!isNaN(date.getTime())) {
+            v = date.toISOString().split('T')[0];
+          }
+        }
+      } else if (v instanceof Date) {
+        v = v.toISOString().split('T')[0];
+      }
       obj[h] = (v === '' || v === undefined) ? null : v;
     });
     // Set expire_type based on filename (to-be files are 'To-be-Expired')
@@ -368,8 +425,15 @@ function processAndMergeToBeExpired(file, targetTableId) {
   const schemaFields = Object.keys(sampleRow).map(k => {
     const v = sampleRow[k];
     let type = 'STRING';
-    if (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) type = 'DATE';
-    else if (typeof v === 'number') type = 'FLOAT64';
+    // Force certain columns to always be STRING to avoid type conflicts
+    const lowerK = k.toLowerCase();
+    if (lowerK === 'org_costitemid' || lowerK === 'org_costitemcreatedate') {
+      type = 'STRING';
+    } else if (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+      type = 'DATE';
+    } else if (typeof v === 'number') {
+      type = 'FLOAT64';
+    }
     return { name: k, type: type };
   });
 
@@ -540,7 +604,15 @@ function runMergeFromStaging(projectId, datasetId, stagingTable, targetTable, me
     usingClause = `(SELECT * FROM \`${projectId}.${datasetId}.${stagingTable}\` WHERE ${optionalWhere}) S`;
   } else {
     // Deduplicate staging table on merge keys to prevent multiple source rows matching one target row
-    usingClause = `(SELECT * FROM \`${projectId}.${datasetId}.${stagingTable}\` QUALIFY ROW_NUMBER() OVER (PARTITION BY CAST(costitemid AS STRING), CAST(snapshot_date AS STRING) ORDER BY costitemid) = 1) S`;
+    // Check if both costitemid and snapshot_date exist in staging
+    const hasCostItemId = stagingFields.some(f => f.name.toLowerCase() === 'costitemid');
+    const hasSnapshotDate = stagingFields.some(f => f.name.toLowerCase() === 'snapshot_date');
+    if (hasCostItemId && hasSnapshotDate) {
+      usingClause = `(SELECT * FROM \`${projectId}.${datasetId}.${stagingTable}\` QUALIFY ROW_NUMBER() OVER (PARTITION BY CAST(costitemid AS STRING), CAST(snapshot_date AS STRING) ORDER BY costitemid) = 1) S`;
+    } else if (hasCostItemId) {
+      usingClause = `(SELECT * FROM \`${projectId}.${datasetId}.${stagingTable}\` QUALIFY ROW_NUMBER() OVER (PARTITION BY CAST(costitemid AS STRING) ORDER BY costitemid) = 1) S`;
+    }
+    // else use table directly without deduplication
   }
 
   const mergeSql = `MERGE \`${projectId}.${datasetId}.${targetTable}\` T
@@ -682,7 +754,7 @@ function ensureTableSchema(projectId, datasetId, tableId, fields) {
     if (missing.length === 0) return;
     // Add each missing column via ALTER TABLE
     missing.forEach(f => {
-      const type = f.type || 'STRING';
+      const type = normalizeBqType(f.type || 'STRING');
       const alterSql = `ALTER TABLE \`${projectId}.${datasetId}.${tableId}\` ADD COLUMN ${f.name} ${type}`;
       Logger.log('Adding missing column: ' + f.name + ' as ' + type);
       const alterJob = BigQuery.Jobs.insert({ configuration: { query: { query: alterSql, useLegacySql: false } } }, projectId);
@@ -983,4 +1055,36 @@ function setupTrigger() {
 function resetLastProcessed() {
   PropertiesService.getScriptProperties().deleteProperty('lastProcessed');
   Logger.log('Last processed timestamp reset.');
+}
+
+/**
+ * Set last processed timestamp to a specific date/time.
+ * This allows reprocessing files from a certain point in time.
+ * @param {string} dateString - Date string in format 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS'
+ * Example: setLastProcessedToDate('2025-12-15') or setLastProcessedToDate('2025-12-15 00:00:00')
+ */
+function setLastProcessedToDate(dateString) {
+  dateString = '2025-12-15'
+  const targetDate = new Date(dateString);
+  if (isNaN(targetDate.getTime())) {
+    Logger.log('ERROR: Invalid date string: ' + dateString);
+    Logger.log('Use format: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS');
+    return;
+  }
+  const timestamp = targetDate.getTime();
+  PropertiesService.getScriptProperties().setProperty('lastProcessed', timestamp.toString());
+  Logger.log('Last processed timestamp set to: ' + targetDate.toISOString() + ' (' + timestamp + ')');
+  Logger.log('Files newer than this date will be processed on next run.');
+}
+
+/**
+ * View current last processed timestamp
+ */
+function viewLastProcessed() {
+  const lastProcessed = parseInt(PropertiesService.getScriptProperties().getProperty('lastProcessed')) || 0;
+  if (lastProcessed === 0) {
+    Logger.log('Last processed timestamp: NEVER (not set)');
+  } else {
+    Logger.log('Last processed timestamp: ' + new Date(lastProcessed).toISOString() + ' (' + lastProcessed + ')');
+  }
 }
