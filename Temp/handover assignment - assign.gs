@@ -203,6 +203,13 @@ function assignEngineersToSpreadsheetOptimized(spreadsheet) {
   var dataRange = sheet.getDataRange();
   var data = dataRange.getValues(); // Read all data in one go
 
+  // Dynamically locate the Incident Number column to tolerate layout changes
+  var incidentHeader = 'Incident Number';
+  var incidentIndex = findHeaderIndex_(data[0], incidentHeader);
+  if (incidentIndex === -1) {
+    throw new Error('Header "' + incidentHeader + '" not found in the CSV.');
+  }
+
   // Load prior assignments for stickiness
   var historySheet = getOrCreateHistorySheet_(formSpreadsheet, assignmentHistorySheetName);
   var historyMap = loadAssignmentHistory_(historySheet, checkedEngineers);
@@ -222,7 +229,7 @@ function assignEngineersToSpreadsheetOptimized(spreadsheet) {
   // First pass: stickies and collect unassigned
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
-    var incidentId = row[1]; // Assuming Incident ID is in column 2
+    var incidentId = row[incidentIndex];
 
     var assignedEngineer = historyMap[incidentId] || null;
     if (assignedEngineer) {
@@ -332,10 +339,13 @@ function createEngineerTabs(spreadsheet, incidentData) {
 function generateAndSendAssignments(spreadsheet) {
   // Don't delete the 'Assignments' sheet
   var assignmentsSheet = spreadsheet.getSheetByName('Assignments'); // Get the Assignments sheet
+  var incidentCol = findColumnIndexByHeader_(assignmentsSheet, 'Incident Number');
+  var assignedCol = findColumnIndexByHeader_(assignmentsSheet, 'Assigned Engineer');
+  var rowCount = assignmentsSheet.getLastRow() - 1;
 
-  // 1. Get data from the spreadsheet
-  var engineerNames = assignmentsSheet.getRange(2, assignmentsSheet.getLastColumn(), assignmentsSheet.getLastRow() - 1, 1).getValues();
-  var incidentIds = assignmentsSheet.getRange(2, 2, assignmentsSheet.getLastRow() - 1, 1).getValues();
+  // 1. Get data from the spreadsheet using detected columns
+  var engineerNames = assignmentsSheet.getRange(2, assignedCol, rowCount, 1).getValues();
+  var incidentIds = assignmentsSheet.getRange(2, incidentCol, rowCount, 1).getValues();
 
   // 2. Group incident IDs by engineer
   var incidentIdsByEngineer = {};
@@ -606,4 +616,25 @@ function appendAssignmentHistory_(historySheet, rows) {
     return;
   }
   historySheet.getRange(historySheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+}
+
+// Header helpers to tolerate changing CSV schemas
+function findHeaderIndex_(headerRow, headerName) {
+  var target = (headerName || '').toString().trim().toLowerCase();
+  for (var i = 0; i < headerRow.length; i++) {
+    var cell = (headerRow[i] || '').toString().trim().toLowerCase();
+    if (cell === target) {
+      return i; // zero-based index
+    }
+  }
+  return -1;
+}
+
+function findColumnIndexByHeader_(sheet, headerName) {
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var idx = findHeaderIndex_(headers, headerName);
+  if (idx === -1) {
+    throw new Error('Header "' + headerName + '" not found on sheet "' + sheet.getName() + '".');
+  }
+  return idx + 1; // convert to 1-based for sheet ranges
 }
