@@ -1,7 +1,7 @@
 -- Scheduled query that captures shift snapshots at each shift boundary
 WITH boundaries AS (
   -- Generate boundaries for yesterday, today, and tomorrow to handle midnight crossings
-  SELECT TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), DAY) + INTERVAL d DAY + INTERVAL h HOUR AS boundary
+  SELECT TIMESTAMP_TRUNC(@shift_end, DAY) + INTERVAL d DAY + INTERVAL h HOUR AS boundary
   FROM UNNEST([-1, 0, 1]) AS d
   CROSS JOIN UNNEST([7, 15, 23]) AS h
 ),
@@ -13,7 +13,7 @@ shift_window AS (
     SELECT (
       SELECT boundary 
       FROM boundaries 
-      WHERE boundary <= CURRENT_TIMESTAMP() 
+      WHERE boundary <= @shift_end 
       ORDER BY boundary DESC 
       LIMIT 1
     ) AS shift_end
@@ -21,7 +21,7 @@ shift_window AS (
 )
 SELECT
   events.*,
-  COALESCE(events.Creation_FullName, events.Closure_FullName, events.Work_Log_Submitter) AS Actor_FullName,
+  COALESCE(events.Creation_FullName, events.Closure_FullName, events.Work_Log_Submitter, events.Assignee) AS Actor_FullName,
   CASE WHEN events.Event_Type = 'WorkLog' THEN events.WorkLog_ID ELSE events.Incident_Number END AS Count_Key,
   CASE
     WHEN EXTRACT(HOUR FROM shift_window.shift_start) = 7 THEN FORMAT_TIMESTAMP('%Y-%m-%d', shift_window.shift_start) || ' - 1 Morning'
@@ -332,6 +332,7 @@ FROM (
     ON wl.Incident_Number = hd.Incident_Number
   WHERE wl.WorkLog_Submit_Date IS NOT NULL
     AND hd.Assigned_Group != 'Quality Assurance' AND hd.Status != 'Cancelled'
+    AND NOT REGEXP_CONTAINS(IFNULL(wl.ExtractedDescription, ''), '(?i)JIRA status change,|From:\s*globalhelpdesk@pccwglobal\.com|To:\s*gsocph@pccwglobal\.com|Supervisor reviewed')
 ) AS work_logs
 
 )
@@ -339,4 +340,4 @@ AS events
 CROSS JOIN shift_window
 WHERE Date >= shift_window.shift_start
   AND Date < shift_window.shift_end
-  AND COALESCE(events.Creation_FullName, events.Closure_FullName, events.Work_Log_Submitter) IS NOT NULL
+  AND Event_Type IN ('Creation', 'Closure')
