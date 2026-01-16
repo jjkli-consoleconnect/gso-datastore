@@ -7,4 +7,6 @@ Ensures Python treats the 'shared' directory as a package so imports like
 __all__ = [
     'pipeline_runs_logger',
     'bq_logger',
+    'jira_helpers',
+    'logging_config',
 ]

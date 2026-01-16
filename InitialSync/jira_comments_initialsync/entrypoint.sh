@@ -3,6 +3,7 @@ set -e
 # Ensure we run from the script's directory so `python main.py` finds the local main.py
 cd "$(dirname "$0")"
 export GOOGLE_APPLICATION_CREDENTIALS="/app/shared/jira-bigquery-key.json"
+export PYTHONPATH="/app:$PYTHONPATH"
 echo "DEBUG: GOOGLE_APPLICATION_CREDENTIALS=$GOOGLE_APPLICATION_CREDENTIALS"
 if [ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
 echo "DEBUG: File exists, size=$(stat -c%s "$GOOGLE_APPLICATION_CREDENTIALS")"

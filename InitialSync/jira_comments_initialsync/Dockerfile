@@ -1,24 +1,18 @@
-FROM python:3.9
+FROM python:3.11
 
 WORKDIR /app
 
 # Copy requirements from the local folder so this subfolder builds independently
-COPY requirements.txt ./
+COPY InitialSync/jira_comments_initialsync/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy all files from this subfolder into the image
-COPY . .
+COPY InitialSync/jira_comments_initialsync /app/jira_comments_initialsync
 
-# credentials.json and JQL.txt are present in this folder
-COPY JQL.txt /app/JQL.txt
-# Include shared library from repo root so imports like `shared.pipeline_runs_logger` work
-COPY ../shared /app/shared
-# Copy service_account_env.py for imports
-COPY service_account_env.py /app/service_account_env.py
-# Copy service account keys for GOOGLE_APPLICATION_CREDENTIALS
-COPY ../shared/credentials.json /app/credentials.json
+# Include shared library from repo root
+COPY shared /app/shared
 
 # Make entrypoint executable and use it as container entrypoint
-RUN chmod +x /app/entrypoint.sh
+RUN chmod +x /app/jira_comments_initialsync/entrypoint.sh
 # Use the comments entrypoint
 ENTRYPOINT ["sh", "/app/jira_comments_initialsync/entrypoint.sh"]

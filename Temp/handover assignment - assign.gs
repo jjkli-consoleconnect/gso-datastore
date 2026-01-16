@@ -317,11 +317,19 @@ function createEngineerTabs(spreadsheet, incidentData) {
       for (var i = 0; i < incidentData[engineer].length; i++) {
         var incidentId = incidentData[engineer][i];
         var remedyKeyFormula;
+        var isNewSegment = false;
 
-        if (currentRow === 2 || currentRow === 90 || currentRow === 180 || currentRow === 270) {
-          remedyKeyFormula = "('Incident ID*+' = \"" + incidentId + "\")";
+        // Add blank separator row before each new query segment
+        if (currentRow === 90 || currentRow === 180 || currentRow === 270) {
+          values.push(['', '', '']); // Add blank row
+          currentRow++;
+          isNewSegment = true; // Next row starts a new segment
+        }
+
+        if (currentRow === 2 || isNewSegment) {
+          remedyKeyFormula = "''Incident Number' = \"" + incidentId + "\"";
         } else {
-          remedyKeyFormula = "OR ('Incident ID*+' = \"" + incidentId + "\")";
+          remedyKeyFormula = "OR 'Incident Number' = \"" + incidentId + "\"";
         }
 
         values.push([engineer, incidentId, remedyKeyFormula]); // Add a new row

@@ -652,11 +652,21 @@ function mergeTablesInBigQueryGeneric(config) {
 
     const updateSetClause = config.allColumns
       .filter(col => !primaryKeys.includes(col)) 
-      .map(col => `T.${col} = H.${col}`)
+      .map(col => {
+        if (config.timestampFields.includes(col)) {
+          return `T.${col} = CAST(H.${col} AS TIMESTAMP)`;
+        }
+        return `T.${col} = H.${col}`;
+      })
       .join(",\n        ");
 
     const insertColumns = config.allColumns.join(", ");
-    const insertValues = config.allColumns.map(col => `H.${col}`).join(", ");
+    const insertValues = config.allColumns.map(col => {
+      if (config.timestampFields.includes(col)) {
+        return `CAST(H.${col} AS TIMESTAMP)`;
+      }
+      return `H.${col}`;
+    }).join(", ");
 
     const query = `
       MERGE \`${projectId}.${config.targetDatasetId}.${config.targetTableId}\` T

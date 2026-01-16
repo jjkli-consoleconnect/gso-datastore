@@ -2,118 +2,18 @@
 Per-project adaptive window backfill (base 7d, shrink to 6h, regrow) aligned with changelog & comments pipelines.
 Temp staging + MERGE, progress ledger (Project, RowCount), buffered logging, SLA metrics extraction.
 """
-import json, logging, time, uuid, requests, argparse, random, threading, os, re, sys, inspect, pathlib
-# Ensure repository root is on sys.path for importing local helper modules
-_script_dir = pathlib.Path(__file__).resolve().parent
-_repo_root = _script_dir.parent.parent
-if str(_repo_root) not in sys.path:
-    sys.path.insert(0, str(_repo_root))
-
-# Ensure repository root (sibling of InitialSync/) is on sys.path so we can import 'shared'
-_script_dir = pathlib.Path(__file__).resolve().parent
-_root_dir = _script_dir.parent.parent  # go up from jira_tickets_initialsync/ to InitialSync/ then to repo root
-if str(_root_dir) not in sys.path:
-    sys.path.insert(0, str(_root_dir))
-
-# Auto-set GOOGLE_APPLICATION_CREDENTIALS if not provided and common key files exist in repo root
-if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
-    for candidate in ['service-account.json','jira-bigquery-key.json', 'credentials.json']:
-        cand_path = _repo_root / 'shared' / candidate
-        if cand_path.exists():
-            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(cand_path)
-            break
+import json, logging, time, uuid, requests, argparse, random, os, re
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery
-# Attempt to import shared logger; provide local fallback if shared/ not packaged in Docker context
-try:
-    from shared.pipeline_runs_logger import log_pipeline_run  # type: ignore
-except ModuleNotFoundError:
-    # Fallback: try sibling file (we may vendor a copy named pipeline_runs_logger.py)
-    try:
-        from pipeline_runs_logger import log_pipeline_run  # type: ignore
-    except ModuleNotFoundError:
-        # Final fallback: lightweight no-op implementation to keep pipeline running
-        def log_pipeline_run(client, *, pipeline_name: str, run_id: str, level: str, message: str, status: str, **kwargs):  # type: ignore
-            logging.log(getattr(logging, level.upper(), logging.INFO), f"[fallback-log] {pipeline_name} {status} {message}")
-            return
-        # Wrap the imported/logged function to be tolerant of external implementations that
-        # don't accept all keyword arguments (for example some older logger signatures).
-        # We capture the original, then expose a resilient `log_pipeline_run` name that
-        # filters kwargs based on the original callable's signature.
-        try:
-            _original_log_pipeline_run = log_pipeline_run
-            def log_pipeline_run(client, *args, **kwargs):
-                # If the original accepts **kwargs, call it directly.
-                try:
-                    sig = inspect.signature(_original_log_pipeline_run)
-                except Exception:
-                    sig = None
-                accepts_varkw = False
-                accepted_names = set()
-                if sig:
-                    for p in sig.parameters.values():
-                        if p.kind == inspect.Parameter.VAR_KEYWORD:
-                            accepts_varkw = True
-                        accepted_names.add(p.name)
-                if accepts_varkw:
-                    return _original_log_pipeline_run(client, *args, **kwargs)
-                # Filter kwargs to only those accepted by the original function.
-                filtered = {k: v for k, v in kwargs.items() if k in accepted_names}
-                try:
-                    return _original_log_pipeline_run(client, *args, **filtered)
-                except TypeError:
-                    # Last resort: call with minimal required params if present in kwargs
-                    minimal = {}
-                    for key in ('pipeline_name','run_id','level','message','status'):
-                        if key in kwargs:
-                            minimal[key] = kwargs[key]
-                    try:
-                        return _original_log_pipeline_run(client, **minimal)
-                    except Exception:
-                        # Give up and log locally
-                        logging.log(getattr(logging, (kwargs.get('level') or 'INFO').upper(), logging.INFO), f"[safe-log-failed] {kwargs.get('pipeline_name')} {kwargs.get('status')} {kwargs.get('message')}")
-                        return
-        except Exception:
-            # If any error building the wrapper, keep the original in place.
-            pass
-# Ensure the final `log_pipeline_run` binding is tolerant of extra kwargs regardless
-# of whether it came from shared.pipeline_runs_logger or the local fallback above.
-try:
-    _orig_logger = log_pipeline_run
-    # Don't double-wrap
-    if not getattr(_orig_logger, '_is_safe_wrapper', False):
-        def log_pipeline_run(client, *args, **kwargs):
-            try:
-                sig = inspect.signature(_orig_logger)
-            except Exception:
-                sig = None
-            accepts_varkw = False
-            accepted_names = set()
-            if sig:
-                for p in sig.parameters.values():
-                    if p.kind == inspect.Parameter.VAR_KEYWORD:
-                        accepts_varkw = True
-                    accepted_names.add(p.name)
-            if accepts_varkw:
-                return _orig_logger(client, *args, **kwargs)
-            filtered = {k: v for k, v in kwargs.items() if k in accepted_names}
-            try:
-                return _orig_logger(client, *args, **filtered)
-            except TypeError:
-                minimal = {}
-                for key in ('pipeline_name', 'run_id', 'level', 'message', 'status'):
-                    if key in kwargs:
-                        minimal[key] = kwargs[key]
-                try:
-                    return _orig_logger(client, **minimal)
-                except Exception:
-                    logging.log(getattr(logging, (kwargs.get('level') or 'INFO').upper(), logging.INFO), f"[safe-log-failed] {kwargs.get('pipeline_name')} {kwargs.get('status')} {kwargs.get('message')}")
-                    return
-        log_pipeline_run._is_safe_wrapper = True
-except NameError:
-    # log_pipeline_run not defined at all; nothing to wrap
-    pass
+
+# Setup repository path and credentials
+from shared.jira_helpers import setup_repo_path, load_jira_config, TokenBucket
+from shared.jira_helpers import table_exists, create_or_replace_table, wait_for_table
+from shared.jira_helpers import insert_rows_with_retry, delete_table_quiet, ensure_table_columns, execute_bq_query_with_retry
+from shared.pipeline_runs_logger import log_pipeline_run
+
+_script_dir, _repo_root = setup_repo_path(__file__)
 
 DEBUG=False
 # Allow runtime log level override via env (LOG_LEVEL=DEBUG|INFO|WARNING|ERROR)
@@ -159,56 +59,6 @@ SEARCH_429_COUNT=0
 DETAIL_429_COUNT=0
 _NO429_STREAK=0
 
-def execute_bq_query_with_retry(client, query, job_config=None, max_retries=5, initial_delay=2.0):
-    """
-    Execute a BigQuery query with exponential backoff retry logic.
-    Handles transient network errors including KeyboardInterrupt during network operations.
-    """
-    delay = initial_delay
-    for attempt in range(1, max_retries + 1):
-        try:
-            result = client.query(query, job_config=job_config)
-            return result.result()  # Wait for query to complete
-        except KeyboardInterrupt as e:
-            # KeyboardInterrupt during network calls is often a socket/SSL timeout, not user action
-            # Treat as retryable unless we're on the last attempt
-            if attempt == max_retries:
-                logging.error(f"BigQuery query failed with KeyboardInterrupt after {attempt} attempts")
-                raise
-            logging.warning(f"Query interrupted (likely network timeout) on attempt {attempt}/{max_retries}. Retrying in {delay}s...")
-            time.sleep(delay)
-            delay *= 2
-        except Exception as e:
-            error_msg = str(e).lower()
-            # Check if it's a transient/network error worth retrying
-            is_retryable = any(keyword in error_msg for keyword in [
-                'timeout', 'connection', 'network', 'socket', 'ssl', 
-                'temporary', 'unavailable', 'deadline exceeded'
-            ])
-            
-            if attempt == max_retries or not is_retryable:
-                logging.error(f"BigQuery query failed after {attempt} attempts: {e}")
-                raise
-            
-            logging.warning(f"BigQuery query attempt {attempt}/{max_retries} failed: {e}. Retrying in {delay}s...")
-            time.sleep(delay)
-            delay *= 2  # Exponential backoff
-
-class TokenBucket:
-    def __init__(self, capacity, refill_per_sec):
-        self.capacity=capacity; self.tokens=capacity; self.refill=refill_per_sec; self.last=time.time(); self.lock=threading.Lock()
-    def take(self, amount=1):
-        while True:
-            with self.lock:
-                now_t=time.time(); elapsed=now_t-self.last
-                if elapsed>0:
-                    add=elapsed*self.refill
-                    if add>0:
-                        self.tokens=min(self.capacity,self.tokens+add); self.last=now_t
-                if self.tokens>=amount:
-                    self.tokens-=amount; return True
-            time.sleep(RATE_MIN_SLEEP)
-
 RATE_LIMITER=TokenBucket(RATE_BUCKET_CAPACITY,RATE_BUCKET_REFILL_PER_SEC)
 
 # Track tables we've already ensured schema for during this process to avoid repeated DDL
@@ -242,48 +92,6 @@ FIELDS_FOR_SEARCH=[
 ]
 
 # ---------------- Utilities ----------------
-def load_config():
-    """Load Jira config searching multiple fallback locations.
-    Order:
-      1. Env JSON (JIRA_CONFIG_JSON)
-      2. Local folder config (same dir as this script)
-      3. Repo root config.json
-      4. Hourly jira_tickets config (to reuse existing token) as fallback
-    """
-    # 1. Env override
-    env_cfg = os.environ.get('JIRA_CONFIG_JSON')
-    if env_cfg:
-        try:
-            data = json.loads(env_cfg)
-            return data
-        except Exception:
-            logging.warning('Failed to parse JIRA_CONFIG_JSON env var')
-    candidates = []
-    try:
-        script_dir = os.path.dirname(__file__)
-        repo_root = _root_dir  # already defined earlier
-        candidates.append(os.path.join(script_dir, 'config.json'))
-        candidates.append(os.path.join(str(repo_root), 'config.json'))
-        # Hourly ticket config (where working long token likely lives)
-        candidates.append(os.path.join(str(repo_root), 'Hourly', 'jira_tickets', 'config.json'))
-    except Exception:
-        pass
-    for path in candidates:
-        if not path or not os.path.exists(path):
-            continue
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                token = data.get('jira_api_token')
-                if token and len(token) < 40:
-                    logging.warning(f'Loaded a very short jira_api_token (len={len(token)}) from {path}; this may be invalid.')
-                else:
-                    logging.info(f'Loaded jira config from {path} (token length {len(token) if token else 0})')
-                return data
-        except Exception as e:
-            logging.debug(f'Could not load config from {path}: {e}')
-    logging.error('No config.json found in expected locations');
-    return None
 
 def load_projects_from_file(defaults):
     # JQL.txt / external project list loading removed.
@@ -387,10 +195,8 @@ def extract_incident_numbers(text):
         text=' | '.join([str(t) for t in text if t])
     return re.findall(r'INC\d{9,}', str(text))
 
-# ---------------- BigQuery helpers ----------------
-def table_exists(client,dataset,table):
-    try: client.get_table(f"{dataset}.{table}"); return True
-    except Exception: return False
+# ---------------- BigQuery helpers (using shared) ----------------
+# Additional local helpers for jira_tickets specific needs
 
 def _bq_type_with_mode(c: bigquery.SchemaField) -> str:
     """Render BigQuery DDL type for a schema field.
@@ -404,107 +210,75 @@ def _bq_type_with_mode(c: bigquery.SchemaField) -> str:
         return f"ARRAY<{base}>"
     return base
 
-def create_or_replace_table(client,dataset,table,schema):
-    try:
-        cols=','.join(f'`{c.name}` {_bq_type_with_mode(c)}' for c in schema)
-        client.query(f"CREATE OR REPLACE TABLE `{dataset}.{table}` ({cols})").result(); return True
-    except Exception as e:
-        logging.exception(f'Create/replace {dataset}.{table} failed: {e}'); return False
-
-def wait_for_table(client,dataset,table,retries=10,delay=2):
-    for _ in range(retries):
-        if table_exists(client,dataset,table): return True
-        time.sleep(delay)
-    return False
-
-def ensure_table_columns(client,dataset,table,schema):
-    """Add missing columns to an existing table to match the provided schema.
-    Uses ARRAY<T> for repeated fields; leaves nullability default for safety.
-    """
-    try:
-        # Fetch existing schema to avoid issuing unnecessary DDL per column per window
-        tbl = client.get_table(f"{dataset}.{table}")
-        existing = {c.name for c in tbl.schema}
-        missing = [c for c in schema if c.name not in existing]
-        for c in missing:
-            ddl_type = _bq_type_with_mode(c)
-            client.query(
-                f"ALTER TABLE `{dataset}.{table}` ADD COLUMN IF NOT EXISTS `{c.name}` {ddl_type}"
-            ).result()
-        return True
-    except Exception as e:
-        logging.warning(f'ensure_table_columns failed for {dataset}.{table}: {e}')
-        return False
-
-def insert_rows_with_retry(client,dataset,table,rows,schema,retries=6,delay=6):
-    if not rows: return True
-    ref=client.dataset(dataset).table(table)
-    for attempt in range(retries):
-        try:
-            errs=client.insert_rows_json(ref,rows)
-            if not errs: return True
-            logging.error(f'Insert errors attempt {attempt+1}: {errs}')
-        except Exception as e:
-            if 'Not found' in str(e):
-                if not create_or_replace_table(client,dataset,table,schema) or not wait_for_table(client,dataset,table): return False
-            else:
-                logging.exception(f'Insert exception attempt {attempt+1}: {e}')
-        if attempt<retries-1: time.sleep(delay)
-    return False
-
-def delete_table_quiet(client,dataset,table):
-    try: client.delete_table(f"{dataset}.{table}")
-    except Exception: pass
-
 # ---------------- Jira fetch ----------------
 BASE_URL='https://consoleconnect.atlassian.net'
 SEARCH_URL=f'{BASE_URL}/rest/api/3/search/jql'
 
-def fetch_issues_page(auth, jql, next_page_token=None, max_results=100):
-    """Fetch a page of issues using GET /rest/api/3/search/jql with query params.
-    Supports Atlassian Cloud pagination via nextPageToken.
-    Returns parsed JSON or None on failure."""
+def fetch_issues_page(auth, jql, start_at=0, max_results=100):
+    """Fetch a page of issues using GET /rest/api/3/search/jql with offset pagination.
+    Jira Cloud supports startAt/maxResults for /search/jql."""
     global SEARCH_429_COUNT
     headers={'Accept':'application/json'}
     params = {
         'jql': jql,
         'maxResults': max_results,
-        # send fields as comma separated list
-        'fields': ','.join(FIELDS_FOR_SEARCH)
+        'fields': ','.join(FIELDS_FOR_SEARCH),
+        'startAt': start_at
     }
-    if next_page_token:
-        params['nextPageToken'] = next_page_token
-    for attempt in range(5):
+    logging.info(f'fetch_issues_page attempt=1 jql={jql[:80]}... startAt={start_at} maxResults={max_results}')
+    for attempt in range(1,6):
         try:
             RATE_LIMITER.take()
             r = requests.get(SEARCH_URL, headers=headers, auth=auth, params=params, timeout=120)
             if r.status_code == 429:
                 SEARCH_429_COUNT += 1
                 ra = int(r.headers.get('Retry-After', 30) or 30)
-                logging.warning(f'429 search startAt={start_at}; sleeping {ra:.1f}s')
+                logging.warning(f'429 search startAt={start_at} attempt={attempt}/5 retry_after={ra}s')
                 time.sleep(ra + random.random()*JITTER_MAX_SECONDS)
                 continue
             if r.status_code != 200:
                 snippet = (r.text or '')[:300].replace('\n',' ')
                 logging.warning(f'Jira search non-200 status={r.status_code} attempt={attempt+1} startAt={start_at} resp_snippet="{snippet}"')
             r.raise_for_status()
-            return r.json()
+            result = r.json()
+            issues_count = len(result.get("issues", []))
+            logging.info(
+                f"fetch_issues_page success: got {issues_count} issues, total={result.get('total')}, "
+                f"startAt={result.get('startAt')} maxResults={result.get('maxResults')}"
+            )
+            # Debug: log first issue fields if available
+            if issues_count > 0:
+                first_issue = result.get("issues", [])[0]
+                field_keys = list(first_issue.get('fields', {}).keys())
+                logging.info(f"First issue has {len(field_keys)} fields: {field_keys[:10]}...")
+            return result
         except requests.exceptions.Timeout:
+            logging.warning(f'Timeout on search attempt {attempt}/5 startAt={start_at}')
             time.sleep(15)
+        except ValueError as ve:
+            logging.error(f'JSON decode error on attempt {attempt}/5 startAt={start_at}: {ve}')
+            if attempt < 5:
+                time.sleep(10)
+                continue
+            return None
         except requests.RequestException as re:
             try:
                 status = getattr(re.response, 'status_code', None)
+                snippet = ((re.response.text or '') if getattr(re, 'response', None) else '')
             except Exception:
                 status = None
-            logging.error(f'Error searching issues on attempt {attempt+1}/5: {re} status={status}')
+                snippet = ''
+            snippet = (snippet or '')[:300].replace('\n',' ')
+            logging.error(f'Error searching issues attempt={attempt}/5 startAt={start_at} status={status} resp_snippet="{snippet}" error={re}')
             if status == 429:
                 SEARCH_429_COUNT += 1
                 time.sleep(5*(attempt+1))
                 continue
-            if attempt < 4:
+            if attempt < 5:
                 time.sleep(10)
                 continue
             return None
+    logging.error('fetch_issues_page: exhausted all 5 attempts with failures')
     return None
 
 def preflight_validate_project(auth, project_name):
@@ -576,6 +350,7 @@ def extract_sla_metrics(sla_field):
 def generate_ticket_rows(issues,ws,we):
     now_str=datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
     rows=[]
+    logging.info(f"generate_ticket_rows: processing {len(issues)} issues for window {ws} -> {we}")
     # Support forced refresh of specific issue keys regardless of window bounds via env var FORCE_REFRESH_KEYS="KEY1,KEY2"
     try:
         FORCE_REFRESH_KEYS=set(k.strip() for k in os.environ.get('FORCE_REFRESH_KEYS','').split(',') if k.strip())
@@ -597,6 +372,7 @@ def generate_ticket_rows(issues,ws,we):
             ref_dt = to_utc_aware(ref_dt)
         except Exception: continue
         if k not in FORCE_REFRESH_KEYS and not (ws <= ref_dt < we):
+            logging.debug(f"Skipping {k}: ref_dt={ref_dt} outside window ws={ws} we={we}")
             continue
         if k in FORCE_REFRESH_KEYS:
             if not (ws <= ref_dt < we):
@@ -634,8 +410,8 @@ def generate_ticket_rows(issues,ws,we):
             'Resolved': convert_ts(fields.get('resolutiondate')),
             'Reporter': get_field_value(fields.get('reporter')),
             'Assignee': get_field_value(fields.get('assignee')),
-            'Component': [get_field_value(c) for c in fields.get('components',[])],
-            'RemedyTicketNumber': remedy_numbers,
+            'Component': ', '.join([get_field_value(c) for c in fields.get('components',[])]) if fields.get('components') else None,
+            'RemedyTicketNumber': ', '.join(remedy_numbers) if remedy_numbers else None,
             'Links': extract_issue_links(fields.get('issuelinks')),
             SR_REF_BQ_NAME: get_field_value(fields.get(SR_REF_JIRA_ID)),
             'SyncTime': now_str,
@@ -647,6 +423,7 @@ def generate_ticket_rows(issues,ws,we):
         for name,(e,g,b,c) in sla.items():
             row[f'{name}_Elapsed_hrs']=e; row[f'{name}_Goal_hrs']=g; row[f'{name}_Breached']=b; row[f'{name}_Cycles']=c
         rows.append(row)
+    logging.info(f"generate_ticket_rows: returning {len(rows)} rows from {len(issues)} input issues")
     return rows
 
 # ---------------- Window sync ----------------
@@ -665,8 +442,8 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         ('Resolved','TIMESTAMP','NULLABLE'),
         ('Reporter','STRING','NULLABLE'),
         ('Assignee','STRING','NULLABLE'),
-        ('Component','STRING','REPEATED'),
-        ('RemedyTicketNumber','STRING','REPEATED'),
+        ('Component','STRING','NULLABLE'),
+        ('RemedyTicketNumber','STRING','NULLABLE'),
         ('Links','STRING','NULLABLE'),
         (SR_REF_BQ_NAME,'STRING','NULLABLE'),
         ('SyncTime','TIMESTAMP','NULLABLE'),
@@ -721,12 +498,14 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         SCHEMA_ENSURED.add(table_key)
     elif table_key not in SCHEMA_ENSURED:
         # Ensure all columns exist with correct shapes; important for REPEATED fields
-        ensure_table_columns(client,dataset,table,schema)
+        # Convert SchemaField objects to tuples (col_name, col_type) for ensure_table_columns
+        schema_tuples = [(f.name, f.field_type) for f in schema]
+        ensure_table_columns(client,dataset,table,schema_tuples)
         SCHEMA_ENSURED.add(table_key)
 
     # Lazily create the temp table only when we actually have rows to insert
     temp_created=False
-    page_size=200; next_token=None; batch=2000; buffer=[]; inserted=0
+    page_size=200; start_at=0; batch=2000; buffer=[]; inserted=0
     
     # If FORCE_REFRESH_KEYS is set, fetch those specific keys first
     force_keys_env = os.environ.get('FORCE_REFRESH_KEYS', '')
@@ -735,7 +514,7 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         if force_keys:
             logging.info(f'Fetching {len(force_keys)} forced keys explicitly: {force_keys[:5]}...')
             force_jql = f"key in ({','.join(force_keys)})"
-            force_data = fetch_issues_page(auth, force_jql, None, len(force_keys))
+            force_data = fetch_issues_page(auth, force_jql, 0, len(force_keys))
             if force_data and force_data.get('issues'):
                 logging.info(f'Retrieved {len(force_data["issues"])} forced issues')
                 rows = generate_ticket_rows(force_data['issues'], ws, we)
@@ -754,12 +533,18 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
                         buffer = []
     
     while True:
-        data = fetch_issues_page(auth, jql, next_token, page_size)
+        data = fetch_issues_page(auth, jql, start_at, page_size)
         if data is None:
+            msg = f'sync_tickets_window: search returned None startAt={start_at} jql_head={jql[:120]}...'
+            logging.error(msg)
             if temp_created:
                 delete_table_quiet(client, dataset, temp)
-            return False, inserted
+            raise RuntimeError(msg)
         issues = data.get('issues', [])
+        logging.info(
+            f"sync_tickets_window: fetch returned {len(issues)} issues, startAt={data.get('startAt')} "
+            f"maxResults={data.get('maxResults')} total={data.get('total')} response_keys={list(data.keys())}"
+        )
         if issues:
             rows = generate_ticket_rows(issues, ws, we)
             for r in rows:
@@ -787,9 +572,9 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
                 return False, inserted
             inserted += len(buffer)
             buffer = []
-        next_token = data.get('nextPageToken')
-        is_last = data.get('isLast')
-        if not next_token or is_last:
+        start_at = (data.get('startAt') or 0) + len(issues)
+        total = data.get('total') or 0
+        if start_at >= total or not issues:
             break
         time.sleep(0.2)
     # If no rows were gathered for this window, skip MERGE to avoid unnecessary per-table quota usage
@@ -817,8 +602,8 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         Resolved = S.Resolved,
         Reporter = S.Reporter,
         Assignee = S.Assignee,
-        Component = S.Component,
-        RemedyTicketNumber = S.RemedyTicketNumber,
+        Component = IF(S.Component IS NULL, NULL, [S.Component]),
+        RemedyTicketNumber = IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]),
         Links = S.Links,
         {SR_REF_BQ_NAME} = S.{SR_REF_BQ_NAME},
         SyncTime = S.SyncTime,
@@ -880,7 +665,7 @@ def sync_tickets_window(jql,auth,client,dataset,table,ws,we):
         ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles,
         ITHD_Resolution
     ) VALUES (
-    S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, S.Component, S.RemedyTicketNumber, S.Links, S.{SR_REF_BQ_NAME}, S.SyncTime,
+    S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.{SR_REF_BQ_NAME}, S.SyncTime,
         S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles,
         S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles,
         S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles,
@@ -924,7 +709,7 @@ def flush_logs(client,dataset,table):
 
 # ---------------- Main ----------------
 def main():
-    cfg=load_config();
+    cfg=load_jira_config(_script_dir);
     if not cfg: return
     dataset='GSO'; table='JiraTickets'; progress=f'{table}_progress'; pipeline='jira_tickets'; run_id=str(uuid.uuid4())
     base_days=7; min_start=datetime(2024,7,1,tzinfo=timezone.utc)
@@ -1111,12 +896,13 @@ def main():
                 pass
             if ws>=now: break
             proj_clause=f'project = "{proj}"' if any(ch in proj for ch in [' ','&']) else f'project = {proj}'
-            # Use (created OR updated) to capture all tickets in window, including those never updated
-            time_clause=f"(created >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" OR updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\") AND (created < \"{we.strftime('%Y/%m/%d %H:%M')}\" OR updated < \"{we.strftime('%Y/%m/%d %H:%M')}\")"
+            # Use simplified time clause matching changelog/comments scripts (updated field only)
+            time_clause=f"updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
             if use_filter:
                 jql=f"({filter_jql}) AND {time_clause}"
             else:
                 jql=f"({proj_clause}) AND {time_clause}"
+            logging.info(f'FULL JQL FOR {proj}: {jql}')
             try:
                 merge=(
                     f"MERGE `{dataset}.{progress}` T USING (SELECT TIMESTAMP('{ws.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS WindowStart, TIMESTAMP('{we.strftime('%Y-%m-%d %H:%M:%S.%f')}') AS WindowEnd, '{proj}' AS Project) S "
@@ -1134,9 +920,13 @@ def main():
             global SEARCH_429_COUNT, DETAIL_429_COUNT, CURRENT_TICKET_WORKERS, _NO429_STREAK
             SEARCH_429_COUNT=0; DETAIL_429_COUNT=0
             logging.info(f'Executing JQL: {jql}')
+            logging.info(f'Window span: {ws} to {we}')
             try: success,rc=sync_tickets_window(jql,auth,client,dataset,table,ws,we)
             except Exception as e:
+                logging.exception(f"Fatal error in sync_tickets_window for {proj} {ws}->{we}: {e}")
                 log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="ERROR", message=f"Fatal {proj} {ws}->{we} {e}", status="ERROR")
+                success = False
+                rc = 0
             degraded=False
             if success:
                 ratio=DETAIL_429_COUNT/max(1,rc)
@@ -1150,8 +940,8 @@ def main():
             ); execute_bq_query_with_retry(client, upd)
             logging.info(f'Project {proj} window {ws}->{we} {status} rows={rc} 429_search={SEARCH_429_COUNT} 429_detail={DETAIL_429_COUNT}')
             log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level=("INFO" if success else "ERROR"), message=f'Window {status} {proj}', status=("SUCCESS" if success else "ERROR"), window_start=ws.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'), rows_merged=int(rc), duration_seconds=window_duration_seconds)
-            if success:
-                total_rows_merged += rc  # Accumulate successful window rows
+            if status in ('complete', 'degraded'):
+                total_rows_merged += rc  # Accumulate rows from completed or degraded windows
             # If we used a TEST_WINDOW_START/END override, only run that single forced window then exit the project loop
             try:
                 if 'TEST_WINDOW_START' in os.environ and 'TEST_WINDOW_END' in os.environ:
@@ -1192,7 +982,7 @@ def main():
         log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message=f"Project {proj} finished", status="SUCCESS")
     run_ended = datetime.now(timezone.utc)
     duration_seconds = (run_ended - run_started).total_seconds()
-    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Tickets pipeline finished", status="SUCCESS", rows_merged=total_rows_merged, duration_seconds=duration_seconds)
+    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", rows_merged=total_rows_merged, duration_seconds=duration_seconds)
 
 if __name__=='__main__':
     main()

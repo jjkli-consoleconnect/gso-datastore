@@ -1,12 +1,11 @@
+"""
+Hourly Jira Changelog Sync (Refactored) - uses shared helpers
+Syncs hourly changelog events (status transitions) from Jira to BigQuery.
+"""
 import requests
-import sys, pathlib
-_script_dir = pathlib.Path(__file__).resolve().parent
-_repo_root = str(_script_dir.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
+import sys
+import pathlib
 import json
-from google.cloud import bigquery
-import re
 import logging
 from datetime import datetime, timedelta, timezone
 import time
@@ -15,22 +14,28 @@ from concurrent.futures import ThreadPoolExecutor
 import random
 import uuid
 from typing import Optional
-from pipeline_runs_logger import log_pipeline_run
+from google.cloud import bigquery
+
+# Setup repository path
+_script_dir = pathlib.Path(__file__).resolve().parent
+_repo_root = str(_script_dir.parent.parent)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
+# Import shared helpers
+from shared.jira_helpers import load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table, delete_temp_table
+from shared.logging_config import setup_root_logging
+from shared.pipeline_runs_logger import log_pipeline_run
+
+# Setup logging
+setup_root_logging()
 
 # --- Logging Buffer for BigQuery Logs ---
 LOG_BUFFER = []
 
-# Logging configuration: LOG_LEVEL env override and DEBUG support
-DEBUG = str(os.environ.get('DEBUG', '')).lower() in ('1', 'true', 'yes')
-_env_level = os.environ.get('LOG_LEVEL', 'DEBUG' if DEBUG else 'INFO').upper()
-_level = getattr(logging, _env_level, logging.INFO)
-logging.basicConfig(level=_level, format='%(asctime)s - %(levelname)s - %(message)s')
-if _level > logging.INFO:
-    logging.getLogger('google').setLevel(logging.WARNING)
-    logging.getLogger('google.cloud').setLevel(logging.WARNING)
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 def load_config():
+    """Load Jira config from config.json."""
     try:
         with open('config.json') as f:
             return json.load(f)
@@ -38,126 +43,18 @@ def load_config():
         logging.error("config.json not found. Please create it with your Jira API token and email.")
         return None
 
-def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
-    """Load base JQL from env (BASE_JQL_B64/BASE_JQL) or fall back to embedded default_text.
-
-    This simplified loader intentionally does NOT read any external JQL files. It prefers
-    a BASE_JQL_B64 or BASE_JQL environment variable and otherwise returns the provided
-    default_text (embedded list of projects).
-    """
-    env_b64 = os.environ.get('BASE_JQL_B64')
-    if env_b64:
-        try:
-            import base64
-            decoded = base64.b64decode(env_b64).decode('utf-8').strip()
-            if DEBUG:
-                logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL_B64 env variable")
-            if decoded:
-                return decoded
-        except Exception as e:
-            logging.warning(f"[JQL_LOAD] Failed decoding BASE_JQL_B64: {e}")
-
-    env_text = os.environ.get('BASE_JQL')
-    if env_text and env_text.strip():
-        if DEBUG:
-            logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL env variable")
-        return env_text.strip()
-
-    if default_text:
-        logging.info("Using embedded default base JQL.")
-        return default_text.strip()
-
-    logging.error("No base JQL found. Set BASE_JQL or provide a default_text.")
-    return None
-
-
-def build_jql(base: str, extra: str, joiner: str = 'AND') -> str:
-    """Safely join a base JQL and an extra clause.
-    - Filters out empty parts.
-    - Strips stray leading/trailing operators (AND/OR) to avoid "OR AND".
-    """
-    if not base or not base.strip():
-        return extra.strip()
-    b = base.strip()
-    e = extra.strip()
-    # remove trailing AND/OR from base
-    b = re.sub(r"(?i)\b(?:AND|OR)\s*$", '', b).rstrip()
-    # remove leading AND/OR from extra
-    e = re.sub(r"(?i)^(?:AND|OR)\b", '', e).lstrip()
-    return f"{b} {joiner} {e}"
-
-def convert_timestamp(timestamp):
-    if timestamp:
-        try:
-            return datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%f%z').strftime('%Y-%m-%d %H:%M:%S')
-        except ValueError as e:
-            logging.warning(f"Invalid timestamp format: {timestamp}, Error: {e}")
-            return None
-    return None
-
-def create_or_replace_temp_table(client, dataset_id, table_id, schema):
-    try:
-        query = f"""
-        CREATE OR REPLACE TABLE `{client.project}.{dataset_id}.{table_id}`
-        (
-            {', '.join(f'{f.name} {f.field_type}' for f in schema)}
-        )
-        """
-        client.query(query).result()
-        logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' created or replaced.")
-        return True
-    except Exception as e:
-        logging.exception(f"Error creating or replacing temporary table '{client.project}.{dataset_id}.{table_id}': {e}")
-        return False
-
-# This function is defined but not used. Consider removing if not planned for use.
-# def create_temp_table_if_not_exists(client, dataset_id, table_id, schema):
-#     if not table_exists(client, dataset_id, table_id):
-#         return create_or_replace_temp_table(client, dataset_id, table_id, schema)
-#     return True
-
-def delete_temp_table(client, dataset_id, table_id):
-    table_ref = client.dataset(dataset_id).table(table_id)
-    try:
-        client.delete_table(table_ref)
-        logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' deleted.")
-        return True
-    except Exception as e:
-        logging.exception(f"Error deleting temporary table '{client.project}.{dataset_id}.{table_id}': {e}")
-        return False
-    table_ref = client.dataset(dataset_id).table(table_id)
-    try:
-        client.delete_table(table_ref, not_found_ok=True)  # not_found_ok is supported in google-cloud-bigquery >= 1.25.0
-        logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' deleted (or did not exist).")
-        return True
-    except TypeError:
-        # For older google-cloud-bigquery versions, fallback to manual not found handling
-        try:
-            client.delete_table(table_ref)
-            logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' deleted.")
-            return True
-        except Exception as e:
-            if 'Not found' in str(e) or '404' in str(e):
-                logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' did not exist (already deleted).")
-                return True
-            logging.exception(f"Error deleting temporary table '{client.project}.{dataset_id}.{table_id}': {e}")
-            return False
-    except Exception as e:
-        if 'Not found' in str(e) or '404' in str(e):
-            logging.info(f"Temporary table '{client.project}.{dataset_id}.{table_id}' did not exist (already deleted).")
-            return True
-        logging.exception(f"Error deleting temporary table '{client.project}.{dataset_id}.{table_id}': {e}")
-        return False
 
 def table_exists(client, dataset_id, table_id):
+    """Check if a BigQuery table exists."""
     try:
         client.get_table(f"{client.project}.{dataset_id}.{table_id}")
         return True
-    except Exception: # More specific exception (e.g., google.cloud.exceptions.NotFound) is better
-        # logging.error(f"Table '{client.project}.{dataset_id}.{table_id}' does not exist: {e}") # 'e' not defined here
+    except Exception:
         return False
 
+
 def wait_for_table(client, dataset_id, table_id, retries=10, delay=5):
+    """Wait for table to become available."""
     for attempt in range(retries):
         if table_exists(client, dataset_id, table_id):
             logging.info(f"Table '{client.project}.{dataset_id}.{table_id}' is now available.")
@@ -167,14 +64,15 @@ def wait_for_table(client, dataset_id, table_id, retries=10, delay=5):
     logging.error(f"Table '{client.project}.{dataset_id}.{table_id}' is not available after {retries} attempts.")
     return False
 
+
 def insert_rows_with_retry(client, dataset_id, table_id, rows, retries=5, delay=5):
+    """Insert rows into BigQuery with retries."""
     if not rows:
         logging.info(f"No rows to insert into '{dataset_id}.{table_id}'.")
         return True
     
     for attempt in range(retries):
         try:
-            # Use table reference object instead of string to avoid project number issues
             table_ref = client.dataset(dataset_id).table(table_id)
             errors = client.insert_rows_json(table_ref, rows)
             if not errors:
@@ -188,13 +86,12 @@ def insert_rows_with_retry(client, dataset_id, table_id, rows, retries=5, delay=
     logging.error(f"Failed to insert rows into '{dataset_id}.{table_id}' after {retries} retries.")
     return False
 
+
 def fetch_issue_history(jira_url, issue_key, username, api_token):
-    """Fetches the history (including transitions) for a given issue."""
-    # For Jira Cloud, /rest/api/2/ and /rest/api/latest/ are often interchangeable for core functionalities
-    # The script uses /rest/api/2/ which is generally fine.
+    """Fetch the history (transitions) for a given issue."""
     url = f"{jira_url}/rest/api/2/issue/{issue_key}?expand=changelog"
     headers = {"Accept": "application/json"}
-    auth = (username, api_token) # For Jira Cloud, username is typically the email address
+    auth = (username, api_token)
 
     try:
         response = requests.get(url, headers=headers, auth=auth, timeout=60)
@@ -208,7 +105,9 @@ def fetch_issue_history(jira_url, issue_key, username, api_token):
         logging.error(f"Error decoding JSON response for issue {issue_key}: {e}")
         return None
 
+
 def fetch_issue_histories_parallel(jira_url, issues, username, api_token):
+    """Fetch histories for multiple issues in parallel."""
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(fetch_issue_history, jira_url, issue['key'], username, api_token): issue for issue in issues}
         results = {}
@@ -217,11 +116,12 @@ def fetch_issue_histories_parallel(jira_url, issues, username, api_token):
             try:
                 results[issue_key] = future.result()
             except Exception as e:
-                logging.error(f"Error fetching history for issue {issue_key} in parallel: {e}") # Added "in parallel" for clarity
+                logging.error(f"Error fetching history for issue {issue_key} in parallel: {e}")
     return results
 
+
 def fetch_issues_with_retry(jira_search_url, headers, auth, payload, retries=5, delay=5):
-    # Expecting 'payload' to be a dict of params for GET (jql, startAt, maxResults...)
+    """Fetch issues from Jira with retries."""
     params = payload if isinstance(payload, dict) else {}
     for attempt in range(retries):
         try:
@@ -236,8 +136,8 @@ def fetch_issues_with_retry(jira_search_url, headers, auth, payload, retries=5, 
     return None
 
 
-
 def run_merge_query(client, dataset_id, table_id, temp_table_id):
+    """Execute MERGE query to upsert changelog data."""
     merge_query = f"""
         MERGE `{client.project}.{dataset_id}.{table_id}` T
         USING (
@@ -270,10 +170,10 @@ def run_merge_query(client, dataset_id, table_id, temp_table_id):
         return False
     return True
 
-# --- BigQuery Logging Mechanism ---
+
 def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, message, FunctionName=None, BatchID=None, Details=None):
+    """Buffer a log entry to be flushed to BigQuery."""
     log_entry = {
-        # 'Timestamp' intentionally omitted; BigQuery will use its default value
         "PipelineName": pipeline_name,
         "RunID": run_id,
         "LogLevel": level,
@@ -284,7 +184,9 @@ def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, 
     }
     LOG_BUFFER.append(log_entry)
 
+
 def flush_logs_to_bigquery(client, dataset_id, table_id):
+    """Flush all buffered logs to BigQuery PipelineRuns table."""
     for log in LOG_BUFFER:
         context = {}
         if log.get('FunctionName'):
@@ -297,7 +199,9 @@ def flush_logs_to_bigquery(client, dataset_id, table_id):
     LOG_BUFFER.clear()
     logging.info("All log entries successfully logged to PipelineRuns.")
 
+
 def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client):
+    """Sync Jira changelog/transition history to BigQuery."""
     temp_table_id = f"{table_id}_temp"
     schema = [
         bigquery.SchemaField("Issue_Key", "STRING", mode="NULLABLE"),
@@ -322,7 +226,6 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
     max_results = 100
     issues_processed = 0
     batch_size = 1000
-    # Use GET /rest/api/3/search/jql per tenant requirements
     search_api_endpoint = f"{jira_base_url}/rest/api/3/search/jql"
     rows_inserted = 0
 
@@ -355,7 +258,6 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         logging.info(f"Fetched {len(issues)} issues. Total according to Jira: {total_issues}. Current offset: {start_at}")
 
         rows_to_insert = []
-        # Fetch histories in parallel for the current page of issues
         issue_histories = fetch_issue_histories_parallel(jira_base_url, issues, username, api_token)
 
         for issue_data in issues:
@@ -392,7 +294,6 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
                             "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
                         })
 
-            # Insert rows in batches to BigQuery temp table
             if len(rows_to_insert) >= batch_size:
                 if insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert):
                     rows_inserted += len(rows_to_insert)
@@ -402,7 +303,6 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
                     return False
                 rows_to_insert = []
 
-        # Insert any remaining rows after processing all issues on the page
         if rows_to_insert:
             if insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert):
                 rows_inserted += len(rows_to_insert)
@@ -415,28 +315,17 @@ def sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_
         logging.info(f"Processed details for {len(issues)} issues. Total issues processed so far: {issues_processed} out of {total_issues}")
         remaining_issues = total_issues - issues_processed
         logging.info(f"Remaining issues to process: {remaining_issues}")
-        start_at += max_results  # Advance to next page
+        start_at += max_results
         time.sleep(1)
 
-    # Merge temp table into final table (upsert logic)
     if rows_inserted > 0:
         run_merge_query(client, dataset_id, table_id, temp_table_id)
     delete_temp_table(client, dataset_id, temp_table_id)
     return int(rows_inserted)
 
-# This function is defined but not used. Consider removing if not planned for use.
-# def run_query_with_retry(client, query, retries=5, delay=5):
-#     for attempt in range(retries):
-#         try:
-#             client.query(query).result()
-#             return True
-#         except Exception as e:
-#             logging.warning(f"Retrying query after {delay} seconds. Attempt {attempt + 1}/{retries}. Error: {e}")
-#             time.sleep(delay)
-#     logging.error("Failed to execute query after multiple retries.")
-#     return False --test
 
 def main():
+    """Main pipeline execution."""
     config = load_config()
     if config is None:
         logging.error("Failed to load configuration. Exiting.")
@@ -444,26 +333,26 @@ def main():
 
     jira_base_url = 'https://consoleconnect.atlassian.net'
     base_default = (
-        '('\
-    'project = "GS&O Data Analytics" OR '\
-    'project = "Customer Success Management" OR '\
-    'project = "GS&O Tool Automation" OR '\
-    'project = "GS&O Knowledge Consolidation" OR '\
-    'project = TAC OR '\
-    'project = "VOICE - CE" OR '\
-    'project = "IOT CE" OR '\
-    'project = "Console Application Support" OR '\
-    'project = "Console Connect Provisioning" OR '\
-    'project = "Global Service Delivery Team" OR '\
-    'project = "Transmission TX-CE" OR '\
-    'project = "Mobility SMS - CE" OR '\
-    'project = "Managed Security Services" OR '\
-    'project = Sherbet OR '\
-    'project = "Google Contact Center AI Solution" OR '\
-    'project = "QMS Documentation" OR '\
-    'project = "Operational Case Reviews" OR '\
-    'project = "IT Helpdesk" OR '\
-    'project = "GS&O Strategic Initiatives" '
+        '('
+        'project = "GS&O Data Analytics" OR '
+        'project = "Customer Success Management" OR '
+        'project = "GS&O Tool Automation" OR '
+        'project = "GS&O Knowledge Consolidation" OR '
+        'project = TAC OR '
+        'project = "VOICE - CE" OR '
+        'project = "IOT CE" OR '
+        'project = "Console Application Support" OR '
+        'project = "Console Connect Provisioning" OR '
+        'project = "Global Service Delivery Team" OR '
+        'project = "Transmission TX-CE" OR '
+        'project = "Mobility SMS - CE" OR '
+        'project = "Managed Security Services" OR '
+        'project = Sherbet OR '
+        'project = "Google Contact Center AI Solution" OR '
+        'project = "QMS Documentation" OR '
+        'project = "Operational Case Reviews" OR '
+        'project = "IT Helpdesk" OR '
+        'project = "GS&O Strategic Initiatives" '
         ')'
     )
     base_jql = load_base_jql(default_text=base_default)
@@ -472,7 +361,7 @@ def main():
         return
     jql_query = build_jql(base_jql, "status CHANGED DURING (-1h, now())", joiner='AND')
     logging.info(f"Final jql_query for changelog: {jql_query}")
-    # Window for CHANGED DURING is last hour relative to run start
+
     run_started = datetime.now(timezone.utc)
     jql_window_start = run_started - timedelta(hours=1)
     jql_window_end = run_started
@@ -498,7 +387,6 @@ def main():
         logging.error(f"Failed to initialize BigQuery client: {e}")
         return
 
-    # Log pipeline start
     try:
         log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
         rows_merged = sync_transition_history_to_bigquery(jira_base_url, jql_query, username, api_token, dataset_id, table_id, client)
@@ -508,7 +396,6 @@ def main():
             logging.error("Failed to sync transition history to BigQuery.")
             log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Failed to sync transition history to BigQuery", status="ERROR", duration_seconds=duration_seconds)
         else:
-            # Zero rows is a valid outcome for a test/quiet window; mark SUCCESS with rows_merged count
             logging.info(f"Sync complete. Rows merged: {int(rows_merged)}")
             log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", window_start=jql_window_start, window_end=jql_window_end, rows_merged=int(rows_merged), duration_seconds=duration_seconds)
     except Exception as e:
@@ -517,8 +404,8 @@ def main():
         duration_seconds = (run_ended - run_started).total_seconds()
         log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Exception: {e}", status="ERROR", error_code=getattr(e, "code", None), duration_seconds=duration_seconds)
 
-    # At the end, flush all logs to BigQuery in a batch
     flush_logs_to_bigquery(client, dataset_id, log_table_id)
+
 
 if __name__ == "__main__":
     main()

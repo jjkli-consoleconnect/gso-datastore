@@ -46,7 +46,7 @@
     {
       "label": "Docker: Build jira_comments_initialsync",
       "type": "shell",
-      "command": "docker build --pull --rm -f \"InitialSync\\jira_comments_initialsync\\Dockerfile\" -t \"jira_comments_initialsync:latest\" \"InitialSync\"",
+      "command": "docker build --pull --rm -f \"InitialSync\\jira_comments_initialsync\\Dockerfile\" -t \"jira_comments_initialsync:latest\" \".\"",
       "isBackground": false,
       "problemMatcher": [
         "$eslint-stylish"
@@ -56,7 +56,7 @@
     {
       "label": "Docker: Build jira_changelog_initialsync",
       "type": "shell",
-      "command": "docker build --pull --rm -f \"InitialSync\\jira_changelog_initialsync\\Dockerfile\" -t \"jira_changelog_initialsync:latest\" \"InitialSync\"",
+      "command": "docker build --pull --rm -f \"InitialSync\\jira_changelog_initialsync\\Dockerfile\" -t \"jira_changelog_initialsync:latest\" \".\"",
       "isBackground": false,
       "problemMatcher": [
         "$eslint-stylish"

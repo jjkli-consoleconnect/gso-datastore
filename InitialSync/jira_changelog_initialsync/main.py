@@ -1,34 +1,21 @@
 import requests
-import sys, pathlib
-_script_dir = pathlib.Path(__file__).resolve().parent
-_repo_root = str(_script_dir.parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 import json
-import os, sys, pathlib
-from google.cloud import bigquery
+import os
 import logging
 from datetime import datetime, timedelta
 import time
 import uuid
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from google.cloud import bigquery
 
-# Ensure repository root (parent of InitialSync/) in sys.path for shared imports
-_script_dir = pathlib.Path(__file__).resolve().parent
-_root_dir = _script_dir.parent.parent
-if str(_root_dir) not in sys.path:
-    sys.path.insert(0, str(_root_dir))
-
-# Auto GOOGLE_APPLICATION_CREDENTIALS if not set
-if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
-    for cand in ('service-account.json','jira-bigquery-key.json', 'credentials.json'):
-        p=_repo_root / 'shared' / cand
-        if p.exists():
-            os.environ['GOOGLE_APPLICATION_CREDENTIALS']=str(p)
-            break
-
+# Setup repository path and credentials
+from shared.jira_helpers import setup_repo_path, load_jira_config, TokenBucket
+from shared.jira_helpers import table_exists, create_or_replace_table, wait_for_table
+from shared.jira_helpers import insert_rows_with_retry, delete_table_quiet, ensure_table_columns
 from shared.pipeline_runs_logger import log_pipeline_run
+
+_script_dir, _repo_root = setup_repo_path(__file__)
 
 # ----------------- CONFIG -----------------
 DEBUG = False
@@ -66,29 +53,6 @@ _NO429_STREAK = 0
 SEARCH_429_COUNT = 0
 HISTORY_429_COUNT = 0
 
-import threading
-class TokenBucket:
-    def __init__(self, capacity, refill_per_sec):
-        self.capacity = capacity
-        self.tokens = capacity
-        self.refill_per_sec = refill_per_sec
-        self.last = time.time()
-        self.lock = threading.Lock()
-    def take(self, amount=1):
-        while True:
-            with self.lock:
-                now_t = time.time()
-                elapsed = now_t - self.last
-                if elapsed > 0:
-                    refill = elapsed * self.refill_per_sec
-                    if refill > 0:
-                        self.tokens = min(self.capacity, self.tokens + refill)
-                        self.last = now_t
-                if self.tokens >= amount:
-                    self.tokens -= amount
-                    return True
-            time.sleep(RATE_MIN_SLEEP)
-
 RATE_LIMITER = TokenBucket(RATE_BUCKET_CAPACITY, RATE_BUCKET_REFILL_PER_SEC)
 
 
@@ -110,39 +74,6 @@ RATE_SHRINK_FACTOR = 0.5       # multiply previous window span by this when rate
 MIN_WINDOW_MINUTES = 30         # minimum window size in minutes to prevent tiny windows
 
 # ----------------- UTIL -----------------
-def load_config():
-    """Layered Jira config load with fallbacks.
-    1. Env JIRA_CONFIG_JSON (JSON)
-    2. Local config.json (script dir)
-    3. Repo root config.json
-    4. Hourly/jira_tickets/config.json (reuse working long token)
-    """
-    env_cfg=os.environ.get('JIRA_CONFIG_JSON')
-    if env_cfg:
-        try:
-            data=json.loads(env_cfg)
-            logging.info('Loaded Jira config from env JIRA_CONFIG_JSON')
-            return data
-        except Exception:
-            logging.warning('Failed to parse JIRA_CONFIG_JSON env var')
-    candidates=[str(_script_dir/'config.json'), str(_root_dir/'config.json'), str(_root_dir/'Hourly'/'jira_tickets'/'config.json')]
-    for path in candidates:
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path,'r',encoding='utf-8') as f:
-                data=json.load(f)
-            token=data.get('jira_api_token')
-            if token and len(token)<40:
-                logging.warning(f'Loaded very short jira_api_token (len={len(token)}) from {path}; may be invalid')
-            else:
-                logging.info(f'Loaded Jira config from {path} (token length {len(token) if token else 0})')
-            return data
-        except Exception as e:
-            logging.debug(f'Config read fail {path}: {e}')
-    logging.error('No Jira config found in expected locations')
-    return None
-
 
 def convert_timestamp(ts: str):
     if not ts:
@@ -259,67 +190,7 @@ def preflight_validate_project(auth, project_name, base_url='https://consoleconn
     except Exception as e:
         return False, -1, f'Exception: {e}'
 
-# -------------- BigQuery helpers --------------
-
-def create_or_replace_table(client, dataset_id, table_id, schema):
-    try:
-        query = f"CREATE OR REPLACE TABLE `{dataset_id}.{table_id}` (" \
-                + ', '.join(f'`{f.name}` {f.field_type}' for f in schema) + ")"
-        client.query(query).result()
-        logging.debug(f"(Re)created table {dataset_id}.{table_id}")
-        return True
-    except Exception as e:
-        logging.exception(f"Error creating/replacing table {dataset_id}.{table_id}: {e}")
-        return False
-
-def table_exists(client, dataset_id, table_id):
-    try:
-        client.get_table(f"{dataset_id}.{table_id}")
-        return True
-    except Exception as e:
-        if 'Not found' in str(e):
-            return False
-        logging.exception(f"Error checking table {dataset_id}.{table_id}: {e}")
-        return False
-
-def wait_for_table(client, dataset_id, table_id, retries=15, delay=4):
-    for i in range(retries):
-        if table_exists(client, dataset_id, table_id):
-            return True
-        time.sleep(delay)
-    logging.error(f"Table {dataset_id}.{table_id} not available after waits")
-    return False
-
-def insert_rows_with_retry(client, dataset_id, table_id, rows, schema, retries=6, delay=6):
-    if not rows:
-        return True
-    table_ref = client.dataset(dataset_id).table(table_id)
-    for attempt in range(retries):
-        try:
-            errors = client.insert_rows_json(table_ref, rows)
-            if not errors:
-                logging.info(f"Inserted {len(rows)} rows -> {dataset_id}.{table_id}")
-                return True
-            logging.error(f"Insert errors (attempt {attempt+1}): {errors}")
-        except Exception as e:
-            if 'Not found' in str(e):
-                logging.warning(f"Temp table missing {dataset_id}.{table_id}; recreating")
-                if not create_or_replace_table(client, dataset_id, table_id, schema) or not wait_for_table(client, dataset_id, table_id):
-                    return False
-            else:
-                logging.exception(f"Insert exception attempt {attempt+1}: {e}")
-        if attempt < retries - 1:
-            time.sleep(delay)
-    return False
-
-def delete_table_quiet(client, dataset_id, table_id):
-    try:
-        client.delete_table(f"{dataset_id}.{table_id}")
-        logging.debug(f"Deleted temp table {dataset_id}.{table_id}")
-    except Exception as e:
-        if 'Not found' in str(e):
-            return
-        logging.warning(f"Could not delete temp table {dataset_id}.{table_id}: {e}")
+# -------------- BigQuery helpers (using shared) --------------
 
 # -------------- Jira fetch helpers --------------
 
@@ -487,17 +358,14 @@ def sync_changelog_window(base_url, jql, auth, client, dataset_id, table_id, win
         bigquery.SchemaField('Transitioned_By_Display_Name', 'STRING'),
         bigquery.SchemaField('SyncTime', 'TIMESTAMP'),
     ]
-    # Ensure destination table exists with required columns; add missing columns if legacy schema
-    try:
-        if not table_exists(client, dataset_id, table_id):
-            create_or_replace_table(client, dataset_id, table_id, schema)
-        else:
-            # Add new column if it doesn't exist (SyncTime)
-            client.query(f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS SyncTime TIMESTAMP").result()
-    except Exception as e:
-        logging.warning(f"Could not ensure target table schema: {e}")
+    # Ensure destination table exists with required columns
+    if not table_exists(client, dataset_id, table_id):
+        create_or_replace_table(client, dataset_id, table_id, schema)
+    else:
+        # Add missing columns to existing table
+        ensure_table_columns(client, dataset_id, table_id, [('SyncTime', 'TIMESTAMP')])
 
-    if not create_or_replace_table(client, dataset_id, temp_table, schema) or not wait_for_table(client, dataset_id, temp_table):
+    if not create_or_replace_table(client, dataset_id, temp_table, schema):
         return False, 0
 
     search_url = f"{base_url}/rest/api/3/search/jql"
@@ -592,7 +460,7 @@ def flush_logs(client, dataset_id, log_table):
 # -------------- Main orchestration --------------
 
 def main():
-    config = load_config()
+    config = load_jira_config(_script_dir)
     if not config:
         return
 
@@ -631,14 +499,13 @@ def main():
     if not table_exists(client, dataset_id, progress_table):
         create_or_replace_table(client, dataset_id, progress_table, progress_schema)
     else:
-        # Attempt to add Project column if legacy table exists
-        try:
-            client.query(f"ALTER TABLE `{dataset_id}.{progress_table}` ADD COLUMN IF NOT EXISTS Project STRING").result()
-            client.query(f"ALTER TABLE `{dataset_id}.{progress_table}` ADD COLUMN IF NOT EXISTS RowCount INT64").result()
-            client.query(f"ALTER TABLE `{dataset_id}.{progress_table}` ADD COLUMN IF NOT EXISTS Search429 INT64").result()
-            client.query(f"ALTER TABLE `{dataset_id}.{progress_table}` ADD COLUMN IF NOT EXISTS History429 INT64").result()
-        except Exception:
-            pass
+        # Add missing columns to existing table
+        ensure_table_columns(client, dataset_id, progress_table, [
+            ('Project', 'STRING'),
+            ('RowCount', 'INT64'),
+            ('Search429', 'INT64'),
+            ('History429', 'INT64')
+        ])
 
     # User-specified project list (order determines processing sequence); can be filtered by CLI args
     project_list_default = [
@@ -674,6 +541,7 @@ def main():
         return
     auth = (username, api_token)
 
+    total_rows_merged = 0  # Track total rows merged across all projects/windows
     # Process each project sequentially
     for project in project_list:
         ok, sc, msg = preflight_validate_project(auth, project, jira_url)
@@ -890,6 +758,8 @@ def main():
                     client.query(upd).result()
                     logging.info(f"Project {project} window {ws_naive}->{window_end} {status_final} rows={row_count} 429_search={SEARCH_429_COUNT} 429_history={HISTORY_429_COUNT}")
                     log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level='INFO', message=f'Window {status_final} {project}', status='SUCCESS', window_start=ws_naive.strftime('%Y-%m-%d %H:%M:%S'), window_end=window_end.strftime('%Y-%m-%d %H:%M:%S'), rows_merged=int(row_count))
+                    if status_final in ('complete', 'degraded'):
+                        total_rows_merged += row_count
                     if status_final in ('complete','degraded'):
                         last_completed_start = ws_naive
                     # Dynamic concurrency scaling
@@ -969,7 +839,7 @@ def main():
 
     run_ended = datetime.utcnow()
     duration_seconds = (run_ended - run_started).total_seconds()
-    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level='INFO', message='Pipeline finished (all projects processed)', status='SUCCESS', duration_seconds=duration_seconds)
+    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level='INFO', message='Pipeline finished', status='SUCCESS', rows_merged=total_rows_merged, duration_seconds=duration_seconds)
 
 if __name__ == '__main__':
     main()

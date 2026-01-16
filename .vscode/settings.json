@@ -17,5 +17,25 @@
     "**/.pytest_cache": true,
     "**/.venv": true
   },
-  "terminal.integrated.shellIntegration.enabled": true
+  "terminal.integrated.shellIntegration.enabled": true,
+  "terminal.integrated.shellIntegration.suggestEnabled": true,
+  "terminal.integrated.shellIntegration.decorationsEnabled": "both",
+  "chat.tools.terminal.autoApprove": {
+    "/^docker run --rm --name jira_tickets_initialsync_test jira_tickets_initialsync:latest$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^docker rm -f jira_tickets_initialsync_test 2>\\$null; docker run --rm --name jira_tickets_initialsync_test jira_tickets_initialsync:latest$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^cd \"g:\\\\My Drive\\\\Scripts\" ; docker build --rm -f \"InitialSync/jira_tickets_initialsync/Dockerfile\" -t \"jira_tickets_initialsync:latest\" \\.$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^gcloud functions list --project pccw-internal-virt-agent-uat --format=\"table\\(name,eventTrigger\\.eventType,eventTrigger\\.pubsubTopic\\)\"$/": {
+      "approve": true,
+      "matchCommandLine": true
+    }
+  }
 }

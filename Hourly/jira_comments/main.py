@@ -18,22 +18,14 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import uuid
 from typing import Optional
-from pipeline_runs_logger import log_pipeline_run
 
-"""Logging configuration"""
-# DEBUG flag and LOG_LEVEL override
-DEBUG = str(os.environ.get('DEBUG', '')).lower() in ('1', 'true', 'yes')
-_env_level = os.environ.get('LOG_LEVEL', 'DEBUG' if DEBUG else 'INFO').upper()
-_level = getattr(logging, _env_level, logging.INFO)
+# Import shared helper functions
+from shared.jira_helpers import load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table, delete_temp_table
+from shared.logging_config import setup_root_logging
+from shared.pipeline_runs_logger import log_pipeline_run
 
-# Setup logging (allow LOG_LEVEL to override, default INFO; DEBUG -> DEBUG)
-logging.basicConfig(level=_level, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Quiet noisy third-party loggers when not in DEBUG/when level > INFO
-if _level > logging.INFO:
-    logging.getLogger('google').setLevel(logging.WARNING)
-    logging.getLogger('google.cloud').setLevel(logging.WARNING)
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
+# Setup logging using shared configuration
+setup_root_logging()
 
 # --- Logging Buffer for BigQuery Logs ---
 LOG_BUFFER = []
@@ -47,98 +39,6 @@ def load_config():
     except FileNotFoundError:
         logging.error("config.json not found. Please create it with your Jira API token.")
         return None
-
-def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
-    """Load base JQL from env (BASE_JQL_B64/BASE_JQL/JQL_FILE/PROJECTS_FILE) or ../JQL.txt.
-    Falls back to provided default_text if nothing is found.
-    """
-    # Highest precedence: direct env injection
-    env_b64 = os.environ.get('BASE_JQL_B64')
-    if env_b64:
-        try:
-            import base64
-            decoded = base64.b64decode(env_b64).decode('utf-8').strip()
-            if DEBUG:
-                logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL_B64 env variable")
-            if decoded:
-                return decoded
-        except Exception as e:
-            logging.warning(f"[JQL_LOAD] Failed decoding BASE_JQL_B64: {e}")
-
-    env_text = os.environ.get('BASE_JQL')
-    if env_text and env_text.strip():
-        if DEBUG:
-            logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL env variable")
-        return env_text.strip()
-
-    # No external JQL files: only support env-injected JQL or embedded default_text
-    if DEBUG:
-        logging.info(f"[JQL_LOAD] External JQL file lookup disabled for jira_comments. Using env/base default only.")
-    if default_text:
-        logging.info("Using embedded default base JQL.")
-        return default_text.strip()
-    logging.error("No base JQL found. Provide Hourly/JQL.txt or set JQL_FILE env var.")
-    return None
-
-
-def build_jql(base: str, extra: str, joiner: str = 'AND') -> str:
-    if not base or not base.strip():
-        return extra.strip()
-    b = base.strip()
-    e = extra.strip()
-    b = re.sub(r"(?i)\b(?:AND|OR)\s*$", '', b).rstrip()
-    e = re.sub(r"(?i)^(?:AND|OR)\b", '', e).lstrip()
-    return f"{b} {joiner} {e}"
-
-def convert_timestamp(timestamp):
-    if timestamp:
-        try:
-            # Adjust format string to handle potential lack of milliseconds
-            # Also, ensure timezone offset is handled correctly (e.g., '+0000' or 'Z')
-            # Jira Cloud often returns 'Z' for UTC
-            if timestamp.endswith('Z'):
-                 return datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%fZ').strftime('%Y-%m-%d %H:%M:%S')
-            else: # Try with milliseconds and timezone offset
-                 return datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%f%z').strftime('%Y-%m-%d %H:%M:%S')
-        except ValueError as e:
-            logging.warning(f"Invalid timestamp format: {timestamp}, Error: {e}")
-            # Attempt to parse without milliseconds if the above fails
-            try:
-                if timestamp.endswith('Z'):
-                     return datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d %H:%M:%S')
-                else:
-                     return datetime.strptime(timestamp.rsplit('.', 1)[0] + timestamp.rsplit('.', 1)[1][3:], '%Y-%m-%dT%H:%M:%S%z').strftime('%Y-%m-%d %H:%M:%S')
-            except ValueError as e2:
-                logging.warning(f"Could not parse timestamp after retry: {timestamp}, Error: {e2}")
-                return None
-    return None
-
-
-def create_or_replace_temp_table(client, dataset_id, table_id, schema):
-    try:
-        # Use standard SQL for CREATE OR REPLACE
-        query = f"CREATE OR REPLACE TABLE `{dataset_id}.{table_id}` ({', '.join(f'`{f.name}` {f.field_type}' for f in schema)})"
-        logging.debug(f"Executing query: {query}")
-        client.query(query).result()
-        logging.info(f"Temporary table '{dataset_id}.{table_id}' created or replaced.")
-        return True
-    except Exception as e:
-        logging.exception(f"Error creating or replacing temporary table '{dataset_id}.{table_id}': {e}")
-        return False
-
-def delete_temp_table(client, dataset_id, table_id):
-    table_ref = client.dataset(dataset_id).table(table_id)
-    try:
-        client.delete_table(table_ref)
-        logging.info(f"Temporary table '{dataset_id}.{table_id}' deleted.")
-        return True
-    except Exception as e:
-        # Handle case where table might not exist (e.g., script failed early)
-        if 'Not found' in str(e):
-             logging.warning(f"Temporary table '{dataset_id}.{table_id}' not found during deletion attempt, likely already gone or never created.")
-             return True # Treat as successful deletion if not found
-        logging.exception(f"Error deleting temporary table '{dataset_id}.{table_id}': {e}")
-        return False
 
 def table_exists(client, dataset_id, table_id):
     try:
@@ -588,10 +488,6 @@ def wait_for_streaming_buffer_empty(client, project, dataset, table, max_wait=30
     return False
 
 CHECKPOINT_FILE = "jira_comments_checkpoint.json"
-
-
-
-
 
 # Buffer log entries for batch BigQuery logging
 def log_to_bigquery(client, dataset_id, table_id, pipeline_name, run_id, level, message, function_name=None, batch_id=None, details=None):

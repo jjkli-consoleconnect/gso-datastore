@@ -7,30 +7,18 @@ Enhancements added:
  - Automatic GOOGLE_APPLICATION_CREDENTIALS discovery (service-account.json / jira-bigquery-key.json at repo root)
  - Repository root added to sys.path for reliable shared/ imports
 """
-import argparse, json, logging, time, uuid, requests, random, threading, os, sys, pathlib
-# Ensure repository root is on sys.path for importing local helper modules
-_script_dir = pathlib.Path(__file__).resolve().parent
-_repo_root = str(_script_dir.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
+import argparse, json, logging, time, uuid, requests, random, os
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery
-"""Path setup so 'shared' package imports work when executed from subfolder / container workdir."""
-_script_dir = pathlib.Path(__file__).resolve().parent
-_root_dir = _script_dir.parent.parent  # InitialSync/ -> repo root
-if str(_root_dir) not in sys.path:
-    sys.path.insert(0, str(_root_dir))
 
-# Auto-set GOOGLE_APPLICATION_CREDENTIALS if not already set and a known key exists
-if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
-    for cand in ('service-account.json','jira-bigquery-key.json', 'credentials.json'):
-        p = _repo_root / 'shared' / cand
-        if p.exists():
-            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(p)
-            break
-
+# Setup repository path and credentials
+from shared.jira_helpers import setup_repo_path, load_jira_config, TokenBucket
+from shared.jira_helpers import table_exists, create_or_replace_table, wait_for_table
+from shared.jira_helpers import insert_rows_with_retry, delete_table_quiet, ensure_table_columns
 from shared.pipeline_runs_logger import log_pipeline_run
+
+_script_dir, _repo_root = setup_repo_path(__file__)
 
 DEBUG=False
 # Allow runtime log level override via env (LOG_LEVEL=DEBUG|INFO|WARNING|ERROR)
@@ -57,7 +45,9 @@ default_projects = [
     'Sherbet',
     'Customer Success Management',
     'Operational Case Reviews',
-    'QMS Documentation'
+    'QMS Documentation',
+    'IT Helpdesk',
+    'GS&O Strategic Initiatives'
 ]
 
 # Adaptive thresholds
@@ -97,64 +87,7 @@ _NO429_STREAK=0
 LOG_BUFFER=[]
 PIPELINE_NAME='jira_comments_initialsync'
 
-class TokenBucket:
-    def __init__(self, capacity, refill_per_sec):
-        self.capacity=capacity; self.tokens=capacity; self.refill=refill_per_sec; self.last=time.time(); self.lock=threading.Lock()
-    def take(self, amount=1):
-        while True:
-            with self.lock:
-                now_t=time.time(); elapsed=now_t-self.last
-                if elapsed>0:
-                    add=elapsed*self.refill
-                    if add>0:
-                        self.tokens=min(self.capacity,self.tokens+add); self.last=now_t
-                if self.tokens>=amount:
-                    self.tokens-=amount; return True
-            time.sleep(RATE_MIN_SLEEP)
-
 RATE_LIMITER=TokenBucket(RATE_BUCKET_CAPACITY,RATE_BUCKET_REFILL_PER_SEC)
-
-def load_config():
-    """Load Jira configuration with layered fallback.
-    Order:
-      1. Env var JIRA_CONFIG_JSON (JSON string)
-      2. Local config (same directory)
-      3. Repo root config.json
-      4. Hourly jira_tickets config.json (reuse known-good long token)
-    Returns dict or None.
-    """
-    # 1. Env JSON
-    env_cfg = os.environ.get('JIRA_CONFIG_JSON')
-    if env_cfg:
-        try:
-            data = json.loads(env_cfg)
-            logging.info('Loaded Jira config from JIRA_CONFIG_JSON env var')
-            return data
-        except Exception:
-            logging.warning('Failed to parse JIRA_CONFIG_JSON env var')
-    candidates = []
-    try:
-        candidates.append(str(_script_dir / 'config.json'))
-        candidates.append(str(_root_dir / 'config.json'))
-        candidates.append(str(_root_dir / 'Hourly' / 'jira_tickets' / 'config.json'))
-    except Exception:
-        pass
-    for path in candidates:
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            token = data.get('jira_api_token')
-            if token and len(token) < 40:
-                logging.warning(f'Loaded very short jira_api_token (len={len(token)}) from {path}; may be invalid')
-            else:
-                logging.info(f'Loaded Jira config from {path} (token length {len(token) if token else 0})')
-            return data
-        except Exception as e:
-            logging.debug(f'Could not load config from {path}: {e}')
-    logging.error('No Jira config found in expected locations')
-    return None
 
 def preflight_validate_project(auth, project_name, base_url='https://consoleconnect.atlassian.net'):
     """Run lightweight maxResults=0 search to confirm visibility to project.
@@ -218,45 +151,7 @@ def convert_ts(ts):
             continue
     return None
 
-def create_or_replace_table(client,dataset,table,schema):
-    try:
-        ddl=f"CREATE OR REPLACE TABLE `{dataset}.{table}` ("+','.join(f'`{c.name}` {c.field_type}' for c in schema)+")"; client.query(ddl).result(); return True
-    except Exception as e:
-        logging.exception(f'Create table failed {dataset}.{table}: {e}'); return False
-
-def table_exists(client,dataset,table):
-    try: client.get_table(f"{dataset}.{table}"); return True
-    except Exception: return False
-
-def wait_for_table(client,dataset,table,retries=12,delay=3):
-    for _ in range(retries):
-        if table_exists(client,dataset,table): return True
-        time.sleep(delay)
-    return False
-
-def insert_rows_with_retry(client,dataset,table,rows,schema,retries=6,delay=5):
-    if not rows: return True
-    ref=client.dataset(dataset).table(table)
-    for attempt in range(retries):
-        try:
-            errs=client.insert_rows_json(ref,rows)
-            if not errs: return True
-            logging.error(f'Insert errors {errs}')
-        except Exception as e:
-            msg=str(e)
-            if 'not found' in msg.lower():
-                logging.warning(f"Temp table missing {dataset}.{table}; recreating (attempt {attempt+1})")
-                if not create_or_replace_table(client,dataset,table,schema) or not wait_for_table(client,dataset,table): return False
-                # brief pause to avoid post-DDL streaming race
-                time.sleep(2)
-            else:
-                logging.exception(f'Insert exception: {e}')
-        if attempt<retries-1: time.sleep(delay)
-    return False
-
-def delete_table_quiet(client,dataset,table):
-    try: client.delete_table(f"{dataset}.{table}")
-    except Exception: pass
+# --- BigQuery helpers (now using shared) ---
 
 def fetch_issues_page(search_url,auth,headers,jql,start_at,max_results):
     """Use GET /rest/api/3/search/jql with query params to fetch issues."""
@@ -392,9 +287,9 @@ def sync_window(base_url,jql,auth,client,dataset,table,ws,we):
         ('Issue_Key','STRING'),('Comment_ID','STRING'),('Author_Account_ID','STRING'),('Author_Display_Name','STRING'),('Created','TIMESTAMP'),('Updated','TIMESTAMP'),('Body','STRING'),('Visibility_Type','STRING'),('Visibility_Value','STRING'),('SyncTime','TIMESTAMP')]]
     if not table_exists(client,dataset,table): create_or_replace_table(client,dataset,table,schema)
     else:
-        try: client.query(f"ALTER TABLE `{dataset}.{table}` ADD COLUMN IF NOT EXISTS SyncTime TIMESTAMP").result()
-        except Exception: pass
-    if not create_or_replace_table(client,dataset,temp,schema) or not wait_for_table(client,dataset,temp): return False,0
+        ensure_table_columns(client,dataset,table,[('SyncTime','TIMESTAMP')])
+    if not create_or_replace_table(client,dataset,temp,schema):
+        return False,0
     # Use the GET-based search endpoint preferred by our Jira tenant
     search_url=f"{base_url}/rest/api/3/search/jql"; headers={'Accept':'application/json'}
     start=0; max_results=100; total=float('inf'); buf=[]; batch=1000; inserted=0
@@ -459,7 +354,7 @@ def flush_logs(client,dataset,table):
     return
 
 def main():
-    cfg=load_config();
+    cfg=load_jira_config(_script_dir);
     if not cfg: return
     dataset='GSO'; table='JiraComments'; progress=f'{table}_progress'; pipeline='jira_comments'; run_id=str(uuid.uuid4()); base_days=7
     min_start=datetime(2024,7,1); client=bigquery.Client(); now=datetime.utcnow()
@@ -467,32 +362,8 @@ def main():
     prog_schema=[bigquery.SchemaField(n,t) for n,t in [ ('WindowStart','TIMESTAMP'),('WindowEnd','TIMESTAMP'),('Status','STRING'),('LastRun','TIMESTAMP'),('Projects','STRING'),('Project','STRING'),('RowCount','INT64'),('Search429','INT64'),('Detail429','INT64')]]
     if not table_exists(client,dataset,progress): create_or_replace_table(client,dataset,progress,prog_schema)
     else:
-        for col,ctype in [('Project','STRING'),('RowCount','INT64'),('Search429','INT64'),('Detail429','INT64')]:
-            try: client.query(f"ALTER TABLE `{dataset}.{progress}` ADD COLUMN IF NOT EXISTS {col} {ctype}").result()
-            except Exception: pass
-    default_projects = [
-    'GS&O Data Analytics',
-    'GS&O Tool Automation',
-    'GS&O Knowledge Consolidation',
-    'Google Contact Center AI Solution',
-    'TAC',
-    'VOICE - CE',
-    'IOT CE',
-    'Console Application Support',
-    'Console Connect Provisioning',
-    'Global Service Delivery Team',
-    'Transmission TX-CE',
-    'Mobility SMS - CE',
-    'Managed Security Services',
-    'Sherbet',
-    'Customer Success Management',
-    'Operational Case Reviews',
-    'QMS Documentation',
-    'IT Helpdesk',
-    'GS&O Strategic Initiatives'
-    ]
-    # External file override removed: always use embedded defaults
-    default_projects = load_projects_from_file(default_projects)
+        ensure_table_columns(client,dataset,progress,[('Project','STRING'),('RowCount','INT64'),('Search429','INT64'),('Detail429','INT64')])
+    # Use the embedded default_projects list from top of file
     projects = default_projects
     logging.info('Using embedded default_projects for comments pipeline; CLI and ENV overrides ignored')
     user = os.environ.get('JIRA_USERNAME') or cfg.get('jira_username') or 'jjkli@consoleconnect.com'
@@ -500,6 +371,7 @@ def main():
     if not token:
         logging.error('jira_api_token missing'); return
     auth=(user,token); base_url='https://consoleconnect.atlassian.net'
+    total_rows_merged = 0  # Track total rows merged across all projects/windows
     for proj in projects:
         logging.info(f"Starting backfill for project {proj}")
         ok, sc, msg = preflight_validate_project(auth, proj, base_url)
@@ -628,6 +500,8 @@ def main():
             ); client.query(upd).result()
             logging.info(f"Project {proj} window {ws_naive}->{we} {status} rows={rc} 429_search={SEARCH_429_COUNT} 429_detail={DETAIL_429_COUNT}")
             log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level=("INFO" if SUCCESS else "ERROR"), message=f"Window {status} {proj}", status=("SUCCESS" if SUCCESS else "ERROR"), window_start=ws_naive.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'), rows_merged=int(rc), duration_seconds=window_duration_seconds)
+            if status in ('complete', 'degraded'):
+                total_rows_merged += rc  # Accumulate rows from completed or degraded windows
             if status in ('complete','degraded'):
                 last_completed_start=ws_naive
                 if (SEARCH_429_COUNT>0 or DETAIL_429_COUNT>0):
@@ -661,7 +535,7 @@ def main():
                     break
     run_ended = datetime.utcnow()
     duration_seconds = (run_ended - run_started).total_seconds()
-    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Comments pipeline finished", status="SUCCESS", duration_seconds=duration_seconds)
+    log_pipeline_run(client, pipeline_name=PIPELINE_NAME, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", rows_merged=total_rows_merged, duration_seconds=duration_seconds)
 
 if __name__=='__main__':
     main()

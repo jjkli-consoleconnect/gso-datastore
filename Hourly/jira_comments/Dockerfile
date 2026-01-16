@@ -2,15 +2,13 @@ FROM python:3.11
 
 WORKDIR /app
 
-COPY requirements.txt ./
+COPY Hourly/jira_comments/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
-COPY config.json /app/config.json
-COPY credentials.json /app/credentials.json
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+COPY Hourly/jira_comments . 
+COPY shared /app/shared
 
-RUN ls -l /app && cat /app/config.json
+# Ensure entrypoint is executable
+RUN chmod +x /app/entrypoint.sh
 
 ENTRYPOINT ["/app/entrypoint.sh"]

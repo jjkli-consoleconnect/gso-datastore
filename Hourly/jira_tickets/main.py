@@ -4,47 +4,6 @@ _repo_root = str(_script_dir.parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-# --- Comments-style wait_for_table and insert_rows_with_retry ---
-def table_exists(client, dataset_id, table_id):
-    try:
-        client.get_table(f"{dataset_id}.{table_id}")
-        return True
-    except Exception as e:
-        if 'Not found' in str(e):
-            return False
-        logging.exception(f"Error checking existence of table '{dataset_id}.{table_id}': {e}")
-        return False
-
-def wait_for_table(client, dataset_id, table_id, retries=10, delay=5):
-    for attempt in range(retries):
-        if table_exists(client, dataset_id, table_id):
-            logging.info(f"Table '{dataset_id}.{table_id}' is now available.")
-            return True
-        logging.debug(f"Waiting for table '{dataset_id}.{table_id}'. Attempt {attempt + 1}/{retries}")
-        time.sleep(delay)
-    logging.error(f"Table '{dataset_id}.{table_id}' is not available after {retries} attempts.")
-    return False
-
-def insert_rows_with_retry(client, dataset_id, table_id, rows, schema, retries=5, delay=5):
-    for attempt in range(retries):
-        try:
-            table_ref = client.dataset(dataset_id).table(table_id)
-            errors = client.insert_rows_json(table_ref, rows)
-            if not errors:
-                return True
-            logging.error(f"Errors occurred while inserting rows: {errors}")
-        except Exception as e:
-            if "Not found" in str(e) or "Table is truncated" in str(e):
-                logging.warning(f"Table '{dataset_id}.{table_id}' not found or truncated, retrying...")
-            else:
-                logging.error(f"Error inserting rows: {e}")
-        if attempt < retries - 1:
-            logging.info(f"Retrying insert rows into '{dataset_id}.{table_id}'. Attempt {attempt + 2}/{retries}")
-            time.sleep(delay)
-        else:
-            logging.error(f"Failed to insert rows after {retries} attempts.")
-            return False
-    return False
 import requests
 import random
 import json
@@ -57,21 +16,20 @@ from google.api_core.exceptions import Conflict, NotFound, GoogleAPIError
 import re
 import os
 from typing import Optional
-from pipeline_runs_logger import log_pipeline_run
+
+# Import shared helper functions
+from shared.jira_helpers import (
+    load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table, 
+    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists
+)
+from shared.logging_config import setup_root_logging
+from shared.pipeline_runs_logger import log_pipeline_run
+
+# Setup logging using shared configuration
+setup_root_logging()
 
 # Jitter used when sleeping after 429s
 JITTER_MAX_SECONDS = 0.3
-
-# Logging config with LOG_LEVEL env override; default INFO; DEBUG enables DEBUG
-DEBUG = str(os.environ.get('DEBUG', '')).lower() in ('1', 'true', 'yes')
-_env_level = os.environ.get('LOG_LEVEL', 'DEBUG' if DEBUG else 'INFO').upper()
-_level = getattr(logging, _env_level, logging.INFO)
-logging.basicConfig(level=_level, format='%(asctime)s - %(levelname)s - %(message)s')
-logging.Formatter.converter = time.localtime
-if _level > logging.INFO:
-    logging.getLogger('google').setLevel(logging.WARNING)
-    logging.getLogger('google.cloud').setLevel(logging.WARNING)
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 def load_config():
     try:
@@ -80,61 +38,6 @@ def load_config():
     except FileNotFoundError:
         logging.error("config.json not found. Please create it with your Jira API token.")
         return None
-
-def load_base_jql(default_text: Optional[str] = None) -> Optional[str]:
-    """Load base JQL from env (BASE_JQL_B64/BASE_JQL) or fall back to embedded default_text.
-
-    This loader deliberately avoids reading external files. Preference order:
-    1. BASE_JQL_B64 (base64-encoded JQL)
-    2. BASE_JQL (raw JQL string)
-    3. default_text (embedded project list)
-    """
-    env_b64 = os.environ.get('BASE_JQL_B64')
-    if env_b64:
-        try:
-            import base64
-            decoded = base64.b64decode(env_b64).decode('utf-8').strip()
-            logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL_B64 env variable")
-            if decoded:
-                return decoded
-        except Exception as e:
-            logging.warning(f"[JQL_LOAD] Failed decoding BASE_JQL_B64: {e}")
-
-    env_text = os.environ.get('BASE_JQL')
-    if env_text and env_text.strip():
-        logging.info("[JQL_LOAD] Loaded base JQL from BASE_JQL env variable")
-        return env_text.strip()
-
-    if default_text:
-        logging.info("Using embedded default base JQL.")
-        return default_text.strip()
-
-    logging.error("No base JQL found. Set BASE_JQL or provide a default_text.")
-    return None
-
-
-def build_jql(base: str, extra: str, joiner: str = 'AND') -> str:
-    if not base or not base.strip():
-        return extra.strip()
-    b = base.strip()
-    e = extra.strip()
-    b = re.sub(r"(?i)\b(?:AND|OR)\s*$", '', b).rstrip()
-    e = re.sub(r"(?i)^(?:AND|OR)\b", '', e).lstrip()
-    return f"{b} {joiner} {e}"
-
-def convert_timestamp(timestamp):
-    if timestamp:
-        try:
-            # Primary format with microseconds
-            return datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%S.%f%z').strftime('%Y-%m-%d %H:%M:%S')
-        except ValueError:
-            # Fallback format without microseconds
-            try:
-                return datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%S%z').strftime('%Y-%m-%d %H:%M:%S')
-            except ValueError as e:
-                logging.warning(f"Invalid timestamp format, cannot parse: {timestamp}, Error: {e}")
-                return None
-    return None
 
 def get_field_value(field):
     """Handles various field types, returns a string representation."""
@@ -188,51 +91,6 @@ def extract_issue_links(issuelinks):
                 else:
                     links.append(f"{key}")
     return ', '.join(links) if links else None
-
-
-# --- Comments-style temp table creation ---
-def create_or_replace_temp_table(client, dataset_id, table_id, schema):
-    try:
-        def field_sql(f):
-            # Map BigQuery types to DDL types for ARRAY
-            type_map = {
-                "STRING": "STRING",
-                "FLOAT64": "FLOAT64",
-                "TIMESTAMP": "TIMESTAMP",
-                "BOOL": "BOOL",
-                "INT64": "INT64"
-            }
-            if f.mode == "REPEATED":
-                sql = f"`{f.name}` ARRAY<{type_map.get(f.field_type, f.field_type)}>"
-            else:
-                sql = f"`{f.name}` {type_map.get(f.field_type, f.field_type)}"
-                if f.mode == "REQUIRED":
-                    sql += " NOT NULL"
-            # NULLABLE is default
-            return sql
-        query = f"CREATE OR REPLACE TABLE `{dataset_id}.{table_id}` ({', '.join(field_sql(f) for f in schema)})"
-        logging.debug(f"Executing query: {query}")
-        client.query(query).result()
-        logging.info(f"Temporary table '{dataset_id}.{table_id}' created or replaced.")
-        return True
-    except Exception as e:
-        logging.exception(f"Error creating or replacing temporary table '{dataset_id}.{table_id}': {e}")
-        return False
-
-
-# --- Comments-style temp table deletion ---
-def delete_temp_table(client, dataset_id, table_id):
-    table_ref = client.dataset(dataset_id).table(table_id)
-    try:
-        client.delete_table(table_ref)
-        logging.info(f"Temporary table '{dataset_id}.{table_id}' deleted.")
-        return True
-    except Exception as e:
-        if 'Not found' in str(e):
-            logging.warning(f"Temporary table '{dataset_id}.{table_id}' not found during deletion attempt, likely already gone or never created.")
-            return True
-        logging.exception(f"Error deleting temporary table '{dataset_id}.{table_id}': {e}")
-        return False
 
 
 def fetch_and_sync_jira_data():
@@ -338,8 +196,8 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("Resolved", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("Reporter", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Assignee", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("Component", "STRING", mode="REPEATED"),
-            bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="REPEATED"),
+            bigquery.SchemaField("Component", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
@@ -496,8 +354,8 @@ def fetch_and_sync_jira_data():
                     "Resolved": convert_timestamp(fields.get('resolutiondate')),
                     "Reporter": get_field_value(fields.get('reporter')),
                     "Assignee": get_field_value(fields.get('assignee')),
-                    "Component": [get_field_value(c) for c in fields.get('components', [])] if fields.get('components') else [],
-                    "RemedyTicketNumber": remedy_numbers,
+                    "Component": ', '.join([get_field_value(c) for c in fields.get('components', [])]) if fields.get('components') else None,
+                    "RemedyTicketNumber": ', '.join(remedy_numbers) if remedy_numbers else None,
                     "Links": extract_issue_links(fields.get('issuelinks')),
                     SR_REF_BQ_NAME: get_field_value(fields.get(SR_REF_JIRA_ID)),
                     "Priority": get_field_value(fields.get('priority')),
@@ -627,41 +485,76 @@ def fetch_and_sync_jira_data():
 
         # --- Merge temp table into final table ---
         try:
-            # Fields that should use COALESCE (preserve old value if new is NULL)
-            coalesce_fields = [
-                "T", "Project", "Summary", "Priority", "Resolution", "Created", "Reporter", "Component", "RemedyTicketNumber", "Links", SR_REF_BQ_NAME, "AppSupEscalation", "StoryPoints", "ITHD_Resolution"
-            ]
-            # Fields that should always update (even with NULL) - includes all SLA metrics
-            always_update_fields = [
-                "Status", "Updated", "Resolved", "Assignee", "SyncTime",
-                "TimeToFirstResponse_Elapsed_hrs", "TimeToFirstResponse_Goal_hrs", "TimeToFirstResponse_Breached", "TimeToFirstResponse_Cycles",
-                "TimeToResolve_Elapsed_hrs", "TimeToResolve_Goal_hrs", "TimeToResolve_Breached", "TimeToResolve_Cycles",
-                "TimeToResolution_Elapsed_hrs", "TimeToResolution_Goal_hrs", "TimeToResolution_Breached", "TimeToResolution_Cycles",
-                "TimeToApproveNormalChange_Elapsed_hrs", "TimeToApproveNormalChange_Goal_hrs", "TimeToApproveNormalChange_Breached", "TimeToApproveNormalChange_Cycles",
-                "ProlongCase_Elapsed_hrs", "ProlongCase_Goal_hrs", "ProlongCase_Breached", "ProlongCase_Cycles",
-                "TimeToCloseAfterResolution_Elapsed_hrs", "TimeToCloseAfterResolution_Goal_hrs", "TimeToCloseAfterResolution_Breached", "TimeToCloseAfterResolution_Cycles",
-                "ITHD_TimeToFirstResponse_Elapsed_hrs", "ITHD_TimeToFirstResponse_Goal_hrs", "ITHD_TimeToFirstResponse_Breached", "ITHD_TimeToFirstResponse_Cycles",
-                "ITHD_TimeToResolution_Elapsed_hrs", "ITHD_TimeToResolution_Goal_hrs", "ITHD_TimeToResolution_Breached", "ITHD_TimeToResolution_Cycles",
-                "ITHD_ISMSIncidentResponse_Elapsed_hrs", "ITHD_ISMSIncidentResponse_Goal_hrs", "ITHD_ISMSIncidentResponse_Breached", "ITHD_ISMSIncidentResponse_Cycles",
-                "ITHD_ISMSIncidentResolution_Elapsed_hrs", "ITHD_ISMSIncidentResolution_Goal_hrs", "ITHD_ISMSIncidentResolution_Breached", "ITHD_ISMSIncidentResolution_Cycles",
-            ]
-            all_merge_fields = coalesce_fields + always_update_fields
-            
-            # Build UPDATE SET clause with different logic for different field types
-            update_clauses = []
-            update_clauses.extend([f'T.{f} = COALESCE(S.{f}, T.{f})' for f in coalesce_fields])
-            update_clauses.extend([f'T.{f} = S.{f}' for f in always_update_fields])
-            
+            # Simple MERGE pattern matching InitialSync (dedup by latest Updated, then merge)
             merge_query = f'''
                 MERGE `{dataset_id}.{table_id}` T
-                USING `{dataset_id}.{temp_table_id}` S
+                USING (
+                    SELECT * EXCEPT(rownum) FROM (
+                        SELECT *, ROW_NUMBER() OVER (PARTITION BY Key ORDER BY Updated DESC) AS rownum FROM `{dataset_id}.{temp_table_id}`
+                    ) WHERE rownum = 1
+                ) S
                 ON T.Key = S.Key
-                WHEN MATCHED THEN
-                  UPDATE SET
-                    {', '.join(update_clauses)}
-                WHEN NOT MATCHED THEN
-                  INSERT ({', '.join(all_merge_fields)})
-                  VALUES ({', '.join([f'S.{f}' for f in all_merge_fields])})
+                WHEN MATCHED THEN UPDATE SET
+                    T.T = S.T,
+                    T.Project = S.Project,
+                    T.Summary = S.Summary,
+                    T.Status = S.Status,
+                    T.Priority = S.Priority,
+                    T.Resolution = S.Resolution,
+                    T.Created = S.Created,
+                    T.Updated = S.Updated,
+                    T.Resolved = S.Resolved,
+                    T.Reporter = S.Reporter,
+                    T.Assignee = S.Assignee,
+                    T.Component = IF(S.Component IS NULL, NULL, [S.Component]),
+                    T.RemedyTicketNumber = IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]),
+                    T.Links = S.Links,
+                    T.{SR_REF_BQ_NAME} = S.{SR_REF_BQ_NAME},
+                    T.SyncTime = S.SyncTime,
+                    T.TimeToFirstResponse_Elapsed_hrs = S.TimeToFirstResponse_Elapsed_hrs,
+                    T.TimeToFirstResponse_Goal_hrs = S.TimeToFirstResponse_Goal_hrs,
+                    T.TimeToFirstResponse_Breached = S.TimeToFirstResponse_Breached,
+                    T.TimeToFirstResponse_Cycles = S.TimeToFirstResponse_Cycles,
+                    T.TimeToResolve_Elapsed_hrs = S.TimeToResolve_Elapsed_hrs,
+                    T.TimeToResolve_Goal_hrs = S.TimeToResolve_Goal_hrs,
+                    T.TimeToResolve_Breached = S.TimeToResolve_Breached,
+                    T.TimeToResolve_Cycles = S.TimeToResolve_Cycles,
+                    T.TimeToResolution_Elapsed_hrs = S.TimeToResolution_Elapsed_hrs,
+                    T.TimeToResolution_Goal_hrs = S.TimeToResolution_Goal_hrs,
+                    T.TimeToResolution_Breached = S.TimeToResolution_Breached,
+                    T.TimeToResolution_Cycles = S.TimeToResolution_Cycles,
+                    T.TimeToApproveNormalChange_Elapsed_hrs = S.TimeToApproveNormalChange_Elapsed_hrs,
+                    T.TimeToApproveNormalChange_Goal_hrs = S.TimeToApproveNormalChange_Goal_hrs,
+                    T.TimeToApproveNormalChange_Breached = S.TimeToApproveNormalChange_Breached,
+                    T.TimeToApproveNormalChange_Cycles = S.TimeToApproveNormalChange_Cycles,
+                    T.ProlongCase_Elapsed_hrs = S.ProlongCase_Elapsed_hrs,
+                    T.ProlongCase_Goal_hrs = S.ProlongCase_Goal_hrs,
+                    T.ProlongCase_Breached = S.ProlongCase_Breached,
+                    T.ProlongCase_Cycles = S.ProlongCase_Cycles,
+                    T.TimeToCloseAfterResolution_Elapsed_hrs = S.TimeToCloseAfterResolution_Elapsed_hrs,
+                    T.TimeToCloseAfterResolution_Goal_hrs = S.TimeToCloseAfterResolution_Goal_hrs,
+                    T.TimeToCloseAfterResolution_Breached = S.TimeToCloseAfterResolution_Breached,
+                    T.TimeToCloseAfterResolution_Cycles = S.TimeToCloseAfterResolution_Cycles,
+                    T.AppSupEscalation = S.AppSupEscalation,
+                    T.StoryPoints = S.StoryPoints,
+                    T.ITHD_TimeToFirstResponse_Elapsed_hrs = S.ITHD_TimeToFirstResponse_Elapsed_hrs,
+                    T.ITHD_TimeToFirstResponse_Goal_hrs = S.ITHD_TimeToFirstResponse_Goal_hrs,
+                    T.ITHD_TimeToFirstResponse_Breached = S.ITHD_TimeToFirstResponse_Breached,
+                    T.ITHD_TimeToFirstResponse_Cycles = S.ITHD_TimeToFirstResponse_Cycles,
+                    T.ITHD_TimeToResolution_Elapsed_hrs = S.ITHD_TimeToResolution_Elapsed_hrs,
+                    T.ITHD_TimeToResolution_Goal_hrs = S.ITHD_TimeToResolution_Goal_hrs,
+                    T.ITHD_TimeToResolution_Breached = S.ITHD_TimeToResolution_Breached,
+                    T.ITHD_TimeToResolution_Cycles = S.ITHD_TimeToResolution_Cycles,
+                    T.ITHD_ISMSIncidentResponse_Elapsed_hrs = S.ITHD_ISMSIncidentResponse_Elapsed_hrs,
+                    T.ITHD_ISMSIncidentResponse_Goal_hrs = S.ITHD_ISMSIncidentResponse_Goal_hrs,
+                    T.ITHD_ISMSIncidentResponse_Breached = S.ITHD_ISMSIncidentResponse_Breached,
+                    T.ITHD_ISMSIncidentResponse_Cycles = S.ITHD_ISMSIncidentResponse_Cycles,
+                    T.ITHD_ISMSIncidentResolution_Elapsed_hrs = S.ITHD_ISMSIncidentResolution_Elapsed_hrs,
+                    T.ITHD_ISMSIncidentResolution_Goal_hrs = S.ITHD_ISMSIncidentResolution_Goal_hrs,
+                    T.ITHD_ISMSIncidentResolution_Breached = S.ITHD_ISMSIncidentResolution_Breached,
+                    T.ITHD_ISMSIncidentResolution_Cycles = S.ITHD_ISMSIncidentResolution_Cycles,
+                    T.ITHD_Resolution = S.ITHD_Resolution
+                WHEN NOT MATCHED THEN INSERT (T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, RemedyTicketNumber, Links, {SR_REF_BQ_NAME}, SyncTime, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, AppSupEscalation, StoryPoints, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution) VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.{SR_REF_BQ_NAME}, S.SyncTime, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.AppSupEscalation, S.StoryPoints, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution)
             '''
             client.query(merge_query).result()
             logging.info(f"Merged temp table '{dataset_id}.{temp_table_id}' into '{dataset_id}.{table_id}'.")
