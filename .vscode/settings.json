@@ -36,6 +36,34 @@
     "/^gcloud functions list --project pccw-internal-virt-agent-uat --format=\"table\\(name,eventTrigger\\.eventType,eventTrigger\\.pubsubTopic\\)\"$/": {
       "approve": true,
       "matchCommandLine": true
+    },
+    "/^bq show --transfer_config --location=europe projects/14417857267/locations/europe/transferConfigs/696c2ff4-0000-28c7-85d2-fc41166c49b9 --format=json \\| python3 -c \"import sys, json; config = json\\.load\\(sys\\.stdin\\); print\\(config\\.get\\('params', \\{\\}\\)\\.get\\('query', ''\\)\\[:500\\]\\)\"$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^python3 << 'PYEOF'\nimport json\nimport subprocess\n\n# Read the SQL from the file\nwith open\\('/Users/jensconsoleconnect/Library/CloudStorage/GoogleDrive-jjkli@consoleconnect\\.com/My Drive/Scripts/Temp/CenterOperationsShiftSnapshots_aggregated_scheduled\\.sql', 'r'\\) as f:\n    sql_query = f\\.read\\(\\)\n\n# The three scheduled queries to update\nconfigs = \\[\n    \\{\n        'id': 'projects/14417857267/locations/europe/transferConfigs/696c2ff4-0000-28c7-85d2-fc41166c49b9',\n        'name': 'CenterOps Shift Snapshot Agg 07'\n    \\},\n    \\{\n        'id': 'projects/14417857267/locations/europe/transferConfigs/69635c0d-0000-2c33-93ba-c82add77e608',\n        'name': 'CenterOps Shift Snapshot Agg 15'\n    \\},\n    \\{\n        'id': 'projects/14417857267/locations/europe/transferConfigs/69600e40-0000-29e4-960f-fc41166c9449',\n        'name': 'CenterOps Shift Snapshot Agg 23'\n    \\}\n\\]\n\n# Create the params JSON\nparams = \\{\n    'query': sql_query,\n    'destination_table_name_template': 'CenterOperationsShiftSnapshotsAgg',\n    'write_disposition': 'WRITE_APPEND'\n\\}\n\n# Save params to a file\nwith open\\('/tmp/bq_params\\.json', 'w'\\) as f:\n    json\\.dump\\(params, f\\)\n\nprint\\(\"Parameters saved to /tmp/bq_params\\.json\"\\)\nprint\\(f\"Query length: \\{len\\(sql_query\\)\\} characters\"\\)\n\nfor config in configs:\n    print\\(f\"\\\\nReady to update: \\{config\\['name'\\]\\}\"\\)\n    print\\(f\"Config ID: \\{config\\['id'\\]\\}\"\\)\n\nPYEOF\n$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^cd /Users/jensconsoleconnect/Library/CloudStorage/GoogleDrive-jjkli@consoleconnect\\.com/My\\\\ Drive/Scripts && python3 -c \"\nimport json\n\n# Read the SQL from the file\nwith open\\('Temp/CenterOperationsShiftSnapshots_aggregated_scheduled\\.sql', 'r'\\) as f:\n    sql_query = f\\.read\\(\\)\n\n# Create the params JSON\nparams = \\{\n    'query': sql_query,\n    'destination_table_name_template': 'CenterOperationsShiftSnapshotsAgg',\n    'write_disposition': 'WRITE_APPEND'\n\\}\n\n# Save params to a file\nwith open\\('/tmp/bq_params\\.json', 'w'\\) as f:\n    json\\.dump\\(params, f\\)\n\nprint\\('Parameters saved successfully'\\)\nprint\\(f'Query length: \\{len\\(sql_query\\)\\} characters'\\)\n\"$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^python3 -c \"import json; json\\.dump\\(\\[\\{'mode': 'NULLABLE', 'name': 'Actor_FullName', 'type': 'STRING'\\}, \\{'mode': 'NULLABLE', 'name': 'NOC', 'type': 'STRING'\\}, \\{'mode': 'NULLABLE', 'name': 'CaseType', 'type': 'STRING'\\}, \\{'mode': 'NULLABLE', 'name': 'Status', 'type': 'STRING'\\}, \\{'mode': 'NULLABLE', 'name': 'ShiftSnapshot', 'type': 'STRING'\\}, \\{'mode': 'NULLABLE', 'name': 'Snapshot_Date', 'type': 'DATE'\\}, \\{'mode': 'NULLABLE', 'name': 'Snapshot_Hour', 'type': 'INTEGER'\\}, \\{'mode': 'NULLABLE', 'name': 'Snapshot_DateTime', 'type': 'DATETIME'\\}, \\{'mode': 'NULLABLE', 'name': 'Snapshot_Timestamp', 'type': 'TIMESTAMP'\\}, \\{'mode': 'NULLABLE', 'name': 'DoW', 'type': 'STRING'\\}, \\{'mode': 'NULLABLE', 'name': 'WorkLog_Count', 'type': 'INTEGER'\\}, \\{'mode': 'NULLABLE', 'name': 'Creation_Count', 'type': 'INTEGER'\\}, \\{'mode': 'NULLABLE', 'name': 'Closure_Count', 'type': 'INTEGER'\\}, \\{'mode': 'NULLABLE', 'name': 'WorkLog_Distinct', 'type': 'INTEGER'\\}, \\{'mode': 'NULLABLE', 'name': 'Creation_Tickets', 'type': 'INTEGER'\\}, \\{'mode': 'NULLABLE', 'name': 'Closure_Tickets', 'type': 'INTEGER'\\}, \\{'mode': 'NULLABLE', 'name': 'Tickets_Supported', 'type': 'INTEGER'\\}, \\{'mode': 'NULLABLE', 'name': 'Tickets_List', 'type': 'STRING'\\}, \\{'mode': 'NULLABLE', 'name': 'Ticket_Details', 'type': 'STRING'\\}, \\{'mode': 'NULLABLE', 'name': 'EffortDetails', 'type': 'STRING'\\}\\], open\\('/tmp/schema\\.json', 'w'\\)\\)\"$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^cd \"G:\\\\My Drive\\\\Scripts\\\\CloudFunctions\\\\JiraChangelogs\"; bash deploy\\.sh$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^gcloud functions describe jira-changelogs-sync --region=europe-west2 --project=pccw-internal-virt-agent-uat --gen2 --format=\"value\\(serviceConfig\\.vpcConnector,serviceConfig\\.vpcConnectorEgressSettings\\)\"$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^gcloud scheduler jobs describe jira-tickets-nightly-scheduler --location=europe-west2 --project=pccw-internal-virtual-agent --format='value\\(state,lastExecutionTime,schedule\\)'$/": {
+      "approve": true,
+      "matchCommandLine": true
     }
   }
 }

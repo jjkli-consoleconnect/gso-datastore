@@ -110,6 +110,7 @@ function searchForEmailAndAttachments() {
   let totalAttachmentsLoadedToBigQuery = 0;
   let totalRowsMerged = 0;
   let anyProcessingIssueEncountered = false;
+  let threadsWithGmailSyncDelay = 0; // Track deferred archival due to Gmail sync lag
 
   for (const thread of threads) {
     const threadSubject = thread.getFirstMessageSubject().trim();
@@ -212,7 +213,7 @@ function searchForEmailAndAttachments() {
             }
         } else {
             console.warn(`---> Thread ID: ${thread.getId()} *still* shows unread messages after processing and delay. NOT archiving. It will retry in next run.`);
-            anyProcessingIssueEncountered = true;
+            threadsWithGmailSyncDelay++; // Track as sync delay, not an error
         }
     } else {
         console.warn(`---> Thread ID: ${thread.getId()} NOT fully processed due to errors/unprocessed messages. Keeping "${label}" label for retry.`);
@@ -225,8 +226,11 @@ function searchForEmailAndAttachments() {
   console.log(`Total unique messages with processed CSVs (containing data): ${totalMessagesWithProcessedCSVs}`);
   console.log(`Total CSV attachments loaded to BigQuery: ${totalAttachmentsLoadedToBigQuery}`);
   console.log(`Total rows merged into BigQuery: ${totalRowsMerged}`);
+  if (threadsWithGmailSyncDelay > 0) {
+    console.log(`Threads deferred due to Gmail sync delay (will auto-archive next run): ${threadsWithGmailSyncDelay}`);
+  }
 
-  if (anyProcessingIssueEncountered || totalThreadsArchivedSuccessfully < threads.length) {
+  if (anyProcessingIssueEncountered) {
     const warningBody = `Some emails/threads were not fully processed or had errors during processing.
     \nPlease check Google Apps Script logs for "${scriptName}" for details.`;
     MailApp.sendEmail({
@@ -241,7 +245,7 @@ function searchForEmailAndAttachments() {
   console.log("Data pipeline run complete.");
   // Final SUCCESS log with rows merged = actual BigQuery row count
   if (currentRunId) {
-    logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'Pipeline Finished', null, null, totalRowsMerged, null, null);
+    logPipelineRun(scriptName, currentRunId, 'SUCCESS', 'INFO', 'Pipeline finished', null, null, totalRowsMerged, null, null);
   }
 }
 
@@ -410,6 +414,19 @@ function loadJsonToBigQueryGeneric(jsonFileId, config) {
     const job = BigQuery.Jobs.insert(loadJob, projectId, jsonDataBlob);
     waitForJobCompletion(job);
     console.log("    JSON data successfully loaded to staging.");
+    
+    // Get actual columns from staging table after load
+    const stagingColumns = getTableColumns(config.stagingDatasetId, config.stagingTableId);
+    console.log(`    Detected ${stagingColumns.length} columns in staging table.`);
+    
+    // Ensure target table has all columns from staging
+    ensureTargetTableColumns(config, stagingColumns);
+    
+    // CRITICAL: After schema update attempt, get FRESH list of actual target table columns
+    // This handles the case where some new columns were added, or where additions failed
+    // We need to know what columns are actually available for the merge
+    const actualTargetColumns = getTableColumns(config.targetDatasetId, config.targetTableId);
+    console.log(`    Target table now has ${actualTargetColumns.length} columns available for merge.`);
 
   } catch (error) {
     console.error(`    Error loading JSON to BigQuery staging for ${config.name}: ${error.message}`);
@@ -647,10 +664,37 @@ function extractLikelyIncidentNumbers(text) {
 
 function mergeTablesInBigQueryGeneric(config) {
   try {
+    // Get actual columns from BOTH tables right before merge
+    const stagingColumns = getTableColumns(config.stagingDatasetId, config.stagingTableId);
+    const targetColumns = getTableColumns(config.targetDatasetId, config.targetTableId);
+    
+    console.log(`    Staging table has ${stagingColumns.length} columns, target table has ${targetColumns.length} columns.`);
+    
+    // Build a case-insensitive map of target columns for matching
+    const targetColumnsLower = new Map(targetColumns.map(c => [c.toLowerCase(), c]));
+    
+    // Get all staging columns, using the actual target column name if it exists (case-insensitive)
+    const mergeColumns = stagingColumns.map(col => {
+      const lowerCol = col.toLowerCase();
+      if (targetColumnsLower.has(lowerCol)) {
+        return targetColumnsLower.get(lowerCol); // Use the actual target column name
+      }
+      return null; // Column doesn't exist in target
+    }).filter(col => col !== null); // Remove nulls
+    
+    if (mergeColumns.length < stagingColumns.length) {
+      const missing = stagingColumns.filter(col => {
+        const targetLower = new Set(targetColumns.map(c => c.toLowerCase()));
+        return !targetLower.has(col.toLowerCase());
+      });
+      console.warn(`    Warning: ${missing.length} staging columns not in target: ${missing.join(', ')}`);
+      console.log(`    Will merge ${mergeColumns.length} columns that exist in both tables.`);
+    }
+    
     const primaryKeys = Array.isArray(config.primaryKeyForMerge) ? config.primaryKeyForMerge : [config.primaryKeyForMerge];
     const onClause = primaryKeys.map(pk => `T.${pk} = H.${pk}`).join(" AND ");
 
-    const updateSetClause = config.allColumns
+    const updateSetClause = mergeColumns
       .filter(col => !primaryKeys.includes(col)) 
       .map(col => {
         if (config.timestampFields.includes(col)) {
@@ -660,8 +704,8 @@ function mergeTablesInBigQueryGeneric(config) {
       })
       .join(",\n        ");
 
-    const insertColumns = config.allColumns.join(", ");
-    const insertValues = config.allColumns.map(col => {
+    const insertColumns = mergeColumns.join(", ");
+    const insertValues = mergeColumns.map(col => {
       if (config.timestampFields.includes(col)) {
         return `CAST(H.${col} AS TIMESTAMP)`;
       }
@@ -679,7 +723,7 @@ function mergeTablesInBigQueryGeneric(config) {
         INSERT (${insertColumns}) VALUES (${insertValues});
     `;
 
-    console.log(`    Initiating BigQuery MERGE for ${config.name} into ${config.targetDatasetId}.${config.targetTableId}.`);
+    console.log(`    Initiating BigQuery MERGE for ${config.name} into ${config.targetDatasetId}.${config.targetTableId} (${mergeColumns.length} columns).`);
     const job = BigQuery.Jobs.insert({ configuration: { query: { query, useLegacySql: false } } }, projectId);
     const completedJob = waitForJobCompletion(job);
     
@@ -719,6 +763,102 @@ function waitForJobCompletion(job) {
     throw new Error(`BigQuery job ${jobId} failed: ${job.status.errorResult.message}. Details: \n${errorDetails}`);
   }
   return job;
+}
+
+/**
+ * Get all column names from a BigQuery table
+ */
+function getTableColumns(datasetId, tableId) {
+  try {
+    const table = BigQuery.Tables.get(projectId, datasetId, tableId);
+    const columns = table.schema.fields.map(field => field.name);
+    return columns;
+  } catch (error) {
+    console.error(`Error getting columns from ${datasetId}.${tableId}: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Ensure target table has all columns that exist in staging table
+ * Adds missing columns with appropriate types, one at a time to ensure partial success
+ */
+function ensureTargetTableColumns(config, stagingColumns) {
+  try {
+    // Get FRESH copy of target table right before update (in case it was modified)
+    let targetTable = BigQuery.Tables.get(projectId, config.targetDatasetId, config.targetTableId);
+    let existingColumns = targetTable.schema.fields.map(f => f.name);
+    
+    // Case-insensitive column comparison
+    const existingColumnsLower = new Set(existingColumns.map(c => c.toLowerCase()));
+    const missingColumns = stagingColumns.filter(col => !existingColumnsLower.has(col.toLowerCase()));
+    
+    if (missingColumns.length === 0) {
+      console.log(`    Target table already has all columns.`);
+      return;
+    }
+    
+    console.log(`    Found ${missingColumns.length} new columns to add: ${missingColumns.join(', ')}`);
+    
+    // Get staging table schema to copy field types
+    const stagingTable = BigQuery.Tables.get(projectId, config.stagingDatasetId, config.stagingTableId);
+    const stagingFields = stagingTable.schema.fields;
+    
+    let fieldsAddedCount = 0;
+    let fieldsFailed = [];
+    
+    // Add columns ONE AT A TIME to ensure partial success even if some already exist
+    for (const colName of missingColumns) {
+      try {
+        // Get fresh target table for each column addition
+        targetTable = BigQuery.Tables.get(projectId, config.targetDatasetId, config.targetTableId);
+        existingColumns = targetTable.schema.fields.map(f => f.name);
+        
+        // Case-insensitive check: does this column now exist?
+        const existingLower = new Set(existingColumns.map(c => c.toLowerCase()));
+        if (existingLower.has(colName.toLowerCase())) {
+          console.log(`    Field ${colName} already exists in target (case-insensitive match), skipping.`);
+          continue;
+        }
+        
+        const stagingField = stagingFields.find(f => f.name === colName);
+        const newField = {
+          name: colName,
+          type: stagingField ? stagingField.type : 'STRING',
+          mode: 'NULLABLE'
+        };
+        
+        // Create new schema with just this one field added
+        const updatedSchema = targetTable.schema.fields.slice();
+        updatedSchema.push(newField);
+        
+        targetTable.schema.fields = updatedSchema;
+        BigQuery.Tables.update(targetTable, projectId, config.targetDatasetId, config.targetTableId);
+        console.log(`    Successfully added field ${colName} to target table.`);
+        fieldsAddedCount++;
+        
+      } catch (fieldError) {
+        // If the error is about a field already existing, continue (it was added by another process)
+        if (fieldError.message && fieldError.message.includes('already exists')) {
+          console.log(`    Field ${colName} already exists (concurrent update): ${fieldError.message}. Continuing.`);
+          fieldsAddedCount++; // Count as successful since field exists
+        } else {
+          console.error(`    Failed to add field ${colName}: ${fieldError.message}`);
+          fieldsFailed.push(colName);
+          // Continue to attempt adding remaining fields
+        }
+      }
+    }
+    
+    console.log(`    Field addition complete: ${fieldsAddedCount} fields successfully added or confirmed, ${fieldsFailed.length} failures.`);
+    if (fieldsFailed.length > 0) {
+      console.warn(`    Fields that failed: ${fieldsFailed.join(', ')}`);
+    }
+    
+  } catch (error) {
+    console.error(`Error ensuring target table columns: ${error.message}`);
+    throw error;
+  }
 }
 
 // Centralized PipelineRuns logger using MERGE to align with Python scripts

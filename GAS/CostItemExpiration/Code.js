@@ -1064,7 +1064,6 @@ function resetLastProcessed() {
  * Example: setLastProcessedToDate('2025-12-15') or setLastProcessedToDate('2025-12-15 00:00:00')
  */
 function setLastProcessedToDate(dateString) {
-  dateString = '2025-12-15'
   const targetDate = new Date(dateString);
   if (isNaN(targetDate.getTime())) {
     Logger.log('ERROR: Invalid date string: ' + dateString);

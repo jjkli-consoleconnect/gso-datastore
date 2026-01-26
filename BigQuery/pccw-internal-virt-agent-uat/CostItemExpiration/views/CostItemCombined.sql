@@ -40,7 +40,7 @@ summary AS (
   GROUP BY snapshot_date
 )
 
-SELECT DISTINCT
+SELECT
   fr.snapshot_date,
   CAST(fr.costitemid AS STRING) AS costitemid,
   fr.salesrecord,
@@ -119,4 +119,5 @@ SELECT DISTINCT
   fr.is_top_80
 FROM flagged_rows fr
 JOIN summary s ON fr.snapshot_date = s.snapshot_date
-
+WHERE NOT (fr.expire_type = 'To-be-Expired' 
+  AND fr.snapshot_date < (SELECT MAX(snapshot_date) FROM flagged_rows))

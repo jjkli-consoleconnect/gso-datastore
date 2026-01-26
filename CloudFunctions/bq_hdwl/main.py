@@ -140,6 +140,97 @@ def get_message_attachment(service, message_id: str, attachment_filename: str) -
         return None
 
 
+def get_table_columns(bq_client: bigquery.Client, dataset_id: str, table_id: str) -> List[str]:
+    """Get all column names from a BigQuery table"""
+    try:
+        table_ref = f"{PROJECT_ID}.{dataset_id}.{table_id}"
+        table = bq_client.get_table(table_ref)
+        columns = [field.name for field in table.schema]
+        return columns
+    except Exception as e:
+        logger.error(f"Error getting columns from {dataset_id}.{table_id}: {e}")
+        raise
+
+
+def ensure_target_table_columns(bq_client: bigquery.Client, config: Dict[str, Any], staging_columns: List[str]):
+    """Ensure target table has all columns that exist in staging table. Adds columns one at a time for partial success."""
+    try:
+        target_table_ref = f"{PROJECT_ID}.{config['target_dataset']}.{config['target_table']}"
+        target_table = bq_client.get_table(target_table_ref)
+        existing_columns = [field.name for field in target_table.schema]
+        
+        # Case-insensitive column comparison
+        existing_columns_lower = {col.lower() for col in existing_columns}
+        missing_columns = [col for col in staging_columns if col.lower() not in existing_columns_lower]
+        
+        if not missing_columns:
+            logger.info(f"Target table already has all columns.")
+            return
+        
+        logger.info(f"Found {len(missing_columns)} new columns to add: {', '.join(missing_columns)}")
+        
+        # Get staging table schema to copy field types
+        staging_table_ref = f"{PROJECT_ID}.{config['staging_dataset']}.{config['staging_table']}"
+        staging_table = bq_client.get_table(staging_table_ref)
+        staging_fields = {field.name: field for field in staging_table.schema}
+        
+        fields_added = 0
+        fields_failed = []
+        
+        # Add columns ONE AT A TIME to ensure partial success even if some already exist
+        for col_name in missing_columns:
+            try:
+                # Get fresh target table for each column addition
+                target_table = bq_client.get_table(target_table_ref)
+                existing_columns = [field.name for field in target_table.schema]
+                
+                # Case-insensitive check: does this column now exist?
+                existing_lower = {col.lower() for col in existing_columns}
+                if col_name.lower() in existing_lower:
+                    logger.info(f"Field {col_name} already exists in target (case-insensitive match), skipping.")
+                    continue
+                
+                # Create new schema with just this one field added
+                new_schema = list(target_table.schema)
+                staging_field = staging_fields.get(col_name)
+                if staging_field:
+                    new_field = bigquery.SchemaField(
+                        name=col_name,
+                        field_type=staging_field.field_type,
+                        mode='NULLABLE'
+                    )
+                else:
+                    new_field = bigquery.SchemaField(
+                        name=col_name,
+                        field_type='STRING',
+                        mode='NULLABLE'
+                    )
+                new_schema.append(new_field)
+                
+                target_table.schema = new_schema
+                bq_client.update_table(target_table, ['schema'])
+                logger.info(f"Successfully added field {col_name} to target table.")
+                fields_added += 1
+                
+            except Exception as field_error:
+                # If the error is about a field already existing, continue (it was added by another process)
+                if 'already exists' in str(field_error):
+                    logger.info(f"Field {col_name} already exists (concurrent update): {field_error}. Continuing.")
+                    fields_added += 1  # Count as successful since field exists
+                else:
+                    logger.error(f"Failed to add field {col_name}: {field_error}")
+                    fields_failed.append(col_name)
+                    # Continue to attempt adding remaining fields
+        
+        logger.info(f"Field addition complete: {fields_added} fields successfully added or confirmed, {len(fields_failed)} failures.")
+        if fields_failed:
+            logger.warning(f"Fields that failed: {', '.join(fields_failed)}")
+        
+    except Exception as e:
+        logger.error(f"Error ensuring target table columns: {e}")
+        raise
+
+
 def manage_gmail_labels(service, message_id: str, remove_label_name: str, add_label_name: str):
     """Remove and add labels to Gmail message, and mark as read"""
     try:
@@ -302,19 +393,51 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
         load_job.result()
         logger.info(f"Loaded data to {staging_table_id}")
         
-        # Merge into target table
+        # Get actual columns from staging table after load (dynamic column detection)
+        staging_columns = get_table_columns(bq_client, config['staging_dataset'], config['staging_table'])
+        logger.info(f"Detected {len(staging_columns)} columns in staging table.")
+        
+        # Ensure target table has all columns from staging
+        ensure_target_table_columns(bq_client, config, staging_columns)
+        
+        # Merge into target table using dynamic staging columns with case-insensitive matching
         target_table_id = f"{PROJECT_ID}.{config['target_dataset']}.{config['target_table']}"
+        target_columns = get_table_columns(bq_client, config['target_dataset'], config['target_table'])
         primary_key = config['primary_key']
+        
+        logger.info(f"Staging table has {len(staging_columns)} columns, target table has {len(target_columns)} columns.")
+        
+        # Build a case-insensitive map of target columns for matching
+        target_columns_lower = {col.lower(): col for col in target_columns}
+        
+        # Get all staging columns, using the actual target column name if it exists (case-insensitive)
+        merge_columns = []
+        for col in staging_columns:
+            if col.lower() in target_columns_lower:
+                merge_columns.append(target_columns_lower[col.lower()])  # Use the actual target column name
+        
+        if len(merge_columns) < len(staging_columns):
+            missing = [col for col in staging_columns if col.lower() not in target_columns_lower]
+            logger.warning(f"Warning: {len(missing)} staging columns not in target: {', '.join(missing)}")
+            logger.info(f"Will merge {len(merge_columns)} columns that exist in both tables.")
+        
+        # Build merge query with dynamic columns from staging
+        update_cols = [col for col in merge_columns if col != primary_key]
+        update_set = ','.join([f'T.{col} = H.{col}' for col in update_cols])
+        insert_cols = ','.join(merge_columns)
+        insert_vals = ','.join([f'H.{col}' for col in merge_columns])
         
         merge_query = f"""
         MERGE `{target_table_id}` T
         USING `{staging_table_id}` H
         ON T.{primary_key} = H.{primary_key}
         WHEN MATCHED THEN
-            UPDATE SET {','.join([f'T.{col} = H.{col}' for col in config['all_columns'] if col != primary_key])}
+            UPDATE SET {update_set}
         WHEN NOT MATCHED THEN
-            INSERT ({','.join(config['all_columns'])}) VALUES ({','.join([f'H.{col}' for col in config['all_columns']])})
+            INSERT ({insert_cols}) VALUES ({insert_vals})
         """
+        
+        logger.info(f"Using {len(merge_columns)} columns from staging for merge into {target_table_id}.")
         
         query_config = bigquery.QueryJobConfig(use_legacy_sql=False)
         merge_job = bq_client.query(merge_query, job_config=query_config)

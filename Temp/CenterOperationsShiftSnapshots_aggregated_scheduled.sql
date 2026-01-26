@@ -1,21 +1,21 @@
--- Aggregated shift snapshot (scheduled): per-actor creation, closure, and worklog counts
-WITH boundaries AS (
+-- Hourly snapshot (scheduled): per-actor creation, closure, and worklog counts per hour
+WITH hourly_boundaries AS (
   SELECT TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), DAY) + INTERVAL d DAY + INTERVAL h HOUR AS boundary
-  FROM UNNEST([-1, 0, 1]) AS d
-  CROSS JOIN UNNEST([7, 15, 23]) AS h
+  FROM UNNEST(GENERATE_ARRAY(-1, 1)) AS d  -- Yesterday, today, tomorrow
+  CROSS JOIN UNNEST(GENERATE_ARRAY(0, 23)) AS h  -- All 24 hours
 ),
-shift_window AS (
+hourly_window AS (
   SELECT
-    shift_end,
-    shift_end - INTERVAL 8 HOUR AS shift_start
+    hour_end,
+    hour_end - INTERVAL 1 HOUR AS hour_start
   FROM (
     SELECT (
       SELECT boundary
-      FROM boundaries
+      FROM hourly_boundaries
       WHERE boundary <= CURRENT_TIMESTAMP()
       ORDER BY boundary DESC
       LIMIT 1
-    ) AS shift_end
+    ) AS hour_end
   )
 ),
 base_events AS (
@@ -297,7 +297,10 @@ base_events AS (
       wl.WorkLog_Type AS Work_Log_Type,
       wl.WorkLog_ID,
       wl.WorkLog_Submit_Date,
-      NULLIF(TRIM(hd.Assignee), '') AS Work_Log_Submitter,
+      CASE 
+        WHEN wl.WorkLog_Submitter = 'AR_ESCALATOR' THEN NULLIF(TRIM(hd.Assignee), '')
+        ELSE NULLIF(TRIM(wl.WorkLog_Submitter), '')
+      END AS Work_Log_Submitter,
       wl.Last_Modified_Date AS WorkLog_Last_Modified_Date,
       wl.Last_Modified_By AS WorkLog_Last_Modified_By,
       wl.ExtractedDescription,
@@ -320,8 +323,11 @@ base_events AS (
 enriched AS (
   SELECT
     base_events.*,
-    -- For WorkLog events, force attribution to ticket assignee (even if Work_Log_Submitter is a system name)
-    COALESCE(base_events.Creation_FullName, base_events.Closure_FullName, base_events.Assignee) AS Actor_FullName,
+    -- Normalize name: prefer Creation, then Closure, then WorkLog submitter, then Assignee; strip commas and collapse whitespace
+    TRIM(REGEXP_REPLACE(REGEXP_REPLACE(
+      COALESCE(base_events.Creation_FullName, base_events.Closure_FullName, base_events.Work_Log_Submitter, base_events.Assignee),
+      r",[ ]*", " "
+    ), r"\s+", " ")) AS Actor_FullName,
     CASE WHEN base_events.Event_Type = 'WorkLog' THEN base_events.WorkLog_ID ELSE base_events.Incident_Number END AS Count_Key,
     -- Format effort details: show event type name for creations/closures, or worklog details
     CASE 
@@ -336,14 +342,11 @@ SELECT
   e.NOC,
   e.CaseType,
   e.Status,
-  CASE
-    WHEN EXTRACT(HOUR FROM shift_window.shift_start) = 7 THEN FORMAT_TIMESTAMP('%Y-%m-%d', shift_window.shift_start) || ' - 1 Morning'
-    WHEN EXTRACT(HOUR FROM shift_window.shift_start) = 15 THEN FORMAT_TIMESTAMP('%Y-%m-%d', shift_window.shift_start) || ' - 2 Afternoon'
-    ELSE FORMAT_TIMESTAMP('%Y-%m-%d', shift_window.shift_start) || ' - 3 Evening'
-  END AS ShiftSnapshot,
-  DATE(shift_window.shift_start) AS Snapshot_Date,
-  shift_window.shift_end AS Snapshot_Timestamp,
-  FORMAT_TIMESTAMP('%a', shift_window.shift_start) AS DoW,
+  DATE(hourly_window.hour_start) AS Snapshot_Date,
+  EXTRACT(HOUR FROM hourly_window.hour_start) AS Snapshot_Hour,
+  DATETIME(hourly_window.hour_start) AS Snapshot_DateTime,
+  hourly_window.hour_end AS Snapshot_Timestamp,
+  FORMAT_TIMESTAMP('%a', hourly_window.hour_start) AS DoW,
   COUNTIF(e.Event_Type = 'WorkLog') AS WorkLog_Count,
   COUNTIF(e.Event_Type = 'Creation') AS Creation_Count,
   COUNTIF(e.Event_Type = 'Closure') AS Closure_Count,
@@ -355,7 +358,7 @@ SELECT
   STRING_AGG(DISTINCT CONCAT(e.Incident_Number, ' | ', e.CaseType), '\n' ORDER BY CONCAT(e.Incident_Number, ' | ', e.CaseType)) AS Ticket_Details,
   STRING_AGG(DISTINCT e.EffortDescription, ' | ' ORDER BY e.EffortDescription) AS EffortDetails
 FROM enriched e
-CROSS JOIN shift_window
-WHERE e.Date >= shift_window.shift_start AND e.Date < shift_window.shift_end
-GROUP BY Actor_FullName, NOC, CaseType, Status, ShiftSnapshot, Snapshot_Date, Snapshot_Timestamp, DoW
-ORDER BY ShiftSnapshot, Actor_FullName;
+CROSS JOIN hourly_window
+WHERE e.Date >= hourly_window.hour_start AND e.Date < hourly_window.hour_end
+GROUP BY Actor_FullName, NOC, CaseType, Status, Snapshot_Date, Snapshot_Hour, Snapshot_DateTime, Snapshot_Timestamp, DoW
+ORDER BY Snapshot_DateTime, Actor_FullName;
