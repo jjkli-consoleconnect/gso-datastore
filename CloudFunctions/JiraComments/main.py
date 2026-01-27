@@ -48,11 +48,38 @@ def create_session_with_retries():
     )
     
     # Apply to both http and https
-    adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
+    adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=30, pool_maxsize=30)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     
     return session
+
+
+def insert_rows_resilient(client, dataset_id, temp_table_id, rows, bq_schema, max_attempts=3):
+    """Insert rows with resilience: retry, and recreate temp table if needed."""
+    if not rows:
+        return True
+    for attempt in range(max_attempts):
+        # Try the standard insert with retries
+        if insert_rows_with_retry(client, dataset_id, temp_table_id, rows, bq_schema, retries=5, delay=3):
+            return True
+
+        # If insert failed, check if table exists; if not, recreate and wait
+        try:
+            if not table_exists(client, dataset_id, temp_table_id):
+                logging.warning(f"Temp table missing after failed insert attempt {attempt + 1}/{max_attempts}. Recreating...")
+                if create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
+                    if wait_for_table(client, dataset_id, temp_table_id, retries=15, delay=1):
+                        if insert_rows_with_retry(client, dataset_id, temp_table_id, rows, bq_schema, retries=5, delay=3):
+                            return True
+        except Exception as e:
+            logging.warning(f"Error during resilient insert attempt: {e}")
+
+        if attempt < max_attempts - 1:
+            time.sleep(2 * (1.5 ** attempt))
+
+    logging.error(f"Failed to insert rows after {max_attempts} resilient attempts")
+    return False
 
 
 def send_error_email(error_message, project_id="pccw-internal-virtual-agent"):
@@ -417,9 +444,9 @@ def fetch_and_sync_jira_comments():
         # Create persistent session with connection pooling
         session = create_session_with_retries()
 
-        # Fetch comments in parallel
+        # Fetch comments in parallel (reduced concurrency to avoid connection pool exhaustion)
         issue_key_list = list(issue_keys_total)
-        comments_by_issue = fetch_comments_batch(issue_key_list, username, api_token, session, max_workers=16)
+        comments_by_issue = fetch_comments_batch(issue_key_list, username, api_token, session, max_workers=8)
         
         # Close session to release connections
         session.close()
@@ -433,8 +460,8 @@ def fetch_and_sync_jira_comments():
         logging.info(f"Fetched {comments_count} total comments")
 
         if rows_to_insert:
-            if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, bq_schema, retries=5, delay=5):
-                logging.error("Failed to insert rows into temp table after retries.")
+            if not insert_rows_resilient(client, dataset_id, temp_table_id, rows_to_insert, bq_schema, max_attempts=4):
+                logging.error("Failed to insert rows into temp table after resilient attempts.")
                 delete_temp_table(client, dataset_id, temp_table_id)
                 return
 

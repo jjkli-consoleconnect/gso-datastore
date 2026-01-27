@@ -14,6 +14,7 @@ function New-BqsDirectory($p) { if (!(Test-Path $p)) { New-Item -ItemType Direct
 
 function BqRun([string]$bqArgs) {
   $cmd = "bq $bqArgs"
+  Write-Host "Running: $cmd"
   $out = & cmd /c $cmd 2>&1
   if ($LASTEXITCODE -ne 0) { throw "bq failed: $out" }
   return $out -join "`n"
@@ -56,7 +57,8 @@ foreach ($project in $projects) {
           $json = @{ view = @{ query = $sql; useLegacySql = $false } } | ConvertTo-Json -Depth 5
           $json | Out-File -Encoding utf8 $tmp
           try {
-            BqRun ("update --project_id={0} {1} --source=`"{2}`" {3}:{4}.{5}" -f $project, $locFlag.Trim(), $tmp, $project, $dataset, $name)
+            $viewSql = $sql -replace "'", "''"
+            BqRun (("update --project_id={0} {1} --view='{2}' {3}.{4}") -f $project, $locFlag.Trim(), $viewSql, $dataset, $name)
             Write-Host "Updated view: ${project}:${dataset}.$name"
           } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
         }
@@ -74,7 +76,8 @@ foreach ($project in $projects) {
           $json = @{ materializedView = @{ query = $sql } } | ConvertTo-Json -Depth 5
           $json | Out-File -Encoding utf8 $tmp
           try {
-            BqRun ("update --project_id={0} {1} --source=`"{2}`" {3}:{4}.{5}" -f $project, $locFlag.Trim(), $tmp, $project, $dataset, $name)
+            $mvSql = $sql -replace "'", "''"
+            BqRun (("update --project_id={0} {1} --materialized_view='{2}' {3}.{4}") -f $project, $locFlag.Trim(), $mvSql, $dataset, $name)
             Write-Host "Updated materialized view: ${project}:${dataset}.$name"
           } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
         }

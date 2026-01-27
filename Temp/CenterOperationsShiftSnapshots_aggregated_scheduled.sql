@@ -1,6 +1,6 @@
 -- Hourly snapshot (scheduled): per-actor creation, closure, and worklog counts per hour
 WITH hourly_boundaries AS (
-  SELECT TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), DAY) + INTERVAL d DAY + INTERVAL h HOUR AS boundary
+  SELECT TIMESTAMP_ADD(TIMESTAMP_ADD(TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), DAY), INTERVAL d DAY), INTERVAL h HOUR) AS boundary
   FROM UNNEST(GENERATE_ARRAY(-1, 1)) AS d  -- Yesterday, today, tomorrow
   CROSS JOIN UNNEST(GENERATE_ARRAY(0, 23)) AS h  -- All 24 hours
 ),
@@ -104,10 +104,10 @@ base_events AS (
       hd.ProductDescription,
       hd.GSMP_Circuit_ID,
       CASE
-        WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 0 AND 5 THEN FORMAT_TIMESTAMP('%Y-%m-%d', TIMESTAMP_SUB(hd.Submit_Date, INTERVAL 1 DAY)) || ' - 3 Evening'
-        WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 6 AND 13 THEN FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date) || ' - 1 Morning'
-        WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 14 AND 21 THEN FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date) || ' - 2 Afternoon'
-        ELSE FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date) || ' - 3 Evening'
+        WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 0 AND 5 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', TIMESTAMP_SUB(hd.Submit_Date, INTERVAL 1 DAY)), ' - 3 Evening')
+        WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 6 AND 13 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date), ' - 1 Morning')
+        WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 14 AND 21 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date), ' - 2 Afternoon')
+        ELSE CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date), ' - 3 Evening')
       END AS Shift,
       hd.Submit_Date AS Date
     FROM `GSO.HelpDeskAllNOC` AS hd
@@ -200,10 +200,10 @@ base_events AS (
       hd.GSMP_Circuit_ID,
       NULLIF(TRIM(hd.Closed_By), '') AS Closure_FullName,
       CASE
-        WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 0 AND 5 THEN FORMAT_TIMESTAMP('%Y-%m-%d', TIMESTAMP_SUB(hd.Closed_Date, INTERVAL 1 DAY)) || ' - 3 Evening'
-        WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 6 AND 13 THEN FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date) || ' - 1 Morning'
-        WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 14 AND 21 THEN FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date) || ' - 2 Afternoon'
-        ELSE FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date) || ' - 3 Evening'
+        WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 0 AND 5 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', TIMESTAMP_SUB(hd.Closed_Date, INTERVAL 1 DAY)), ' - 3 Evening')
+        WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 6 AND 13 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date), ' - 1 Morning')
+        WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 14 AND 21 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date), ' - 2 Afternoon')
+        ELSE CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date), ' - 3 Evening')
       END AS Shift,
       hd.Closed_Date AS Date
     FROM `GSO.HelpDeskAllNOC` AS hd
@@ -306,10 +306,10 @@ base_events AS (
       wl.ExtractedDescription,
       wl.inserted_at,
       CASE
-        WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 0 AND 5 THEN FORMAT_TIMESTAMP('%Y-%m-%d', TIMESTAMP_SUB(wl.WorkLog_Submit_Date, INTERVAL 1 DAY)) || ' - 3 Evening'
-        WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 6 AND 13 THEN FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date) || ' - 1 Morning'
-        WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 14 AND 21 THEN FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date) || ' - 2 Afternoon'
-        ELSE FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date) || ' - 3 Evening'
+        WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 0 AND 5 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', TIMESTAMP_SUB(wl.WorkLog_Submit_Date, INTERVAL 1 DAY)), ' - 3 Evening')
+        WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 6 AND 13 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date), ' - 1 Morning')
+        WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 14 AND 21 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date), ' - 2 Afternoon')
+        ELSE CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date), ' - 3 Evening')
       END AS Shift,
       wl.WorkLog_Submit_Date AS Date
     FROM `GSO.WorkLogAllNOC` AS wl
