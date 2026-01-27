@@ -303,7 +303,7 @@ def fetch_and_sync_jira_tickets_nightly():
             headers = {"Accept": "application/json", "Content-Type": "application/json"}
             auth = (username, api_token)
             try:
-                issue_resp = requests.get(issue_url, headers=headers, auth=auth, timeout=60)
+                issue_resp = requests.get(issue_url, headers=headers, auth=auth, timeout=30)
                 issue_resp.raise_for_status()
                 full_issue = issue_resp.json()
                 fields = full_issue.get('fields', {})
@@ -331,11 +331,19 @@ def fetch_and_sync_jira_tickets_nightly():
                 return None
 
         total_rows_merged = 0
+        # Use single temp table with run_id suffix for all projects
+        temp_table_id_run = f"{temp_table_id}_{run_id.replace('-', '_')[:8]}"
+        
+        # Create temp table once for all projects
+        if not create_or_replace_temp_table(client, dataset_id, temp_table_id_run, bq_schema):
+            logging.error("Failed to create temp table for run.")
+            raise Exception("Could not create temp table")
+        if not wait_for_table(client, dataset_id, temp_table_id_run, retries=30, delay=2):
+            logging.error("Temp table not available after extended wait.")
+            raise Exception("Temp table not available")
+        
         for proj in projects:
             logging.info(f"Starting nightly window selection for project {proj}")
-            # Use unique temp table per project to avoid any potential conflicts
-            proj_safe = proj.replace(' ', '_').replace('&', 'and').replace('-', '_')
-            temp_table_id_proj = f"{temp_table_id}_{proj_safe}"
             
             while True:
                 ws, we = select_window(client, dataset_id, progress_table_id, proj, base_days=1)
@@ -369,22 +377,12 @@ def fetch_and_sync_jira_tickets_nightly():
                 rows_to_insert = []
                 issue_keys_total = set()
 
-                if not create_or_replace_temp_table(client, dataset_id, temp_table_id_proj, bq_schema):
-                    logging.error("Setup failed: Could not create temp table.")
-                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=0)
-                    break
-                # Wait longer for table to be available (30 retries * 2s = 60s max)
-                if not wait_for_table(client, dataset_id, temp_table_id_proj, retries=30, delay=2):
-                    logging.error("Setup failed: Temp table not available after extended wait.")
-                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=0)
-                    break
-
                 def search_issue_keys(jql: str, label: str):
                     headers_local = {'Accept': 'application/json'}
                     params_local = {'jql': jql, 'startAt': 0, 'maxResults': 100, 'fields': 'key'}
                     auth_local = (username, api_token)
                     try:
-                        resp = requests.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=60)
+                        resp = requests.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=30)
                         if resp.status_code == 429:
                             ra = int(resp.headers.get('Retry-After', 30) or 30)
                             logging.warning(f"429 {label} search; sleeping {ra}s")
@@ -421,9 +419,8 @@ def fetch_and_sync_jira_tickets_nightly():
                     logging.info(f"Detail fetched batch {i // BULK_FETCH_SIZE + 1}; cumulative rows={len(rows_to_insert)}")
 
                 if rows_to_insert:
-                    if not insert_rows_resilient(client, dataset_id, temp_table_id_proj, rows_to_insert, bq_schema):
+                    if not insert_rows_resilient(client, dataset_id, temp_table_id_run, rows_to_insert, bq_schema):
                         logging.error("Failed to insert rows into temp table after retries.")
-                        delete_temp_table(client, dataset_id, temp_table_id_proj)
                         mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=len(rows_to_insert))
                         break
 
@@ -432,8 +429,8 @@ def fetch_and_sync_jira_tickets_nightly():
                         MERGE `{dataset_id}.{table_id}` T
                         USING (
                             SELECT * EXCEPT(rownum) FROM (
-                                SELECT *, ROW_NUMBER() OVER (PARTITION BY Key ORDER BY Updated DESC) AS rownum FROM `{dataset_id}.{temp_table_id_proj}`
-                            ) WHERE rownum = 1
+                                SELECT *, ROW_NUMBER() OVER (PARTITION BY Key ORDER BY Updated DESC) AS rownum FROM `{dataset_id}.{temp_table_id_run}`
+                            ) WHERE rownum = 1 AND Project = '{proj}'
                         ) S
                         ON T.Key = S.Key
                         WHEN MATCHED THEN UPDATE SET
@@ -459,8 +456,6 @@ def fetch_and_sync_jira_tickets_nightly():
                 except Exception as e:
                     logging.error(f"Error merging temp table: {e}")
 
-                delete_temp_table(client, dataset_id, temp_table_id_proj)
-
                 run_ended = datetime.now(timezone.utc)
                 duration_seconds = (run_ended - run_started).total_seconds()
                 total_rows_merged += len(rows_to_insert)
@@ -479,6 +474,9 @@ def fetch_and_sync_jira_tickets_nightly():
                 )
                 # Move to next window for this project
 
+        # Clean up temp table after all projects processed
+        delete_temp_table(client, dataset_id, temp_table_id_run)
+        
         run_ended = datetime.now(timezone.utc)
         duration_seconds = (run_ended - run_started).total_seconds()
 

@@ -233,13 +233,13 @@ def fetch_and_sync_jira_comments_nightly():
     username = config.get('jira_user')
     api_token = config.get('jira_api_token')
 
+    run_id = str(uuid.uuid4())
     table_id = 'JiraComments'
     temp_table_id = 'JiraComments_temp'
+    temp_table_id_run = f"{temp_table_id}_{run_id[:8]}"
     progress_table_id = 'JiraComments_progress'
     dataset_id = 'GSO'
     pipeline_name = "GCP - JiraCommentsNightly"
-
-    run_id = str(uuid.uuid4())
     client = None
 
     try:
@@ -280,7 +280,7 @@ def fetch_and_sync_jira_comments_nightly():
             while start_at < total:
                 try:
                     params = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
-                    resp = requests.get(search_url, headers=headers, auth=(username, api_token), params=params, timeout=60)
+                    resp = requests.get(search_url, headers=headers, auth=(username, api_token), params=params, timeout=30)
                     if resp.status_code == 429:
                         ra = int(resp.headers.get('Retry-After', 30) or 30)
                         sleep_for = ra + random.uniform(0, JITTER_MAX_SECONDS)
@@ -308,7 +308,7 @@ def fetch_and_sync_jira_comments_nightly():
             attempts = 0
             while True:
                 try:
-                    r = requests.get(url, auth=(username, api_token), params={'startAt': start, 'maxResults': size}, timeout=120)
+                    r = requests.get(url, auth=(username, api_token), params={'startAt': start, 'maxResults': size}, timeout=60)
                     if r.status_code == 429:
                         ra = int(r.headers.get('Retry-After', 10) or 10)
                         sleep_for = ra + random.uniform(0, JITTER_MAX_SECONDS)
@@ -367,10 +367,17 @@ def fetch_and_sync_jira_comments_nightly():
                     }
 
         total_rows = 0
+
+        if not create_or_replace_temp_table(client, dataset_id, temp_table_id_run, bq_schema):
+            logging.error("Setup failed: Could not create run-scoped temp table.")
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Temp table create failed", status="ERROR")
+            return
+        if not wait_for_table(client, dataset_id, temp_table_id_run, retries=30, delay=2):
+            logging.error("Setup failed: Temp table not available after create.")
+            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Temp table wait failed", status="ERROR")
+            return
         for proj in projects:
             logging.info(f"Starting nightly window selection for project {proj}")
-            proj_safe = proj.replace(' ', '_').replace('&', 'and').replace('-', '_')
-            temp_table_id_proj = f"{temp_table_id}_{proj_safe}"
             while True:
                 ws, we = select_window(client, dataset_id, progress_table_id, proj, base_days=1)
                 if not ws or not we:
@@ -389,16 +396,6 @@ def fetch_and_sync_jira_comments_nightly():
                 logging.info(f"JQL (comments nightly window): {jql_window}")
 
                 window_failed = False
-                if not create_or_replace_temp_table(client, dataset_id, temp_table_id_proj, bq_schema):
-                    logging.error("Setup failed: Could not create temp table.")
-                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=0)
-                    window_failed = True
-                if not window_failed and not wait_for_table(client, dataset_id, temp_table_id_proj, retries=30, delay=2):
-                    logging.error("Setup failed: Temp table not available.")
-                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=0)
-                    window_failed = True
-                if window_failed:
-                    break
 
                 issue_keys = fetch_issue_keys_paginated(jql_window)
                 logging.info(f"Issue keys fetched for comments: {len(issue_keys)}")
@@ -409,8 +406,7 @@ def fetch_and_sync_jira_comments_nightly():
                 for row in generate_rows(issue_keys, ws, we):
                     rows_to_insert.append(row)
                     if len(rows_to_insert) >= batch:
-                        if not insert_rows_resilient(client, dataset_id, temp_table_id_proj, rows_to_insert, bq_schema):
-                            delete_temp_table(client, dataset_id, temp_table_id_proj)
+                        if not insert_rows_resilient(client, dataset_id, temp_table_id_run, rows_to_insert, bq_schema):
                             mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=len(rows_to_insert))
                             window_failed = True
                             break
@@ -418,11 +414,9 @@ def fetch_and_sync_jira_comments_nightly():
                         total_rows += len(rows_to_insert)
                         rows_to_insert = []
                 if window_failed:
-                    delete_temp_table(client, dataset_id, temp_table_id_proj)
                     break
                 if rows_to_insert:
-                    if not insert_rows_resilient(client, dataset_id, temp_table_id_proj, rows_to_insert, bq_schema):
-                        delete_temp_table(client, dataset_id, temp_table_id_proj)
+                    if not insert_rows_resilient(client, dataset_id, temp_table_id_run, rows_to_insert, bq_schema):
                         mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=len(rows_to_insert))
                         window_failed = True
                     if window_failed:
@@ -434,7 +428,7 @@ def fetch_and_sync_jira_comments_nightly():
                     break
 
                 merge = f"""
-                  MERGE `{dataset_id}.{table_id}` T USING (SELECT DISTINCT * FROM `{dataset_id}.{temp_table_id_proj}`) S
+                                    MERGE `{dataset_id}.{table_id}` T USING (SELECT DISTINCT * FROM `{dataset_id}.{temp_table_id_run}`) S
                   ON T.Comment_ID=S.Comment_ID AND T.Updated=S.Updated
                   WHEN MATCHED THEN UPDATE SET T.Issue_Key=S.Issue_Key,T.Author_Account_ID=S.Author_Account_ID,T.Author_Display_Name=S.Author_Display_Name,T.Created=S.Created,T.Body=S.Body,T.Visibility_Type=S.Visibility_Type,T.Visibility_Value=S.Visibility_Value,T.SyncTime=S.SyncTime
                   WHEN NOT MATCHED THEN INSERT (Issue_Key,Comment_ID,Author_Account_ID,Author_Display_Name,Created,Updated,Body,Visibility_Type,Visibility_Value,SyncTime)
@@ -444,11 +438,13 @@ def fetch_and_sync_jira_comments_nightly():
                     client.query(merge).result()
                     logging.info("Merged comments temp table into final table.")
                     mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'complete', row_count=rows_this_window)
+                    try:
+                        client.query(f"TRUNCATE TABLE `{dataset_id}.{temp_table_id_run}`").result()
+                    except Exception as truncate_err:
+                        logging.warning(f"Failed to truncate temp table after merge: {truncate_err}")
                 except Exception as e:
                     logging.error(f"Merge failed: {e}")
                     mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=rows_this_window)
-
-                delete_temp_table(client, dataset_id, temp_table_id_proj)
 
                 run_ended = datetime.now(timezone.utc)
                 duration_seconds = (run_ended - run_started).total_seconds()
@@ -463,6 +459,12 @@ def fetch_and_sync_jira_comments_nightly():
         duration_seconds = (run_ended - run_started).total_seconds()
         log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Exception: {e}", status="ERROR", error_code=getattr(e, "code", None), duration_seconds=duration_seconds)
         raise
+    finally:
+        try:
+            if client:
+                delete_temp_table(client, dataset_id, temp_table_id_run)
+        except Exception as cleanup_err:
+            logging.warning(f"Failed to cleanup temp table {temp_table_id_run}: {cleanup_err}")
 
 
 @functions_framework.http

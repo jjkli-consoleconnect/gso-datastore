@@ -23,8 +23,8 @@ Write-Host "Deploying $FUNC_NAME to project $PROJECT region $REGION"
   --source . `
   --entry-point main `
   --trigger-http `
-  --timeout 540s `
-  --memory 1024Mi `
+  --timeout 3600s `
+  --memory 2048Mi `
   --max-instances 5 `
   --vpc-connector "projects/$PROJECT/locations/$REGION/connectors/$CONNECTOR" `
   --egress-settings all `

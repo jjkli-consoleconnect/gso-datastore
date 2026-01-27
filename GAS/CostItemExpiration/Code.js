@@ -8,7 +8,19 @@ function deriveSchemaFromSample(headers, sampleRow) {
     const name = headers[i] || ('col_' + i);
     const val = sampleRow && sampleRow[name];
     let type = 'STRING';
-    if (val instanceof Date) type = 'DATE';
+    const lowerName = String(name).toLowerCase();
+    
+    // Smart type detection
+    if (lowerName.includes('date')) {
+      type = 'STRING'; // Store as STRING initially to avoid parsing errors; will cast in merge
+    } else if (lowerName === 'costitemid' || lowerName === 'cost_item_id') {
+      type = 'STRING'; // Merge keys should be STRING
+    } else if (val instanceof Date) {
+      type = 'DATE';
+    } else if (typeof val === 'number') {
+      type = 'FLOAT64';
+    }
+    
     fields.push({ name: name, type: type });
   }
   return fields;
@@ -336,15 +348,27 @@ function processAndMergeFiles(files, targetTableId) {
   const schemaFields = commonHeaders.map(h => {
     const v = sampleRow[h];
     let type = 'STRING';
-    // Force certain columns to always be STRING to avoid type conflicts
     const lowerH = h.toLowerCase();
-    if (lowerH === 'org_costitemid' || lowerH === 'org_costitemcreatedate') {
+    
+    // Determine column type based on column name patterns and value inspection
+    if (lowerH.includes('date')) {
+      // Any column with 'date' in the name should be DATE type
+      if (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+        type = 'DATE';
+      } else {
+        type = 'STRING'; // Keep as STRING to avoid parsing errors, will be cast in MERGE
+      }
+    } else if (lowerH === 'costitemid' || lowerH === 'cost_item_id') {
+      // Merge keys should be STRING to avoid type mismatches
       type = 'STRING';
-    } else if (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
-      type = 'DATE';
     } else if (typeof v === 'number') {
+      // Numeric values: use FLOAT64 for flexibility
       type = 'FLOAT64';
+    } else if (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+      // Value looks like a date
+      type = 'DATE';
     }
+    
     return { name: h, type: type };
   });
 
@@ -425,15 +449,27 @@ function processAndMergeToBeExpired(file, targetTableId) {
   const schemaFields = Object.keys(sampleRow).map(k => {
     const v = sampleRow[k];
     let type = 'STRING';
-    // Force certain columns to always be STRING to avoid type conflicts
     const lowerK = k.toLowerCase();
-    if (lowerK === 'org_costitemid' || lowerK === 'org_costitemcreatedate') {
+    
+    // Determine column type based on column name patterns and value inspection
+    if (lowerK.includes('date')) {
+      // Any column with 'date' in the name should be DATE type
+      if (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+        type = 'DATE';
+      } else {
+        type = 'STRING'; // Keep as STRING to avoid parsing errors, will be cast in MERGE
+      }
+    } else if (lowerK === 'costitemid' || lowerK === 'cost_item_id') {
+      // Merge keys should be STRING to avoid type mismatches
       type = 'STRING';
-    } else if (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
-      type = 'DATE';
     } else if (typeof v === 'number') {
+      // Numeric values: use FLOAT64 for flexibility
       type = 'FLOAT64';
+    } else if (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+      // Value looks like a date
+      type = 'DATE';
     }
+    
     return { name: k, type: type };
   });
 
@@ -570,13 +606,17 @@ function runMergeFromStaging(projectId, datasetId, stagingTable, targetTable, me
 
   const colsList = stagingFields.map(f => `\`${f.name}\``).join(', ');
 
-  // Build ON clause
+  // Build ON clause with proper type casting to ensure both sides are comparable
   let onClause;
   if (mergeKey && stagingFields.some(f => f.name.toLowerCase() === mergeKey.toLowerCase())) {
-    onClause = `T.${mergeKey} = S.${mergeKey}`;
+    // Get the target type for the merge key to ensure safe casting
+    const targetMergeKeyType = targetTypeMap[mergeKey.toLowerCase()] || 'STRING';
+    // Cast both sides to STRING for safe comparison (handles INT64 vs STRING mismatch)
+    onClause = `CAST(T.${mergeKey} AS STRING) = CAST(S.${mergeKey} AS STRING)`;
     // Special case for expired_cost_items: include snapshot_date in ON clause to handle multiple snapshots per costitemid
     if (targetTable.toLowerCase() === 'expired_cost_items' && mergeKey.toLowerCase() === 'costitemid' && stagingFields.some(f => f.name.toLowerCase() === 'snapshot_date')) {
-      onClause += ` AND T.snapshot_date = S.snapshot_date`;
+      // Also cast snapshot_date to STRING for safe comparison
+      onClause += ` AND CAST(T.snapshot_date AS STRING) = CAST(S.snapshot_date AS STRING)`;
     }
   } else {
     const pairs = stagingFields.map(f => `COALESCE(CAST(T.${f.name} AS STRING),'') = COALESCE(CAST(S.${f.name} AS STRING),'')`);
@@ -587,14 +627,50 @@ function runMergeFromStaging(projectId, datasetId, stagingTable, targetTable, me
   const updateAssignments = stagingFields.map(f => {
     const tname = f.name;
     const targetType = targetTypeMap[tname.toLowerCase()] || 'STRING';
-    if (targetType === 'STRING') return `T.${tname} = S.${tname}`;
+    const stagingType = normalizeBqType(f.type || 'STRING');
+    
+    // If target is STRING, always cast source to STRING for safety
+    if (targetType === 'STRING') {
+      return `T.${tname} = CAST(S.${tname} AS STRING)`;
+    }
+    // If target is DATE and source isn't, cast to DATE
+    if (targetType === 'DATE' && stagingType !== 'DATE') {
+      return `T.${tname} = SAFE_CAST(S.${tname} AS DATE)`;
+    }
+    // If target and source types match or source is numeric going to numeric, cast to target
+    if (targetType === stagingType || (targetType === 'FLOAT64' && stagingType === 'INT64')) {
+      return `T.${tname} = SAFE_CAST(S.${tname} AS ${targetType})`;
+    }
+    // For INT64 targets from numeric sources, use SAFE_CAST
+    if (targetType === 'INT64' && (stagingType === 'FLOAT64' || stagingType === 'STRING')) {
+      return `T.${tname} = SAFE_CAST(S.${tname} AS INT64)`;
+    }
+    // Default: cast to target type
     return `T.${tname} = SAFE_CAST(S.${tname} AS ${targetType})`;
   }).join(', ');
 
   const insertValues = stagingFields.map(f => {
     const tname = f.name;
     const targetType = targetTypeMap[tname.toLowerCase()] || 'STRING';
-    if (targetType === 'STRING') return `S.${tname}`;
+    const stagingType = normalizeBqType(f.type || 'STRING');
+    
+    // If target is STRING, always cast source to STRING for safety
+    if (targetType === 'STRING') {
+      return `CAST(S.${tname} AS STRING)`;
+    }
+    // If target is DATE and source isn't, cast to DATE
+    if (targetType === 'DATE' && stagingType !== 'DATE') {
+      return `SAFE_CAST(S.${tname} AS DATE)`;
+    }
+    // If target and source types match or source is numeric going to numeric, cast to target
+    if (targetType === stagingType || (targetType === 'FLOAT64' && stagingType === 'INT64')) {
+      return `SAFE_CAST(S.${tname} AS ${targetType})`;
+    }
+    // For INT64 targets from numeric sources, use SAFE_CAST
+    if (targetType === 'INT64' && (stagingType === 'FLOAT64' || stagingType === 'STRING')) {
+      return `SAFE_CAST(S.${tname} AS INT64)`;
+    }
+    // Default: cast to target type
     return `SAFE_CAST(S.${tname} AS ${targetType})`;
   }).join(', ');
 
@@ -744,14 +820,28 @@ function normalizeBqType(t) {
 
 /**
  * Ensure BigQuery table exists and has the provided fields. Adds missing columns as STRING by default.
+ * Smart type handling: if target column exists with different type, log warning but don't fail.
  */
 function ensureTableSchema(projectId, datasetId, tableId, fields) {
   try {
     const table = BigQuery.Tables.get(projectId, datasetId, tableId);
     const existing = (table.schema && table.schema.fields) || [];
     const existingNames = existing.map(f => String(f.name).toLowerCase());
+    const existingTypeMap = {};
+    existing.forEach(f => { existingTypeMap[String(f.name).toLowerCase()] = normalizeBqType(f.type || 'STRING'); });
+    
     const missing = fields.filter(f => existingNames.indexOf(String(f.name).toLowerCase()) === -1);
+    
+    // Check for type conflicts on existing columns and log warnings
+    fields.forEach(f => {
+      const fLower = String(f.name).toLowerCase();
+      if (existingTypeMap[fLower] && existingTypeMap[fLower] !== normalizeBqType(f.type || 'STRING')) {
+        Logger.log('WARNING: Column ' + f.name + ' has type mismatch. Target=' + existingTypeMap[fLower] + ' vs Staging=' + normalizeBqType(f.type || 'STRING') + '. Will use target type in MERGE.');
+      }
+    });
+    
     if (missing.length === 0) return;
+    
     // Add each missing column via ALTER TABLE
     missing.forEach(f => {
       const type = normalizeBqType(f.type || 'STRING');
