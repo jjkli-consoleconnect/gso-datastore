@@ -16,9 +16,40 @@ WITH FlattenedTierTwo AS (
   FROM
     `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
     LEFT JOIN UNNEST(t.RemedyTicketNumber) AS remedy_incident
-  WHERE NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC|OCR|QMS|CSM|GSOSI)')
+  WHERE NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC|OCR|QMS|CSM|GSOSI|SH)')
+),
+RankedJira AS (
+  -- Deduplicate: per Remedy incident, pick the primary Jira (prioritize T2 projects)
+  SELECT
+    *,
+    ROW_NUMBER() OVER (PARTITION BY RemedyTicketNumber_flat ORDER BY 
+      CASE 
+        WHEN STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR 
+             STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0 THEN 1
+        ELSE 2
+      END,
+      Key DESC
+    ) AS jira_rank
+  FROM FlattenedTierTwo
+),
+UniqueJira AS (
+  -- Final deduplication: ensure each Jira Key appears only once
+  -- Priority: 1) Has Remedy link with jira_rank=1, 2) Any Remedy link, 3) No Remedy link
+  SELECT *
+  FROM (
+    SELECT
+      *,
+      ROW_NUMBER() OVER (PARTITION BY Key ORDER BY 
+        CASE WHEN RemedyTicketNumber_flat IS NOT NULL AND jira_rank = 1 THEN 1
+             WHEN RemedyTicketNumber_flat IS NOT NULL THEN 2
+             ELSE 3
+        END,
+        RemedyTicketNumber_flat DESC NULLS LAST
+      ) AS unique_rank
+    FROM RankedJira
+  )
+  WHERE unique_rank = 1
 )
-
 SELECT
   hd.Incident_Number,
   hd.Status AS hdStatus,
@@ -81,35 +112,82 @@ SELECT
   st.Links_clean AS Links,
   REGEXP_EXTRACT(Key, r'^([A-Z]+)') AS ProjectCode,
   CASE
-    WHEN STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 THEN 'T3'
-
-    WHEN (
-      (STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0 OR STRPOS(Key, 'MSS') > 0 OR STRPOS(Key, 'VIM') > 0 OR STRPOS(Key, 'VME') > 0) AND
+    WHEN REGEXP_EXTRACT(COALESCE(Key, ''), r'^([A-Z]+)') IN ('GSDT','CCPROV') THEN 'Service Delivery'
+    WHEN REGEXP_EXTRACT(COALESCE(Key, ''), r'^([A-Z]+)') IN ('TAC', 'CCAS', 'IOTCE', 'VOICECE', 'TXCE', 'SMSCE', 'SH') THEN 'Support'
+    WHEN REGEXP_EXTRACT(COALESCE(Key, ''), r'^([A-Z]+)') IN ('ITHD', 'ITOPS') THEN 'IT Operations'
+    WHEN REGEXP_EXTRACT(COALESCE(Key, ''), r'^([A-Z]+)') IN ('MSS') THEN 'Center Operations'
+    WHEN REGEXP_EXTRACT(COALESCE(Key, ''), r'^([A-Z]+)') IS NULL THEN 'Support'
+    ELSE 'Other'
+  END AS Team,
+  -- T1 Escalated: Remedy ticket escalated by T1 (has any Jira key)
+  CASE
+    WHEN hd.Incident_Number IS NOT NULL AND st.Key IS NOT NULL THEN hd.Incident_Number
+    ELSE NULL
+  END AS T1Escalated,
+  
+  -- T1 Solved: Remedy ticket solved by T1 (no Jira key, no escalation)
+  CASE
+    WHEN hd.Incident_Number IS NOT NULL AND st.Key IS NULL THEN hd.Incident_Number
+    ELSE NULL
+  END AS T1Solved,
+  
+  -- T2 Escalated: T2 project escalated to T3 (has T3 links) - sequential escalation
+  CASE
+    WHEN hd.Incident_Number IS NOT NULL AND (
+      (STRPOS(st.Key, 'TAC') > 0 OR STRPOS(st.Key, 'CCAS') > 0 OR STRPOS(st.Key, 'VOICECE') > 0 OR STRPOS(st.Key, 'IOTCE') > 0 OR STRPOS(st.Key, 'TXCE') > 0 OR STRPOS(st.Key, 'SMSCE') > 0 OR STRPOS(st.Key, 'MSS') > 0 OR STRPOS(st.Key, 'VIM') > 0 OR STRPOS(st.Key, 'VME') > 0) AND
       (
+        STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 OR
+        STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 OR
+        STRPOS(COALESCE(st.Links_clean, ''), 'CCONB') > 0 OR
+        STRPOS(COALESCE(st.Links_clean, ''), 'COPS') > 0 OR
+        STRPOS(COALESCE(st.Links_clean, ''), 'CSCM') > 0
+      )
+    ) THEN hd.Incident_Number
+    ELSE NULL
+  END AS T2Escalated,
+  
+  -- SolvedBy: Which tier solved the ticket
+  CASE
+    WHEN st.Key IS NULL THEN 'T1'
+    WHEN (
+      (STRPOS(st.Key, 'TAC') > 0 OR STRPOS(st.Key, 'CCAS') > 0 OR STRPOS(st.Key, 'VOICECE') > 0 OR STRPOS(st.Key, 'IOTCE') > 0 OR STRPOS(st.Key, 'TXCE') > 0 OR STRPOS(st.Key, 'SMSCE') > 0 OR STRPOS(st.Key, 'MSS') > 0 OR STRPOS(st.Key, 'VIM') > 0 OR STRPOS(st.Key, 'VME') > 0) AND
+      (
+        STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 OR
         STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 OR
         STRPOS(COALESCE(st.Links_clean, ''), 'CCONB') > 0 OR
         STRPOS(COALESCE(st.Links_clean, ''), 'COPS') > 0 OR
         STRPOS(COALESCE(st.Links_clean, ''), 'CSCM') > 0
       )
     ) THEN 'T3'
-
     WHEN (
-      (STRPOS(Key, 'TAC') > 0 OR STRPOS(Key, 'CCAS') > 0 OR STRPOS(Key, 'VOICECE') > 0 OR STRPOS(Key, 'IOTCE') > 0 OR STRPOS(Key, 'TXCE') > 0 OR STRPOS(Key, 'SMSCE') > 0 OR STRPOS(Key, 'MSS') > 0 OR STRPOS(Key, 'VIM') > 0 OR STRPOS(Key, 'VME') > 0) AND
+      (STRPOS(st.Key, 'TAC') > 0 OR STRPOS(st.Key, 'CCAS') > 0 OR STRPOS(st.Key, 'VOICECE') > 0 OR STRPOS(st.Key, 'IOTCE') > 0 OR STRPOS(st.Key, 'TXCE') > 0 OR STRPOS(st.Key, 'SMSCE') > 0 OR STRPOS(st.Key, 'MSS') > 0 OR STRPOS(st.Key, 'VIM') > 0 OR STRPOS(st.Key, 'VME') > 0) AND
       (
         st.Links_clean IS NULL OR NOT (
+          STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 OR
           STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 OR
           STRPOS(COALESCE(st.Links_clean, ''), 'CCONB') > 0 OR
           STRPOS(COALESCE(st.Links_clean, ''), 'COPS') > 0 OR
-          STRPOS(COALESCE(st.Links_clean, ''), 'CSCM') > 0 OR
-          STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0
+          STRPOS(COALESCE(st.Links_clean, ''), 'CSCM') > 0
         )
       )
     ) THEN 'T2'
-
-    WHEN Key IS NULL THEN 'T1'
-
     ELSE NULL
   END AS SolvedBy,
+  
+  -- T3 Solved: T2 project escalated to T3 (SH in Links or T3 links present)
+  CASE
+    WHEN (
+      (STRPOS(st.Key, 'TAC') > 0 OR STRPOS(st.Key, 'CCAS') > 0 OR STRPOS(st.Key, 'VOICECE') > 0 OR STRPOS(st.Key, 'IOTCE') > 0 OR STRPOS(st.Key, 'TXCE') > 0 OR STRPOS(st.Key, 'SMSCE') > 0 OR STRPOS(st.Key, 'MSS') > 0 OR STRPOS(st.Key, 'VIM') > 0 OR STRPOS(st.Key, 'VME') > 0) AND
+      (
+        STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 OR
+        STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 OR
+        STRPOS(COALESCE(st.Links_clean, ''), 'CCONB') > 0 OR
+        STRPOS(COALESCE(st.Links_clean, ''), 'COPS') > 0 OR
+        STRPOS(COALESCE(st.Links_clean, ''), 'CSCM') > 0
+      )
+    ) THEN st.Key
+    ELSE NULL
+  END AS T3Solved,
   CASE
     WHEN STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 THEN 'AS3491'
     WHEN STRPOS(COALESCE(st.Links_clean, ''), 'CCONB') > 0 THEN 'CCONB'
@@ -140,8 +218,8 @@ SELECT
   st.SyncTime
 
 FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` AS hd
-FULL OUTER JOIN FlattenedTierTwo AS st
-  ON hd.Incident_Number = st.RemedyTicketNumber_flat
+FULL OUTER JOIN UniqueJira AS st
+  ON hd.Incident_Number = st.RemedyTicketNumber_flat AND st.unique_rank = 1
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON CONCAT('SR', st.SR_Ref) = shr.SRNo
 
