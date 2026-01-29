@@ -32,7 +32,10 @@ WITH shift_config AS (
     STRUCT('PHSOC', 'Evening', 23, 7),
     STRUCT('ICX', 'Morning', 8, 14),
     STRUCT('ICX', 'Afternoon', 14, 23),
-    STRUCT('ICX', 'Evening', 23, 8)
+    STRUCT('ICX', 'Evening', 23, 8),
+    STRUCT('Soft Switch Management', 'Morning', 7, 15),
+    STRUCT('Soft Switch Management', 'Afternoon', 15, 23),
+    STRUCT('Soft Switch Management', 'Evening', 23, 7)
   ])
 ),
 current_time AS (
@@ -442,7 +445,8 @@ SELECT
   ARRAY_AGG(DISTINCT CASE WHEN e.Event_Type = 'Closure' THEN e.Incident_Number END IGNORE NULLS) AS Closure_Ticket_IDs,
   ARRAY_AGG(DISTINCT e.Incident_Number ORDER BY e.Incident_Number) AS Tickets_List,
   ARRAY_AGG(
-    DISTINCT CONCAT(e.Incident_Number, ' | ', e.CaseType)
+    DISTINCT CONCAT(e.Incident_Number, ' | ', COALESCE(e.CaseType, 'N/A'))
+    ORDER BY e.Incident_Number
   ) AS Ticket_Details,
   ARRAY_AGG(DISTINCT e.Status ORDER BY e.Status) AS Status_List,
   ARRAY_AGG(DISTINCT e.CaseType ORDER BY e.CaseType) AS CaseType_List,

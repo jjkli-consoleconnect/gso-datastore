@@ -100,7 +100,7 @@ Contact: Operations team (waiting for shift time details)
 STATUS: COMPLETED & DEPLOYED ✓
 
 WHAT HAPPENED:
-Operations team provided shift times for 11 NOCs:
+Operations team provided shift times for 12 NOCs:
 - GSOC TX - HK: 08-14 (Morning), 14-23 (Afternoon), 23-08 (Evening)
 - HKNOC: 08-16 (Morning), 16-23 (Afternoon), 23-08 (Evening)
 - GSOC TX - PH: 07-15 (Morning), 15-23 (Afternoon), 23-07 (Evening)
@@ -111,15 +111,15 @@ Operations team provided shift times for 11 NOCs:
 - GSOC: 08-14 (Morning), 14-23 (Afternoon), 23-08 (Evening)
 - PHSOC: 07-15 (Morning), 15-23 (Afternoon), 23-07 (Evening)
 - ICX: 08-14 (Morning), 14-23 (Afternoon), 23-08 (Evening)
+- Soft Switch Management: 07-15 (Morning), 15-23 (Afternoon), 23-07 (Evening)
 
 NOCs without defined shifts (set to NULL, filtered out):
 - Planned Event Mgt
 - USNOC
-- Soft Switch Management
 - Bel NOC
 
 IMPLEMENTATION:
-1. Created shift_config CTE with all 11 NOCs and their 3 shifts each (28 total STRUCT entries)
+1. Created shift_config CTE with all 12 NOCs and their 3 shifts each (31 total STRUCT entries)
 2. Implemented midnight-crossing logic for shifts where end_hour < start_hour
 3. Added LEFT JOIN shift_config to Creation, Closure, and WorkLog CTEs
 4. Updated column names in SELECT to match destination table schema:
@@ -373,5 +373,48 @@ NEXT TIME SOMEONE NEEDS TO UPDATE THIS:
 2. Run patch_transfer.py to push changes to all 24 queries atomically
 3. Manual trigger a test run: StartManualTransferRunsRequest() via DataTransferServiceClient
 4. Verify data in destination table with: SELECT COUNT(*) FROM pccw-internal-virt-agent-uat.GSO.CenterOperationsShiftSnapshotsAgg
+
+═══════════════════════════════════════════════════════════════════════════════
+
+=== SESSION UPDATE - 29 Jan 2026 (PHASE 3: SOFT SWITCH MANAGEMENT ADDITION) ===
+
+STATUS: COMPLETED & DEPLOYED ✓
+
+CHANGE REQUESTED:
+Add shift configuration for "Soft Switch Management" NOC
+
+SHIFT TIMES ADDED:
+- Morning: 07:00 - 15:00
+- Afternoon: 15:00 - 23:00
+- Evening: 23:00 - 07:00
+
+IMPLEMENTATION:
+1. Updated shift_config CTE in CenterOperationsShiftSnapshots_aggregated_scheduled.sql
+2. Added 3 new STRUCT entries for Soft Switch Management shifts
+3. Total NOCs configured: 12 (was 11)
+4. Total shift definitions: 31 (was 28)
+
+DEPLOYMENT:
+- Executed patch_transfer.py to update all 24 hourly scheduled queries
+- All queries updated successfully via BigQuery Data Transfer Service API
+- Changes deployed: 29 Jan 2026
+
+UPDATED NOC LIST (12 total):
+1. GSOC TX - HK
+2. HKNOC
+3. GSOC TX - PH
+4. FMC
+5. SES
+6. Console Connect
+7. VAS NOC
+8. GSOC
+9. PHSOC
+10. ICX
+11. Soft Switch Management (NEW)
+
+NOCs still without shifts (3 remaining):
+- Planned Event Mgt
+- USNOC
+- Bel NOC
 
 ═══════════════════════════════════════════════════════════════════════════════
