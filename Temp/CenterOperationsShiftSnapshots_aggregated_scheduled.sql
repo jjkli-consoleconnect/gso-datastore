@@ -1,22 +1,42 @@
--- Hourly snapshot (scheduled): per-actor creation, closure, and worklog counts per hour
-WITH hourly_boundaries AS (
-  SELECT TIMESTAMP_ADD(TIMESTAMP_ADD(TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), DAY), INTERVAL d DAY), INTERVAL h HOUR) AS boundary
-  FROM UNNEST(GENERATE_ARRAY(-1, 1)) AS d  -- Yesterday, today, tomorrow
-  CROSS JOIN UNNEST(GENERATE_ARRAY(0, 23)) AS h  -- All 24 hours
+-- Shift-level snapshot (scheduled hourly): per-actor creation, closure, and worklog counts per shift
+-- Each NOC has their own shift times (GMT+0)
+WITH shift_config AS (
+  SELECT noc, shift_name, start_hour, end_hour
+  FROM UNNEST([
+    STRUCT('GSOC TX - HK' AS noc, 'Morning' AS shift_name, 8 AS start_hour, 14 AS end_hour),
+    STRUCT('GSOC TX - HK', 'Afternoon', 14, 23),
+    STRUCT('GSOC TX - HK', 'Evening', 23, 8),
+    STRUCT('HKNOC', 'Morning', 8, 16),
+    STRUCT('HKNOC', 'Afternoon', 16, 23),
+    STRUCT('HKNOC', 'Evening', 23, 8),
+    STRUCT('GSOC TX - PH', 'Morning', 7, 15),
+    STRUCT('GSOC TX - PH', 'Afternoon', 15, 23),
+    STRUCT('GSOC TX - PH', 'Evening', 23, 7),
+    STRUCT('FMC', 'Morning', 8, 14),
+    STRUCT('FMC', 'Afternoon', 14, 23),
+    STRUCT('FMC', 'Evening', 23, 8),
+    STRUCT('SES', 'Morning', 8, 17),  -- 0815 rounded to 08
+    STRUCT('SES', 'Afternoon', 17, 0),
+    STRUCT('SES', 'Evening', 0, 8),
+    STRUCT('Console Connect', 'Morning', 7, 15),
+    STRUCT('Console Connect', 'Afternoon', 15, 23),
+    STRUCT('Console Connect', 'Evening', 23, 7),
+    STRUCT('VAS NOC', 'Morning', 7, 15),
+    STRUCT('VAS NOC', 'Afternoon', 15, 23),
+    STRUCT('VAS NOC', 'Evening', 23, 7),
+    STRUCT('GSOC', 'Morning', 8, 14),
+    STRUCT('GSOC', 'Afternoon', 14, 23),
+    STRUCT('GSOC', 'Evening', 23, 8),
+    STRUCT('PHSOC', 'Morning', 7, 15),
+    STRUCT('PHSOC', 'Afternoon', 15, 23),
+    STRUCT('PHSOC', 'Evening', 23, 7),
+    STRUCT('ICX', 'Morning', 8, 14),
+    STRUCT('ICX', 'Afternoon', 14, 23),
+    STRUCT('ICX', 'Evening', 23, 8)
+  ])
 ),
-hourly_window AS (
-  SELECT
-    hour_end,
-    hour_end - INTERVAL 1 HOUR AS hour_start
-  FROM (
-    SELECT (
-      SELECT boundary
-      FROM hourly_boundaries
-      WHERE boundary <= CURRENT_TIMESTAMP()
-      ORDER BY boundary DESC
-      LIMIT 1
-    ) AS hour_end
-  )
+current_time AS (
+  SELECT CURRENT_TIMESTAMP() AS now
 ),
 base_events AS (
   SELECT
@@ -63,6 +83,7 @@ base_events AS (
     NULL AS ExtractedDescription,
     NULL AS inserted_at,
     Shift,
+    Shift_Name,
     Date,
     NULLIF(TRIM(Submitter), '') AS Creation_FullName,
     NULL AS Closure_FullName,
@@ -103,14 +124,35 @@ base_events AS (
       hd.Product_Family,
       hd.ProductDescription,
       hd.GSMP_Circuit_ID,
+      hd.Submit_Date AS Date,
+      -- Calculate shift based on NOC-specific shift config
+      sc.shift_name AS Shift_Name,
       CASE
-        WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 0 AND 5 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', TIMESTAMP_SUB(hd.Submit_Date, INTERVAL 1 DAY)), ' - 3 Evening')
-        WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 6 AND 13 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date), ' - 1 Morning')
-        WHEN EXTRACT(HOUR FROM hd.Submit_Date) BETWEEN 14 AND 21 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date), ' - 2 Afternoon')
-        ELSE CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Submit_Date), ' - 3 Evening')
-      END AS Shift,
-      hd.Submit_Date AS Date
+        WHEN sc.shift_name IS NOT NULL THEN 
+          CONCAT(
+            FORMAT_TIMESTAMP('%Y-%m-%d', 
+              CASE 
+                WHEN sc.end_hour < sc.start_hour AND EXTRACT(HOUR FROM hd.Submit_Date) < sc.end_hour 
+                THEN TIMESTAMP_SUB(hd.Submit_Date, INTERVAL 1 DAY)
+                ELSE hd.Submit_Date
+              END
+            ),
+            ' - ',
+            CASE sc.shift_name
+              WHEN 'Morning' THEN '1 Morning'
+              WHEN 'Afternoon' THEN '2 Afternoon'
+              WHEN 'Evening' THEN '3 Evening'
+            END
+          )
+        ELSE NULL
+      END AS Shift
     FROM `GSO.HelpDeskAllNOC` AS hd
+    LEFT JOIN shift_config sc
+      ON hd.Assigned_Group = sc.noc
+      AND (
+        (sc.end_hour > sc.start_hour AND EXTRACT(HOUR FROM hd.Submit_Date) >= sc.start_hour AND EXTRACT(HOUR FROM hd.Submit_Date) < sc.end_hour)
+        OR (sc.end_hour < sc.start_hour AND (EXTRACT(HOUR FROM hd.Submit_Date) >= sc.start_hour OR EXTRACT(HOUR FROM hd.Submit_Date) < sc.end_hour))
+      )
     WHERE hd.Assigned_Group != 'Quality Assurance' AND hd.Status != 'Cancelled'
   ) AS creation
   UNION ALL
@@ -158,6 +200,7 @@ base_events AS (
     NULL AS ExtractedDescription,
     NULL AS inserted_at,
     Shift,
+    Shift_Name,
     Date,
     NULL AS Creation_FullName,
     Closure_FullName,
@@ -199,14 +242,35 @@ base_events AS (
       hd.ProductDescription,
       hd.GSMP_Circuit_ID,
       NULLIF(TRIM(hd.Closed_By), '') AS Closure_FullName,
+      hd.Closed_Date AS Date,
+      -- Calculate shift based on NOC-specific shift config
+      sc.shift_name AS Shift_Name,
       CASE
-        WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 0 AND 5 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', TIMESTAMP_SUB(hd.Closed_Date, INTERVAL 1 DAY)), ' - 3 Evening')
-        WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 6 AND 13 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date), ' - 1 Morning')
-        WHEN EXTRACT(HOUR FROM hd.Closed_Date) BETWEEN 14 AND 21 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date), ' - 2 Afternoon')
-        ELSE CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', hd.Closed_Date), ' - 3 Evening')
-      END AS Shift,
-      hd.Closed_Date AS Date
+        WHEN sc.shift_name IS NOT NULL THEN 
+          CONCAT(
+            FORMAT_TIMESTAMP('%Y-%m-%d', 
+              CASE 
+                WHEN sc.end_hour < sc.start_hour AND EXTRACT(HOUR FROM hd.Closed_Date) < sc.end_hour 
+                THEN TIMESTAMP_SUB(hd.Closed_Date, INTERVAL 1 DAY)
+                ELSE hd.Closed_Date
+              END
+            ),
+            ' - ',
+            CASE sc.shift_name
+              WHEN 'Morning' THEN '1 Morning'
+              WHEN 'Afternoon' THEN '2 Afternoon'
+              WHEN 'Evening' THEN '3 Evening'
+            END
+          )
+        ELSE NULL
+      END AS Shift
     FROM `GSO.HelpDeskAllNOC` AS hd
+    LEFT JOIN shift_config sc
+      ON hd.Assigned_Group = sc.noc
+      AND (
+        (sc.end_hour > sc.start_hour AND EXTRACT(HOUR FROM hd.Closed_Date) >= sc.start_hour AND EXTRACT(HOUR FROM hd.Closed_Date) < sc.end_hour)
+        OR (sc.end_hour < sc.start_hour AND (EXTRACT(HOUR FROM hd.Closed_Date) >= sc.start_hour OR EXTRACT(HOUR FROM hd.Closed_Date) < sc.end_hour))
+      )
     WHERE hd.Closed_Date IS NOT NULL AND hd.Assigned_Group != 'Quality Assurance' AND hd.Status != 'Cancelled'
   ) AS closure
   UNION ALL
@@ -254,6 +318,7 @@ base_events AS (
     ExtractedDescription,
     inserted_at,
     Shift,
+    Shift_Name,
     Date,
     NULL AS Creation_FullName,
     NULL AS Closure_FullName,
@@ -305,16 +370,37 @@ base_events AS (
       wl.Last_Modified_By AS WorkLog_Last_Modified_By,
       wl.ExtractedDescription,
       wl.inserted_at,
+      wl.WorkLog_Submit_Date AS Date,
+      -- Calculate shift based on NOC-specific shift config
+      sc.shift_name AS Shift_Name,
       CASE
-        WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 0 AND 5 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', TIMESTAMP_SUB(wl.WorkLog_Submit_Date, INTERVAL 1 DAY)), ' - 3 Evening')
-        WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 6 AND 13 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date), ' - 1 Morning')
-        WHEN EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) BETWEEN 14 AND 21 THEN CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date), ' - 2 Afternoon')
-        ELSE CONCAT(FORMAT_TIMESTAMP('%Y-%m-%d', wl.WorkLog_Submit_Date), ' - 3 Evening')
-      END AS Shift,
-      wl.WorkLog_Submit_Date AS Date
+        WHEN sc.shift_name IS NOT NULL THEN 
+          CONCAT(
+            FORMAT_TIMESTAMP('%Y-%m-%d', 
+              CASE 
+                WHEN sc.end_hour < sc.start_hour AND EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) < sc.end_hour 
+                THEN TIMESTAMP_SUB(wl.WorkLog_Submit_Date, INTERVAL 1 DAY)
+                ELSE wl.WorkLog_Submit_Date
+              END
+            ),
+            ' - ',
+            CASE sc.shift_name
+              WHEN 'Morning' THEN '1 Morning'
+              WHEN 'Afternoon' THEN '2 Afternoon'
+              WHEN 'Evening' THEN '3 Evening'
+            END
+          )
+        ELSE NULL
+      END AS Shift
     FROM `GSO.WorkLogAllNOC` AS wl
     INNER JOIN `GSO.HelpDeskAllNOC` AS hd
       ON wl.Incident_Number = hd.Incident_Number
+    LEFT JOIN shift_config sc
+      ON hd.Assigned_Group = sc.noc
+      AND (
+        (sc.end_hour > sc.start_hour AND EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) >= sc.start_hour AND EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) < sc.end_hour)
+        OR (sc.end_hour < sc.start_hour AND (EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) >= sc.start_hour OR EXTRACT(HOUR FROM wl.WorkLog_Submit_Date) < sc.end_hour))
+      )
     WHERE wl.WorkLog_Submit_Date IS NOT NULL
       AND hd.Assigned_Group != 'Quality Assurance' AND hd.Status != 'Cancelled'
       AND NOT REGEXP_CONTAINS(IFNULL(wl.ExtractedDescription, ''), '(?i)JIRA status change,|From:\\s*globalhelpdesk@pccwglobal\\.com|To:\\s*gsocph@pccwglobal\\.com|Supervisor reviewed')
@@ -336,17 +422,23 @@ enriched AS (
       WHEN base_events.Event_Type = 'WorkLog' THEN CONCAT('WorkLog: ', IFNULL(base_events.ExtractedDescription, 'N/A'), ' [Type: ', IFNULL(base_events.Work_Log_Type, 'N/A'), ']')
     END AS EffortDescription
   FROM base_events
+  WHERE base_events.Shift IS NOT NULL  -- Only include events with valid shifts
+),
+current_shift_boundary AS (
+  SELECT
+    TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), DAY) AS today_start,
+    TIMESTAMP_ADD(TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), DAY), INTERVAL 1 DAY) AS tomorrow_start,
+    TIMESTAMP_SUB(TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), DAY), INTERVAL 1 DAY) AS yesterday_start
 )
 SELECT
   e.Actor_FullName,
   e.NOC,
   e.CaseType,
   e.Status,
-  DATE(hourly_window.hour_start) AS Snapshot_Date,
-  EXTRACT(HOUR FROM hourly_window.hour_start) AS Snapshot_Hour,
-  DATETIME(hourly_window.hour_start) AS Snapshot_DateTime,
-  hourly_window.hour_end AS Snapshot_Timestamp,
-  FORMAT_TIMESTAMP('%a', hourly_window.hour_start) AS DoW,
+  e.Shift AS ShiftSnapshot,
+  EXTRACT(DATE FROM MIN(e.Date)) AS Snapshot_Date,
+  CURRENT_TIMESTAMP() AS Snapshot_Timestamp,
+  FORMAT_TIMESTAMP('%a', MIN(e.Date)) AS DoW,
   COUNTIF(e.Event_Type = 'WorkLog') AS WorkLog_Count,
   COUNTIF(e.Event_Type = 'Creation') AS Creation_Count,
   COUNTIF(e.Event_Type = 'Closure') AS Closure_Count,
@@ -356,9 +448,14 @@ SELECT
   COUNT(DISTINCT e.Incident_Number) AS Tickets_Supported,
   STRING_AGG(DISTINCT e.Incident_Number, ', ' ORDER BY e.Incident_Number) AS Tickets_List,
   STRING_AGG(DISTINCT CONCAT(e.Incident_Number, ' | ', e.CaseType), '\n' ORDER BY CONCAT(e.Incident_Number, ' | ', e.CaseType)) AS Ticket_Details,
-  STRING_AGG(DISTINCT e.EffortDescription, ' | ' ORDER BY e.EffortDescription) AS EffortDetails
+  STRING_AGG(DISTINCT e.EffortDescription, ' | ' ORDER BY e.EffortDescription) AS EffortDetails,
+  EXTRACT(HOUR FROM CURRENT_TIMESTAMP()) AS Snapshot_Hour,
+  CURRENT_DATETIME() AS Snapshot_DateTime
 FROM enriched e
-CROSS JOIN hourly_window
-WHERE e.Date >= hourly_window.hour_start AND e.Date < hourly_window.hour_end
-GROUP BY Actor_FullName, NOC, CaseType, Status, Snapshot_Date, Snapshot_Hour, Snapshot_DateTime, Snapshot_Timestamp, DoW
-ORDER BY Snapshot_DateTime, Actor_FullName;
+CROSS JOIN current_shift_boundary csb
+WHERE 
+  -- Include events from last 48 hours to catch all active shifts
+  e.Date >= csb.yesterday_start
+  AND e.Date < csb.tomorrow_start
+GROUP BY Actor_FullName, NOC, CaseType, Status, ShiftSnapshot
+ORDER BY ShiftSnapshot, Actor_FullName;
