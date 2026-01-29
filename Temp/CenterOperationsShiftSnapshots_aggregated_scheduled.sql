@@ -433,21 +433,19 @@ current_shift_boundary AS (
 SELECT
   e.Actor_FullName,
   e.NOC,
-  e.CaseType,
-  e.Status,
   e.Shift AS ShiftSnapshot,
   EXTRACT(DATE FROM MIN(e.Date)) AS Snapshot_Date,
   CURRENT_TIMESTAMP() AS Snapshot_Timestamp,
   FORMAT_TIMESTAMP('%a', MIN(e.Date)) AS DoW,
-  COUNTIF(e.Event_Type = 'WorkLog') AS WorkLog_Count,
-  COUNTIF(e.Event_Type = 'Creation') AS Creation_Count,
-  COUNTIF(e.Event_Type = 'Closure') AS Closure_Count,
-  COUNT(DISTINCT CASE WHEN e.Event_Type = 'WorkLog' THEN e.WorkLog_ID END) AS WorkLog_Distinct,
-  COUNT(DISTINCT CASE WHEN e.Event_Type = 'Creation' THEN e.Incident_Number END) AS Creation_Tickets,
-  COUNT(DISTINCT CASE WHEN e.Event_Type = 'Closure' THEN e.Incident_Number END) AS Closure_Tickets,
-  COUNT(DISTINCT e.Incident_Number) AS Tickets_Supported,
-  STRING_AGG(DISTINCT e.Incident_Number, ', ' ORDER BY e.Incident_Number) AS Tickets_List,
-  STRING_AGG(DISTINCT CONCAT(e.Incident_Number, ' | ', e.CaseType), '\n' ORDER BY CONCAT(e.Incident_Number, ' | ', e.CaseType)) AS Ticket_Details,
+  ARRAY_AGG(DISTINCT CASE WHEN e.Event_Type = 'WorkLog' THEN e.WorkLog_ID END IGNORE NULLS) AS WorkLog_IDs,
+  ARRAY_AGG(DISTINCT CASE WHEN e.Event_Type = 'Creation' THEN e.Incident_Number END IGNORE NULLS) AS Creation_Ticket_IDs,
+  ARRAY_AGG(DISTINCT CASE WHEN e.Event_Type = 'Closure' THEN e.Incident_Number END IGNORE NULLS) AS Closure_Ticket_IDs,
+  ARRAY_AGG(DISTINCT e.Incident_Number ORDER BY e.Incident_Number) AS Tickets_List,
+  ARRAY_AGG(
+    DISTINCT CONCAT(e.Incident_Number, ' | ', e.CaseType)
+  ) AS Ticket_Details,
+  ARRAY_AGG(DISTINCT e.Status ORDER BY e.Status) AS Status_List,
+  ARRAY_AGG(DISTINCT e.CaseType ORDER BY e.CaseType) AS CaseType_List,
   STRING_AGG(DISTINCT e.EffortDescription, ' | ' ORDER BY e.EffortDescription) AS EffortDetails,
   EXTRACT(HOUR FROM CURRENT_TIMESTAMP()) AS Snapshot_Hour,
   CURRENT_DATETIME() AS Snapshot_DateTime
@@ -457,5 +455,5 @@ WHERE
   -- Include events from last 48 hours to catch all active shifts
   e.Date >= csb.yesterday_start
   AND e.Date < csb.tomorrow_start
-GROUP BY Actor_FullName, NOC, CaseType, Status, ShiftSnapshot
-ORDER BY ShiftSnapshot, Actor_FullName;
+  AND e.Actor_FullName IS NOT NULL  -- Exclude rows with no identifiable actor
+GROUP BY Actor_FullName, NOC, ShiftSnapshot;
