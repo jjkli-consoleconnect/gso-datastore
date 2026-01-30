@@ -34,6 +34,21 @@ setup_root_logging()
 # Jitter used when sleeping after 429s
 JITTER_MAX_SECONDS = 0.3
 
+# Rate limiting settings (Jira Cloud: ~180 req/min = ~3 req/sec)
+JIRA_RATE_LIMIT_PAUSE_SEC = 0.4  # Pause between paginated searches
+
+
+def handle_429_backoff(response, attempt=1, max_attempts=3):
+    """Handle 429 rate limit with exponential backoff."""
+    if response.status_code != 429 or attempt >= max_attempts:
+        return False
+    retry_after = int(response.headers.get('Retry-After', 30) or 30)
+    backoff_time = min(retry_after * (2 ** (attempt - 1)), 120)  # Cap at 2 minutes
+    wait_time = backoff_time + random.uniform(0, JITTER_MAX_SECONDS)
+    logging.warning(f"429 Rate limit (attempt {attempt}/{max_attempts}). Waiting {wait_time:.1f}s")
+    time.sleep(wait_time)
+    return True
+
 
 def create_session_with_retries():
     """Create a requests Session with connection pooling and retry strategy."""
@@ -399,23 +414,67 @@ def fetch_and_sync_jira_comments():
                 }
                 yield row
 
-        # Search for issues with recent activity (updates, resolutions, comments)
-        headers = {'Accept': 'application/json'}
-        params = {'jql': jql_any_activity, 'startAt': 0, 'maxResults': 100, 'fields': 'key'}
-        auth = (username, api_token)
+        # Create persistent session with connection pooling
+        session = create_session_with_retries()
+        
+        def search_issue_keys_paginated(jql: str, label: str):
+            """Fetch ALL matching issue keys with pagination. CRITICAL: Prevents data loss!"""
+            all_keys = []
+            start_at = 0
+            max_results = 100
+            headers_local = {'Accept': 'application/json'}
+            auth_local = (username, api_token)
+            attempt = 0
+            max_attempts = 3
+            
+            while True:
+                params_local = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
+                try:
+                    resp = session.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=60)
+                    
+                    if resp.status_code == 429:
+                        if handle_429_backoff(resp, attempt + 1, max_attempts):
+                            attempt += 1
+                            continue
+                        else:
+                            logging.error(f"Failed after {max_attempts} 429 attempts on {label}")
+                            break
+                    
+                    resp.raise_for_status()
+                    attempt = 0  # Reset on success
+                    
+                    data_local = resp.json()
+                    issues_local = data_local.get('issues', [])
+                    if not issues_local:
+                        break
+                    
+                    all_keys.extend([i.get('key') for i in issues_local if i.get('key')])
+                    total = data_local.get('total', 0)
+                    
+                    if start_at + max_results >= total:
+                        break
+                    
+                    start_at += max_results
+                    time.sleep(JIRA_RATE_LIMIT_PAUSE_SEC)  # Respect rate limits
+                    
+                except requests.exceptions.Timeout:
+                    logging.warning(f"Timeout fetching keys for {label} at startAt={start_at}")
+                    break
+                except Exception as e:
+                    logging.error(f"Error fetching keys for {label}: {e}")
+                    break
+            
+            logging.info(f"{label}: Fetched {len(all_keys)} total issue keys (paginated)")
+            return all_keys
+
+        # Search for issues with recent activity - now WITH PAGINATION
+        all_issue_keys = search_issue_keys_paginated(jql_any_activity, 'comments_activity')
         try:
-            resp = requests.get(jira_url, headers=headers, auth=auth, params=params, timeout=60)
-            if resp.status_code == 429:
-                ra = int(resp.headers.get('Retry-After', 30) or 30)
-                logging.warning(f"429 on activity search; sleeping {ra}s")
-                time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
-            else:
-                resp.raise_for_status()
-                data = resp.json()
-                issues = data.get('issues', [])
-                for issue in issues:
-                    issue_keys_total.add(issue.get('key'))
-                logging.info(f"Comments search fetched {len(issue_keys_total)} issue keys")
+            data = {'issues': [{'key': k} for k in all_issue_keys]}
+            issues = data.get('issues', [])
+            for issue in issues:
+                issue_keys_total.add(issue.get('key'))
+            logging.info(f"Comments search fetched {len(issue_keys_total)} issue keys")
         except Exception as e:
             logging.error(f"Comments search error: {e}")
             return
@@ -441,10 +500,7 @@ def fetch_and_sync_jira_comments():
             )
             return
 
-        # Create persistent session with connection pooling
-        session = create_session_with_retries()
-
-        # Fetch comments in parallel (reduced concurrency to avoid connection pool exhaustion)
+        # Fetch comments in parallel (session already created above)
         issue_key_list = list(issue_keys_total)
         comments_by_issue = fetch_comments_batch(issue_key_list, username, api_token, session, max_workers=8)
         

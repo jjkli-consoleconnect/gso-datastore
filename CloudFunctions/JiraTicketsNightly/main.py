@@ -369,43 +369,49 @@ def fetch_and_sync_jira_tickets_nightly():
                 proj_clause = f'project = "{proj}"' if (' ' in proj or '&' in proj) else f'project = {proj}'
                 time_clause = f"updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
                 resolved_clause = f"resolutiondate >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND resolutiondate < \"{we.strftime('%Y/%m/%d %H:%M')}\""
-                jql_updated = f"({proj_clause}) AND {time_clause}"
-                jql_resolved = f"({proj_clause}) AND {resolved_clause}"
-                logging.info(f"JQL updated window: {jql_updated}")
-                logging.info(f"JQL resolved window: {jql_resolved}")
+                # Combined JQL - single search instead of two
+                jql_combined = f"({proj_clause}) AND (({time_clause}) OR ({resolved_clause}))"
+                logging.info(f"JQL combined window: {jql_combined}")
 
                 rows_to_insert = []
                 issue_keys_total = set()
 
                 def search_issue_keys(jql: str, label: str):
                     headers_local = {'Accept': 'application/json'}
-                    params_local = {'jql': jql, 'startAt': 0, 'maxResults': 100, 'fields': 'key'}
+                    start_at = 0
+                    max_results = 100
+                    all_keys = []
                     auth_local = (username, api_token)
-                    try:
-                        resp = requests.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=30)
-                        if resp.status_code == 429:
-                            ra = int(resp.headers.get('Retry-After', 30) or 30)
-                            logging.warning(f"429 {label} search; sleeping {ra}s")
-                            time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
-                            return []
-                        resp.raise_for_status()
-                        data_local = resp.json()
-                        issues_local = data_local.get('issues', [])
-                        keys = [i.get('key') for i in issues_local if i.get('key')]
-                        logging.info(f"{label} pass fetched {len(keys)} issue keys")
-                        return keys
-                    except Exception as e:
-                        logging.error(f"{label} pass error: {e}")
-                        return []
+                    
+                    while True:
+                        try:
+                            params_local = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
+                            resp = requests.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=30)
+                            if resp.status_code == 429:
+                                ra = int(resp.headers.get('Retry-After', 30) or 30)
+                                logging.warning(f"429 {label} search; sleeping {ra}s")
+                                time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
+                                continue
+                            resp.raise_for_status()
+                            data_local = resp.json()
+                            issues_local = data_local.get('issues', [])
+                            total = data_local.get('total', 0)
+                            keys = [i.get('key') for i in issues_local if i.get('key')]
+                            all_keys.extend(keys)
+                            start_at += len(issues_local)
+                            if start_at >= total or not issues_local:
+                                break
+                        except Exception as e:
+                            logging.error(f"{label} pass error: {e}")
+                            break
+                    
+                    logging.info(f"{label} pass fetched {len(all_keys)} issue keys")
+                    return all_keys
 
-                updated_keys = search_issue_keys(jql_updated, 'updated')
-                for k in updated_keys:
+                combined_keys = search_issue_keys(jql_combined, 'combined')
+                for k in combined_keys:
                     issue_keys_total.add(k)
-                resolved_keys = search_issue_keys(jql_resolved, 'resolved')
-                new_resolved = [k for k in resolved_keys if k not in issue_keys_total]
-                for k in new_resolved:
-                    issue_keys_total.add(k)
-                logging.info(f"Distinct issue keys to detail fetch (union): {len(issue_keys_total)}")
+                logging.info(f"Distinct issue keys to detail fetch: {len(issue_keys_total)}")
 
                 BULK_FETCH_SIZE = 50
                 for i in range(0, len(issue_keys_total), BULK_FETCH_SIZE):

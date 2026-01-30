@@ -293,39 +293,58 @@ def fetch_and_sync_jira_changelogs_nightly():
             # Ensure bounds are naive for comparison with parsed timestamps
             ws_naive = ws_bound.replace(tzinfo=None) if getattr(ws_bound, 'tzinfo', None) else ws_bound
             we_naive = we_bound.replace(tzinfo=None) if getattr(we_bound, 'tzinfo', None) else we_bound
-            for key in issue_keys:
-                issue_data = fetch_issue_history(key)
-                if not issue_data:
-                    continue
-                changelog = issue_data.get('changelog', {})
-                histories = changelog.get('histories', [])
-                for history in histories:
-                    history_id = history.get('id')
-                    created_str = history.get('created')
-                    created_ts = convert_timestamp(created_str)
-                    if not created_ts:
-                        continue
+            
+            # Handle empty issue_keys
+            if not issue_keys:
+                return
+            
+            # Parallel fetching of issue histories
+            max_workers = min(10, len(issue_keys))  # Cap at 10 parallel workers
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all fetch tasks
+                future_to_key = {executor.submit(fetch_issue_history, key): key for key in issue_keys}
+                
+                # Process results as they complete
+                for future in as_completed(future_to_key):
+                    key = future_to_key[future]
                     try:
-                        created_dt = datetime.strptime(created_ts, '%Y-%m-%d %H:%M:%S')
-                    except Exception:
+                        issue_data = future.result()
+                    except Exception as e:
+                        logging.warning(f"Failed to fetch history for {key}: {e}")
                         continue
-                    if not (ws_naive <= created_dt < we_naive):
+                    
+                    if not issue_data:
                         continue
-                    author = history.get('author', {})
-                    items = history.get('items', [])
-                    for item in items:
-                        field = item.get('field')
-                        if field == 'status':
-                            yield {
-                                "Issue_Key": key,
-                                "History_ID": history_id,
-                                "Transition_Timestamp": created_ts,
-                                "Transitioned_From": item.get('fromString'),
-                                "Transitioned_To": item.get('toString'),
-                                "Transitioned_By_Account_ID": author.get('accountId'),
-                                "Transitioned_By_Display_Name": author.get('displayName'),
-                                "SyncTime": now_str,
-                            }
+                    
+                    changelog = issue_data.get('changelog', {})
+                    histories = changelog.get('histories', [])
+                    for history in histories:
+                        history_id = history.get('id')
+                        created_str = history.get('created')
+                        created_ts = convert_timestamp(created_str)
+                        if not created_ts:
+                            continue
+                        try:
+                            created_dt = datetime.strptime(created_ts, '%Y-%m-%d %H:%M:%S')
+                        except Exception:
+                            continue
+                        if not (ws_naive <= created_dt < we_naive):
+                            continue
+                        author = history.get('author', {})
+                        items = history.get('items', [])
+                        for item in items:
+                            field = item.get('field')
+                            if field == 'status':
+                                yield {
+                                    "Issue_Key": key,
+                                    "History_ID": history_id,
+                                    "Transition_Timestamp": created_ts,
+                                    "Transitioned_From": item.get('fromString'),
+                                    "Transitioned_To": item.get('toString'),
+                                    "Transitioned_By_Account_ID": author.get('accountId'),
+                                    "Transitioned_By_Display_Name": author.get('displayName'),
+                                    "SyncTime": now_str,
+                                }
 
         total_rows = 0
 

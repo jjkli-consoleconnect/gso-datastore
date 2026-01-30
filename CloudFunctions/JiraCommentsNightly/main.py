@@ -337,34 +337,50 @@ def fetch_and_sync_jira_comments_nightly():
             # Ensure bounds are naive for comparison with parsed timestamps
             ws_naive = ws_bound.replace(tzinfo=None) if getattr(ws_bound, 'tzinfo', None) else ws_bound
             we_naive = we_bound.replace(tzinfo=None) if getattr(we_bound, 'tzinfo', None) else we_bound
-            for key in issue_keys:
-                comments = fetch_comments_for_issue(key)
-                for c in comments:
-                    created = convert_timestamp(c.get('created'))
-                    updated = convert_timestamp(c.get('updated'))
-                    ref = updated or created
-                    if not ref:
-                        continue
+            
+            # Handle empty issue_keys
+            if not issue_keys:
+                return
+            
+            # Parallel fetching of comments
+            max_workers = min(10, len(issue_keys))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_key = {executor.submit(fetch_comments_for_issue, key): key for key in issue_keys}
+                
+                for future in as_completed(future_to_key):
+                    key = future_to_key[future]
                     try:
-                        ref_dt = datetime.strptime(ref, '%Y-%m-%d %H:%M:%S')
-                    except Exception:
+                        comments = future.result()
+                    except Exception as e:
+                        logging.warning(f"Failed to fetch comments for {key}: {e}")
                         continue
-                    if not (ws_naive <= ref_dt < we_naive):
-                        continue
-                    a = c.get('author', {})
-                    vis = c.get('visibility', {})
-                    yield {
-                        'Issue_Key': key,
-                        'Comment_ID': c.get('id'),
-                        'Author_Account_ID': a.get('accountId'),
-                        'Author_Display_Name': a.get('displayName'),
-                        'Created': created,
-                        'Updated': updated,
-                        'Body': _body_to_string(c.get('body')),
-                        'Visibility_Type': vis.get('type'),
-                        'Visibility_Value': vis.get('value'),
-                        'SyncTime': now_str,
-                    }
+                    
+                    for c in comments:
+                        created = convert_timestamp(c.get('created'))
+                        updated = convert_timestamp(c.get('updated'))
+                        ref = updated or created
+                        if not ref:
+                            continue
+                        try:
+                            ref_dt = datetime.strptime(ref, '%Y-%m-%d %H:%M:%S')
+                        except Exception:
+                            continue
+                        if not (ws_naive <= ref_dt < we_naive):
+                            continue
+                        a = c.get('author', {})
+                        vis = c.get('visibility', {})
+                        yield {
+                            'Issue_Key': key,
+                            'Comment_ID': c.get('id'),
+                            'Author_Account_ID': a.get('accountId'),
+                            'Author_Display_Name': a.get('displayName'),
+                            'Created': created,
+                            'Updated': updated,
+                            'Body': _body_to_string(c.get('body')),
+                            'Visibility_Type': vis.get('type'),
+                            'Visibility_Value': vis.get('value'),
+                            'SyncTime': now_str,
+                        }
 
         total_rows = 0
 

@@ -35,6 +35,21 @@ setup_root_logging()
 # Jitter used when sleeping after 429s
 JITTER_MAX_SECONDS = 0.3
 
+# Rate limiting settings (Jira Cloud: ~180 req/min = ~3 req/sec)
+JIRA_RATE_LIMIT_PAUSE_SEC = 0.4  # Pause between paginated searches
+
+
+def handle_429_backoff(response, attempt=1, max_attempts=3):
+    """Handle 429 rate limit with exponential backoff."""
+    if response.status_code != 429 or attempt >= max_attempts:
+        return False
+    retry_after = int(response.headers.get('Retry-After', 30) or 30)
+    backoff_time = min(retry_after * (2 ** (attempt - 1)), 120)  # Cap at 2 minutes
+    wait_time = backoff_time + random.uniform(0, JITTER_MAX_SECONDS)
+    logging.warning(f"429 Rate limit (attempt {attempt}/{max_attempts}). Waiting {wait_time:.1f}s")
+    time.sleep(wait_time)
+    return True
+
 
 def create_session_with_retries():
     """Create a requests Session with connection pooling and retry strategy."""
@@ -48,8 +63,8 @@ def create_session_with_retries():
         allowed_methods=["GET", "POST"]
     )
     
-    # Apply to both http and https
-    adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
+    # Apply to both http and https - increased pool to match concurrency (20 parallel workers)
+    adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=30, pool_maxsize=30)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     
@@ -531,41 +546,72 @@ def fetch_and_sync_jira_data():
         observed_min_updated = None
         observed_max_updated = None
 
-        def search_issue_keys(jql: str, label: str):
+        # Create persistent session with connection pooling and retry logic
+        session = create_session_with_retries()
+        
+        def search_issue_keys_paginated(jql: str, label: str):
+            """Fetch ALL matching issue keys with pagination. CRITICAL: Prevents data loss!"""
+            all_keys = []
+            start_at = 0
+            max_results = 100
             headers_local = {'Accept': 'application/json'}
-            params_local = {'jql': jql, 'startAt': 0, 'maxResults': 100, 'fields': 'key'}
             auth_local = (username, api_token)
-            try:
-                resp = requests.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=60)
-                if resp.status_code == 429:
-                    ra = int(resp.headers.get('Retry-After', 30) or 30)
-                    logging.warning(f"429 {label} search; sleeping {ra}s")
-                    time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
-                    return []
-                resp.raise_for_status()
-                data_local = resp.json()
-                issues_local = data_local.get('issues', [])
-                keys = [i.get('key') for i in issues_local if i.get('key')]
-                logging.info(f"{label} pass fetched {len(keys)} issue keys")
-                return keys
-            except Exception as e:
-                logging.error(f"{label} pass error: {e}")
-                return []
+            attempt = 0
+            max_attempts = 3
+            
+            while True:
+                params_local = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
+                try:
+                    resp = session.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=60)
+                    
+                    if resp.status_code == 429:
+                        if handle_429_backoff(resp, attempt + 1, max_attempts):
+                            attempt += 1
+                            continue
+                        else:
+                            logging.error(f"Failed after {max_attempts} 429 attempts on {label}")
+                            break
+                    
+                    resp.raise_for_status()
+                    attempt = 0  # Reset on success
+                    
+                    data_local = resp.json()
+                    issues_local = data_local.get('issues', [])
+                    if not issues_local:
+                        break
+                    
+                    all_keys.extend([i.get('key') for i in issues_local if i.get('key')])
+                    total = data_local.get('total', 0)
+                    
+                    if start_at + max_results >= total:
+                        break
+                    
+                    start_at += max_results
+                    time.sleep(JIRA_RATE_LIMIT_PAUSE_SEC)  # Respect rate limits
+                    
+                except requests.exceptions.Timeout:
+                    logging.warning(f"Timeout fetching keys for {label} at startAt={start_at}")
+                    break
+                except Exception as e:
+                    logging.error(f"Error fetching keys for {label}: {e}")
+                    break
+            
+            logging.info(f"{label}: Fetched {len(all_keys)} total issue keys (paginated)")
+            return all_keys
 
         # Single-pass optimized approach: captures any activity (updates, resolutions, comments)
-        activity_keys = search_issue_keys(jql_any_activity, 'any_activity')
+        # CRITICAL: Using pagination to get ALL matching issues, not just first 100!
+        activity_keys = search_issue_keys_paginated(jql_any_activity, 'any_activity')
         for k in activity_keys: issue_keys_total.add(k)
         logging.info(f"Distinct issue keys to detail fetch (union): {len(issue_keys_total)}")
 
-        # Create persistent session with connection pooling and retry logic
-        session = create_session_with_retries()
-
-        # Detail fetch in parallel
+        # Detail fetch in parallel with increased workers to match connection pool (30)
         issue_key_list = list(issue_keys_total)
         issues_processed = 0
+        MAX_WORKERS = 20  # Increased from 10 to match pool_connections=30
         for i in range(0, len(issue_key_list), BULK_FETCH_SIZE):
             batch_keys = issue_key_list[i:i+BULK_FETCH_SIZE]
-            with ThreadPoolExecutor(max_workers=min(10, len(batch_keys))) as executor:
+            with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(batch_keys))) as executor:
                 fut_map = {executor.submit(fetch_issue_detail, key, session): key for key in batch_keys}
                 for fut in as_completed(fut_map):
                     row = fut.result()
