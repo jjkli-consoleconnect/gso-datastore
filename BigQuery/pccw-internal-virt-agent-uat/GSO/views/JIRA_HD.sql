@@ -54,6 +54,8 @@ SELECT
   hd.Incident_Number,
   hd.Status AS hdStatus,
   hd.CaseType,
+  hd.Priority,
+  hd.Urgency,
   CASE
     WHEN st.`T` IS NOT NULL THEN (REGEXP_EXTRACT(Key, r'^([A-Z]+)') || '-' || st.`T`)
     WHEN CaseType IN ('Problem', 'Request', 'Incident', 'Question', 'Fault Report Request', 'MCEvent-Child', 'MCEvent') THEN ('Remedy-' || CaseType)
@@ -222,5 +224,6 @@ FULL OUTER JOIN UniqueJira AS st
   ON hd.Incident_Number = st.RemedyTicketNumber_flat AND st.unique_rank = 1
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON CONCAT('SR', st.SR_Ref) = shr.SRNo
+
 
 

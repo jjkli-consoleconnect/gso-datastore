@@ -121,3 +121,4 @@ FROM flagged_rows fr
 JOIN summary s ON fr.snapshot_date = s.snapshot_date
 WHERE NOT (fr.expire_type = 'To-be-Expired' 
   AND fr.snapshot_date < (SELECT MAX(snapshot_date) FROM flagged_rows))
+

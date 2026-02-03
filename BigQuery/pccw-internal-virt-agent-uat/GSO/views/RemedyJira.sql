@@ -203,14 +203,10 @@ SELECT
   -- Project code
   REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') AS ProjectCode,
 
-  -- Project group classification
+  -- Project group (Service Delivery vs Center Operations)
   CASE
     WHEN REGEXP_EXTRACT(COALESCE(j.Key, ''), r'^([A-Z]+)') IN ('GSDT','CCPROV') THEN 'Service Delivery'
-    WHEN REGEXP_EXTRACT(COALESCE(j.Key, ''), r'^([A-Z]+)') IN ('TAC', 'CCAS', 'IOTCE', 'VOICECE', 'TXCE', 'SMSCE', 'SH') THEN 'Support'
-    WHEN REGEXP_EXTRACT(COALESCE(j.Key, ''), r'^([A-Z]+)') IN ('ITHD', 'ITOPS') THEN 'IT Operations'
-    WHEN REGEXP_EXTRACT(COALESCE(j.Key, ''), r'^([A-Z]+)') IN ('MSS') THEN 'Center Operations'
-    WHEN REGEXP_EXTRACT(COALESCE(j.Key, ''), r'^([A-Z]+)') IS NULL THEN 'Support'
-    ELSE 'Other'
+    ELSE 'Center Operations'
   END AS Team,
 
   -- GSOTeam: priority 1 = Remedy Assigned Group; priority 2 = Jira ProjectCode (from j.Key)

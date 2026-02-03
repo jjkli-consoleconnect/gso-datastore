@@ -35,7 +35,10 @@ WITH shift_config AS (
     STRUCT('ICX', 'Evening', 23, 8),
     STRUCT('Soft Switch Management', 'Morning', 7, 15),
     STRUCT('Soft Switch Management', 'Afternoon', 15, 23),
-    STRUCT('Soft Switch Management', 'Evening', 23, 7)
+    STRUCT('Soft Switch Management', 'Evening', 23, 7),
+    STRUCT('Planned Event Mgt', 'Undefined', 0, 23),
+    STRUCT('USNOC', 'Undefined', 0, 23),
+    STRUCT('Bel NOC', 'Undefined', 0, 23)
   ])
 ),
 current_time AS (
@@ -145,6 +148,7 @@ base_events AS (
               WHEN 'Morning' THEN '1 Morning'
               WHEN 'Afternoon' THEN '2 Afternoon'
               WHEN 'Evening' THEN '3 Evening'
+              WHEN 'Undefined' THEN '0 Undefined'
             END
           )
         ELSE NULL
@@ -263,6 +267,7 @@ base_events AS (
               WHEN 'Morning' THEN '1 Morning'
               WHEN 'Afternoon' THEN '2 Afternoon'
               WHEN 'Evening' THEN '3 Evening'
+              WHEN 'Undefined' THEN '0 Undefined'
             END
           )
         ELSE NULL
@@ -391,6 +396,7 @@ base_events AS (
               WHEN 'Morning' THEN '1 Morning'
               WHEN 'Afternoon' THEN '2 Afternoon'
               WHEN 'Evening' THEN '3 Evening'
+              WHEN 'Undefined' THEN '0 Undefined'
             END
           )
         ELSE NULL
@@ -446,7 +452,7 @@ SELECT
   ARRAY_AGG(DISTINCT e.Incident_Number ORDER BY e.Incident_Number) AS Tickets_List,
   ARRAY_AGG(
     DISTINCT CONCAT(e.Incident_Number, ' | ', COALESCE(e.CaseType, 'N/A'))
-    ORDER BY e.Incident_Number
+    ORDER BY CONCAT(e.Incident_Number, ' | ', COALESCE(e.CaseType, 'N/A'))
   ) AS Ticket_Details,
   ARRAY_AGG(DISTINCT e.Status ORDER BY e.Status) AS Status_List,
   ARRAY_AGG(DISTINCT e.CaseType ORDER BY e.CaseType) AS CaseType_List,
