@@ -443,24 +443,24 @@ SELECT
     ELSE NULL 
   END AS JiraSelfCreate,
   
-  -- Lead Time_days: Number of days between Jira creation and resolution
-  DATETIME_DIFF(CAST(st.Resolved AS DATETIME), CAST(st.Created AS DATETIME), DAY) AS `Lead Time_days`,
+  -- Lead_Time_days: Number of days between Jira creation and resolution
+  DATETIME_DIFF(CAST(st.Resolved AS DATETIME), CAST(st.Created AS DATETIME), DAY) AS Lead_Time_days,
   
-  -- Lead Time_hr: Number of hours between Jira creation and resolution
-  DATETIME_DIFF(CAST(st.Resolved AS DATETIME), CAST(st.Created AS DATETIME), HOUR) AS `Lead Time_hr`,
+  -- Lead_Time_hr: Number of hours between Jira creation and resolution
+  DATETIME_DIFF(CAST(st.Resolved AS DATETIME), CAST(st.Created AS DATETIME), HOUR) AS Lead_Time_hr,
   
-  -- Lead Time_mins: Number of minutes between Jira creation and resolution
-  DATETIME_DIFF(CAST(st.Resolved AS DATETIME), CAST(st.Created AS DATETIME), MINUTE) AS `Lead Time_mins`,
+  -- Lead_Time_mins: Number of minutes between Jira creation and resolution
+  DATETIME_DIFF(CAST(st.Resolved AS DATETIME), CAST(st.Created AS DATETIME), MINUTE) AS Lead_Time_mins,
   
-  -- Lead Time_secs: Number of seconds between Jira creation and resolution
-  DATETIME_DIFF(CAST(st.Resolved AS DATETIME), CAST(st.Created AS DATETIME), SECOND) AS `Lead Time_secs`,
+  -- Lead_Time_secs: Number of seconds between Jira creation and resolution
+  DATETIME_DIFF(CAST(st.Resolved AS DATETIME), CAST(st.Created AS DATETIME), SECOND) AS Lead_Time_secs,
   
-  -- MTTR Status: Returns 'MTTRPassed' if MTTR passed condition (> 0 and <= 240 mins), otherwise 'MTTRFailed'
+  -- MTTR_Status: Returns 'MTTRPassed' if MTTR passed condition (> 0 and <= 240 mins), otherwise 'MTTRFailed'
   CASE 
     WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= 240
     THEN 'MTTRPassed' 
     ELSE 'MTTRFailed' 
-  END AS `MTTR Status`,
+  END AS MTTR_Status,
   
   -- MTTR_days: MTTR converted from minutes to days
   hd.TrueMTTR_mins / 60 / 24 AS MTTR_days,
