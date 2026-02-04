@@ -8,23 +8,31 @@
 
 # Ensure .gitignore itself is tracked
 !.gitignore
-service-account.json
-Hourly/**/credentials.json
-InitialSync/**/credentials.json
+
+# Configuration files with credentials (NEVER commit these)
+pagerduty_config.json
+jira_config.json
+*_config.json
 
 # Keys and credentials (explicit)
 jira-bigquery-key.json
 jira-bigquery-key-*.json
 credentials.json
 found-credentials.txt
-service-account-*.json
 service-account.json
+service-account-*.json
 
 # Ignore all credential files in any directory
 **/credentials.json
 **/service-account.json
 **/jira-bigquery-key.json
 **/client_secret.json
+**/*_config.json
 
 # Archive folder for cleanup
 Archive/
+
+# Environment files
+.env
+.env.local
+.env.*.local

@@ -15,11 +15,13 @@ class MillisecondFormatter(logging.Formatter):
         """Format time with milliseconds."""
         ct = self.converter(record.created)
         if datefmt:
-            s = time.strftime(datefmt, ct)
-            # Add milliseconds if the format string contains %f
+            # Remove %f if present, we'll add milliseconds separately
+            datefmt_clean = datefmt.replace('%f', '')
+            s = time.strftime(datefmt_clean, ct)
+            # Add milliseconds if the original format string contains %f
             if '%f' in datefmt:
                 milliseconds = int((record.created % 1) * 1000)
-                s = s.replace('%f', f'{milliseconds:03d}')
+                s = s + f'.{milliseconds:03d}'
             return s
         else:
             t = time.strftime(self.default_time_format, ct)
