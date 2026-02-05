@@ -69,7 +69,7 @@ gcloud functions deploy pagerduty-sync \
 | Column | Type | Notes |
 |--------|------|-------|
 | incident_id | STRING (PK) | Unique incident ID |
-| incident_number | INTEGER | Human-readable incident number |
+| incident_number | STRING | Human-readable incident number |
 | title | STRING | Incident title |
 | status | STRING | triggered, acknowledged, resolved |
 | urgency | STRING | high, low |

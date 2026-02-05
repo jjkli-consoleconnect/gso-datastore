@@ -27,7 +27,7 @@ def create_pagerduty_tables(project_id="pccw-internal-virt-agent-uat", dataset_i
         bigquery.SchemaField("UpdatedAt", "TIMESTAMP"),
 
         # Incident-specific fields
-        bigquery.SchemaField("IncidentNumber", "INTEGER"),
+        bigquery.SchemaField("IncidentNumber", "STRING"),
         bigquery.SchemaField("Urgency", "STRING"),
         bigquery.SchemaField("Title", "STRING"),
         bigquery.SchemaField("Description", "STRING"),
@@ -45,8 +45,8 @@ def create_pagerduty_tables(project_id="pccw-internal-virt-agent-uat", dataset_i
         bigquery.SchemaField("AutoResolveTimeout", "INTEGER"),
         bigquery.SchemaField("AcknowledgementTimeout", "INTEGER"),
         bigquery.SchemaField("DefaultEscalationPolicyId", "STRING"),
-        bigquery.SchemaField("Teams", "STRING"),  # JSON array
-        bigquery.SchemaField("Integrations", "STRING"),  # JSON array
+        bigquery.SchemaField("ServiceTeamSummaries", "STRING", mode="REPEATED"),  # Array of team summaries
+        bigquery.SchemaField("ServiceIntegrationSummaries", "STRING", mode="REPEATED"),  # Array of integration summaries
 
         # User-specific fields
         bigquery.SchemaField("Email", "STRING"),
@@ -54,22 +54,22 @@ def create_pagerduty_tables(project_id="pccw-internal-virt-agent-uat", dataset_i
         bigquery.SchemaField("AvatarUrl", "STRING"),
         bigquery.SchemaField("UserRole", "STRING"),
         bigquery.SchemaField("TimeZone", "STRING"),
-        bigquery.SchemaField("UserTeams", "STRING"),  # JSON array
+        bigquery.SchemaField("UserTeamSummaries", "STRING", mode="REPEATED"),  # Array of team summaries
 
         # Team-specific fields
         bigquery.SchemaField("TeamDescription", "STRING"),
-        bigquery.SchemaField("Members", "STRING"),  # JSON array
+        bigquery.SchemaField("MemberSummaries", "STRING", mode="REPEATED"),  # Array of member summaries
 
         # Schedule-specific fields
         bigquery.SchemaField("ScheduleTimeZone", "STRING"),
-        bigquery.SchemaField("ScheduleLayers", "STRING"),  # JSON array
-        bigquery.SchemaField("Overrides", "STRING"),  # JSON array
+        bigquery.SchemaField("ScheduleLayerSummaries", "STRING", mode="REPEATED"),  # Array of layer summaries
+        bigquery.SchemaField("OverrideSummaries", "STRING", mode="REPEATED"),  # Array of override summaries
         bigquery.SchemaField("FinalSchedule", "STRING"),  # JSON object
 
         # Escalation Policy-specific fields
         bigquery.SchemaField("NumLayers", "INTEGER"),
         bigquery.SchemaField("RepeatEnabled", "BOOLEAN"),
-        bigquery.SchemaField("EscalationRules", "STRING"),  # JSON array
+        bigquery.SchemaField("EscalationRuleSummaries", "STRING", mode="REPEATED"),  # Array of rule summaries
 
         # On-Call-specific fields
         bigquery.SchemaField("UserId", "STRING"),
@@ -98,9 +98,9 @@ def create_pagerduty_tables(project_id="pccw-internal-virt-agent-uat", dataset_i
 
     try:
         client.create_table(table)
-        print(f"✓ Created table {dataset_id}.{table_id}")
+        print(f"Created table {dataset_id}.{table_id}")
     except Exception as e:
-        print(f"✗ Error creating {dataset_id}.{table_id}: {e}")
+        print(f"Error creating {dataset_id}.{table_id}: {e}")
 
 
 if __name__ == "__main__":

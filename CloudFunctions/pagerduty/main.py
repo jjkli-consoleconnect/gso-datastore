@@ -99,6 +99,17 @@ def build_parent_id(entity_type: str, item: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def extract_summaries(items_array: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """Extract 'summary' field from array of objects."""
+    if not items_array:
+        return []
+    summaries = []
+    for item in items_array:
+        if isinstance(item, dict) and "summary" in item:
+            summaries.append(item.get("summary"))
+    return summaries
+
+
 def build_entity_row(entity_type: str, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     entity_id = build_entity_id(entity_type, item)
     if not entity_id:
@@ -144,31 +155,31 @@ def build_entity_row(entity_type: str, item: Dict[str, Any]) -> Optional[Dict[st
         "AutoResolveTimeout": None,
         "AcknowledgementTimeout": None,
         "DefaultEscalationPolicyId": None,
-        "Teams": None,
-        "Integrations": None,
-        "Email": None,
-        "UserStatus": None,
-        "AvatarUrl": None,
-        "UserRole": None,
-        "TimeZone": None,
-        "UserTeams": None,
-        "TeamDescription": None,
-        "Members": None,
-        "ScheduleTimeZone": None,
-        "ScheduleLayers": None,
-        "Overrides": None,
-        "FinalSchedule": None,
-        "NumLayers": None,
-        "RepeatEnabled": None,
-        "EscalationRules": None,
-        "UserId": None,
-        "ScheduleId": None,
-        "OnCallStart": None,
-        "OnCallEnd": None,
-        "OnCallLevel": None,
-        "AlertStatus": None,
-        "AlertBody": None,
-        "AlertCreatedAt": None,
+           "ServiceTeamSummaries": [],
+           "ServiceIntegrationSummaries": [],
+           "Email": None,
+           "UserStatus": None,
+           "AvatarUrl": None,
+           "UserRole": None,
+           "TimeZone": None,
+           "UserTeamSummaries": [],
+           "TeamDescription": None,
+           "MemberSummaries": [],
+           "ScheduleTimeZone": None,
+           "ScheduleLayerSummaries": [],
+           "OverrideSummaries": [],
+           "FinalSchedule": None,
+           "NumLayers": None,
+           "RepeatEnabled": None,
+           "EscalationRuleSummaries": [],
+           "UserId": None,
+           "ScheduleId": None,
+           "OnCallStart": None,
+           "OnCallEnd": None,
+           "OnCallLevel": None,
+           "AlertStatus": None,
+           "AlertBody": None,
+           "AlertCreatedAt": None,
     }
 
     # Entity-specific field extraction
@@ -193,8 +204,8 @@ def build_entity_row(entity_type: str, item: Dict[str, Any]) -> Optional[Dict[st
         row["AcknowledgementTimeout"] = item.get("acknowledgement_timeout")
         escalation_policy = item.get("escalation_policy")
         row["DefaultEscalationPolicyId"] = escalation_policy.get("id") if escalation_policy else None
-        row["Teams"] = json.dumps(item.get("teams", []), ensure_ascii=False) if item.get("teams") else None
-        row["Integrations"] = json.dumps(item.get("integrations", []), ensure_ascii=False) if item.get("integrations") else None
+        row["ServiceTeamSummaries"] = extract_summaries(item.get("teams"))
+        row["ServiceIntegrationSummaries"] = extract_summaries(item.get("integrations"))
     
     elif entity_type == "users":
         row["Email"] = item.get("email")
@@ -202,22 +213,22 @@ def build_entity_row(entity_type: str, item: Dict[str, Any]) -> Optional[Dict[st
         row["AvatarUrl"] = item.get("avatar_url")
         row["UserRole"] = item.get("role")
         row["TimeZone"] = item.get("time_zone")
-        row["UserTeams"] = json.dumps(item.get("teams", []), ensure_ascii=False) if item.get("teams") else None
+        row["UserTeamSummaries"] = extract_summaries(item.get("teams"))
     
     elif entity_type == "teams":
         row["TeamDescription"] = item.get("description")
-        row["Members"] = json.dumps(item.get("members", []), ensure_ascii=False) if item.get("members") else None
+        row["MemberSummaries"] = extract_summaries(item.get("members"))
     
     elif entity_type == "schedules":
         row["ScheduleTimeZone"] = item.get("time_zone")
-        row["ScheduleLayers"] = json.dumps(item.get("schedule_layers", []), ensure_ascii=False) if item.get("schedule_layers") else None
-        row["Overrides"] = json.dumps(item.get("overrides", []), ensure_ascii=False) if item.get("overrides") else None
+        row["ScheduleLayerSummaries"] = extract_summaries(item.get("schedule_layers"))
+        row["OverrideSummaries"] = extract_summaries(item.get("overrides"))
         row["FinalSchedule"] = json.dumps(item.get("final_schedule"), ensure_ascii=False) if item.get("final_schedule") else None
     
     elif entity_type == "escalation_policies":
         row["NumLayers"] = item.get("num_layers")
         row["RepeatEnabled"] = item.get("repeat_enabled")
-        row["EscalationRules"] = json.dumps(item.get("escalation_rules", []), ensure_ascii=False) if item.get("escalation_rules") else None
+        row["EscalationRuleSummaries"] = extract_summaries(item.get("escalation_rules"))
     
     elif entity_type == "oncalls":
         user = item.get("user")
@@ -257,7 +268,7 @@ def create_or_replace_temp_table(client: bigquery.Client, dataset_id: str, temp_
         bigquery.SchemaField("UpdatedAt", "TIMESTAMP"),
         
         # Incident fields
-        bigquery.SchemaField("IncidentNumber", "INTEGER"),
+        bigquery.SchemaField("IncidentNumber", "STRING"),
         bigquery.SchemaField("Urgency", "STRING"),
         bigquery.SchemaField("Title", "STRING"),
         bigquery.SchemaField("Description", "STRING"),
@@ -275,8 +286,8 @@ def create_or_replace_temp_table(client: bigquery.Client, dataset_id: str, temp_
         bigquery.SchemaField("AutoResolveTimeout", "INTEGER"),
         bigquery.SchemaField("AcknowledgementTimeout", "INTEGER"),
         bigquery.SchemaField("DefaultEscalationPolicyId", "STRING"),
-        bigquery.SchemaField("Teams", "STRING"),
-        bigquery.SchemaField("Integrations", "STRING"),
+        bigquery.SchemaField("ServiceTeamSummaries", "STRING", mode="REPEATED"),
+        bigquery.SchemaField("ServiceIntegrationSummaries", "STRING", mode="REPEATED"),
         
         # User fields
         bigquery.SchemaField("Email", "STRING"),
@@ -284,22 +295,22 @@ def create_or_replace_temp_table(client: bigquery.Client, dataset_id: str, temp_
         bigquery.SchemaField("AvatarUrl", "STRING"),
         bigquery.SchemaField("UserRole", "STRING"),
         bigquery.SchemaField("TimeZone", "STRING"),
-        bigquery.SchemaField("UserTeams", "STRING"),
+        bigquery.SchemaField("UserTeamSummaries", "STRING", mode="REPEATED"),
         
         # Team fields
         bigquery.SchemaField("TeamDescription", "STRING"),
-        bigquery.SchemaField("Members", "STRING"),
+        bigquery.SchemaField("MemberSummaries", "STRING", mode="REPEATED"),
         
         # Schedule fields
         bigquery.SchemaField("ScheduleTimeZone", "STRING"),
-        bigquery.SchemaField("ScheduleLayers", "STRING"),
-        bigquery.SchemaField("Overrides", "STRING"),
+        bigquery.SchemaField("ScheduleLayerSummaries", "STRING", mode="REPEATED"),
+        bigquery.SchemaField("OverrideSummaries", "STRING", mode="REPEATED"),
         bigquery.SchemaField("FinalSchedule", "STRING"),
         
         # Escalation Policy fields
         bigquery.SchemaField("NumLayers", "INTEGER"),
         bigquery.SchemaField("RepeatEnabled", "BOOLEAN"),
-        bigquery.SchemaField("EscalationRules", "STRING"),
+        bigquery.SchemaField("EscalationRuleSummaries", "STRING", mode="REPEATED"),
         
         # On-Call fields
         bigquery.SchemaField("UserId", "STRING"),
@@ -440,9 +451,14 @@ def pagerduty_sync(request):
 
         all_rows: List[Dict[str, Any]] = []
         for entity_type, endpoint in endpoints:
-            logging.info(f"Syncing {entity_type}...")
-            # Add since parameter for delta sync (some endpoints don't support it, that's ok)
-            params = {"since": since} if entity_type in ["incidents", "services", "users", "schedules"] else {}
+            # Use delta sync for endpoints that support 'since' parameter
+            # oncalls, escalation_policies, teams don't change often, so full sync is acceptable
+            use_delta = entity_type in ["incidents", "services", "users", "schedules", "oncalls"]
+            params = {"since": since} if use_delta else {}
+            
+            sync_type = "delta" if use_delta else "full"
+            logging.info(f"Syncing {entity_type} ({sync_type})...")
+            
             raw_data = pagerduty_request(endpoint, pd_token, params=params)
             if raw_data is None:
                 logging.error(f"Failed to fetch {entity_type} from PagerDuty")
@@ -475,12 +491,12 @@ def pagerduty_sync(request):
                 "ImpactedServices", "EscalationPolicyId", "FirstTriggeredAt", "LastStatusChangeAt",
                 "LastStatusChangeBy", "FirstResolvedAt", "LastResolvedAt", "ServiceStatus",
                 "ServiceDescription", "AutoResolveTimeout", "AcknowledgementTimeout",
-                "DefaultEscalationPolicyId", "Teams", "Integrations", "Email", "UserStatus",
-                "AvatarUrl", "UserRole", "TimeZone", "UserTeams", "TeamDescription", "Members",
-                "ScheduleTimeZone", "ScheduleLayers", "Overrides", "FinalSchedule", "NumLayers",
-                "RepeatEnabled", "EscalationRules", "UserId", "ScheduleId", "OnCallStart",
-                "OnCallEnd", "OnCallLevel", "AlertStatus", "AlertBody", "AlertCreatedAt",
-                "RawJson", "SyncTime"
+                "DefaultEscalationPolicyId", "ServiceTeamSummaries", "ServiceIntegrationSummaries",
+                "Email", "UserStatus", "AvatarUrl", "UserRole", "TimeZone", "UserTeamSummaries",
+                "TeamDescription", "MemberSummaries", "ScheduleTimeZone", "ScheduleLayerSummaries",
+                "OverrideSummaries", "FinalSchedule", "NumLayers", "RepeatEnabled",
+                "EscalationRuleSummaries", "UserId", "ScheduleId", "OnCallStart", "OnCallEnd",
+                "OnCallLevel", "AlertStatus", "AlertBody", "AlertCreatedAt", "RawJson", "SyncTime"
             ]
             
             # Build UPDATE SET clause (exclude EntityType, EntityId which are the key)
