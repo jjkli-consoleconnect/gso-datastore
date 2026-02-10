@@ -96,4 +96,3 @@ def setup_root_logging(level_override=None):
     if log_level > logging.DEBUG:
         for lib in ('google', 'google.cloud', 'urllib3', 'requests'):
             logging.getLogger(lib).setLevel(logging.WARNING)
-

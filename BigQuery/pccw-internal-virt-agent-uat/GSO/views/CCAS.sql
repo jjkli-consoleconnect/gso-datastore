@@ -16,11 +16,72 @@ WITH TicketWithLinkedKeys AS (
   FROM
     `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
   WHERE REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAS)')
+),
+PendingTransitions AS (
+  SELECT
+    l.Issue_Key,
+    l.Transitioned_To,
+    l.Transition_Timestamp,
+    COALESCE(
+      LEAD(l.Transition_Timestamp) OVER (
+        PARTITION BY l.Issue_Key
+        ORDER BY l.Transition_Timestamp
+      ),
+      twk.Resolved,
+      twk.Updated
+    ) AS next_transition_timestamp
+  FROM
+    `pccw-internal-virt-agent-uat.GSO.JiraChangelog` l
+  LEFT JOIN
+    TicketWithLinkedKeys twk
+  ON
+    twk.Key = l.Issue_Key
+),
+PendingDurations AS (
+  SELECT
+    pt.Issue_Key,
+    SUM(
+      CASE
+        WHEN pt.Transitioned_To = 'Pending' THEN
+          TIMESTAMP_DIFF(
+            pt.next_transition_timestamp,
+            pt.Transition_Timestamp,
+            MINUTE
+          )
+        ELSE 0
+      END
+    ) AS pending_minutes
+  FROM
+    PendingTransitions pt
+  GROUP BY
+    pt.Issue_Key
+),
+TicketWithSla AS (
+  SELECT
+    twk.*,
+    COALESCE(pd.pending_minutes, 0) AS pending_minutes,
+    CASE
+      WHEN twk.Resolved IS NULL THEN NULL
+      ELSE GREATEST(
+        0,
+        TIMESTAMP_DIFF(twk.Resolved, twk.Created, MINUTE) - COALESCE(pd.pending_minutes, 0)
+      )
+    END AS resolution_minutes
+  FROM
+    TicketWithLinkedKeys twk
+  LEFT JOIN
+    PendingDurations pd
+  ON
+    twk.Key = pd.Issue_Key
 )
 
 SELECT
   twk.Key AS Issue_Key,
-  twk.T AS Type,
+  CASE
+    WHEN twk.T = 'Application Incident' THEN 'Incident'
+    WHEN twk.T = 'Application Problem' THEN 'Problem'
+    ELSE twk.T
+  END AS Type,
   twk.Summary,
   twk.Status,
   twk.Priority,
@@ -34,23 +95,44 @@ SELECT
   twk.SyncTime,
 
   -- Resolution SLA calculation (in hours)
-  TIMESTAMP_DIFF(twk.Resolved, twk.Created, HOUR) AS Resolution_hrs,
-  TIMESTAMP_DIFF(twk.Resolved, twk.Created, DAY) AS Resolution_days,
+  CASE
+    WHEN twk.Resolved IS NULL THEN NULL
+    ELSE twk.resolution_minutes / 60.0
+  END AS Resolution_hrs,
+  CASE
+    WHEN twk.Resolved IS NULL THEN NULL
+    ELSE twk.resolution_minutes / 1440.0
+  END AS Resolution_days,
 
   -- SLA target (example: 24h for most, 8h for Incident, 1d for Service Request)
   CASE
-    WHEN twk.T = 'Incident' THEN 8
-    WHEN twk.T = 'Service Request' THEN 24
-    ELSE 24
+    WHEN twk.T IN ('Platform Improvement', 'Sustaining Reliability Engineering', 'Task') THEN NULL
+    WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
+    WHEN twk.Priority = 'High' THEN 8
+    WHEN twk.Priority IN ('Medium', 'Normal') THEN 16
+    WHEN twk.Priority IN ('Low', 'Minor') THEN 48
+    ELSE NULL
   END AS SLA_Resolution_Target_hrs,
 
   -- SLA met/breached
   CASE
     WHEN twk.Resolved IS NULL THEN NULL
-    WHEN TIMESTAMP_DIFF(twk.Resolved, twk.Created, MINUTE) / 60.0 <= 
-         CASE WHEN twk.T = 'Incident' THEN 8
-              WHEN twk.T = 'Service Request' THEN 24
-              ELSE 24 END
+    WHEN CASE
+           WHEN twk.T IN ('Platform Improvement', 'Sustaining Reliability Engineering', 'Task') THEN NULL
+           WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
+           WHEN twk.Priority = 'High' THEN 8
+           WHEN twk.Priority IN ('Medium', 'Normal') THEN 16
+           WHEN twk.Priority IN ('Low', 'Minor') THEN 48
+           ELSE NULL
+         END IS NULL THEN NULL
+    WHEN twk.resolution_minutes / 60.0 <=
+         CASE
+           WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
+           WHEN twk.Priority = 'High' THEN 8
+           WHEN twk.Priority IN ('Medium', 'Normal') THEN 16
+           WHEN twk.Priority IN ('Low', 'Minor') THEN 48
+           ELSE NULL
+         END
     THEN 'Met'
     ELSE 'Breached'
   END AS SLA_Resolution_Status,
@@ -100,7 +182,7 @@ SELECT
   l.Transitioned_By_Display_Name
 
 FROM
-  TicketWithLinkedKeys twk
+  TicketWithSla twk
 LEFT JOIN
   `pccw-internal-virt-agent-uat.GSO.JiraComments` c
 ON

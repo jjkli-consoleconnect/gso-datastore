@@ -434,9 +434,9 @@ def pagerduty_sync(request):
         table_id = "PagerDuty"
         temp_table_id = "PagerDuty_temp"
 
-        # Calculate 3-hour window for delta sync
-        since = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
-        logging.info(f"Fetching data since {since} (3-hour delta sync)")
+        # Calculate 48-hour window for delta sync
+        since = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        logging.info(f"Fetching data since {since} (48-hour delta sync)")
 
         endpoints = [
             ("incidents", "/incidents"),
@@ -528,7 +528,7 @@ def pagerduty_sync(request):
             """
             job = client.query(merge_query)
             job.result()
-            rows_merged = job.num_dml_affected_rows or 0
+            rows_merged = int(job.num_dml_affected_rows or 0)
             total_rows_merged += rows_merged
             logging.info(f"Merged {rows_merged} rows into {dataset_id}.{table_id}")
         except Exception as e:
