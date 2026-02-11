@@ -42,7 +42,9 @@ PendingDurations AS (
     pt.Issue_Key,
     SUM(
       CASE
-        WHEN pt.Transitioned_To = 'Pending' THEN
+        WHEN pt.Transitioned_To LIKE 'Pending%' 
+          OR pt.Transitioned_To LIKE 'Awaiting%'
+          OR pt.Transitioned_To IN ('On Hold', 'ON-HOLD') THEN
           TIMESTAMP_DIFF(
             pt.next_transition_timestamp,
             pt.Transition_Timestamp,

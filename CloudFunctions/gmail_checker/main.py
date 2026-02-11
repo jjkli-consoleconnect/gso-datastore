@@ -68,8 +68,7 @@ def search_gmail_for_pattern(service, pattern: Dict) -> List[str]:
         query_parts = [
             f'subject:"{pattern["subject"]}"',
             f'from:{pattern["from"]}',
-            f'label:{pattern["label"]}',
-            'is:unread'
+            f'label:{pattern["label"]}'
         ]
         search_query = ' '.join(query_parts)
         
@@ -85,6 +84,8 @@ def search_gmail_for_pattern(service, pattern: Dict) -> List[str]:
         messages = results.get('messages', [])
         logger.info(f"Found {len(messages)} messages for pattern: {pattern['name']}")
         
+        # Return message IDs directly - filtering is not needed since we remove
+        # the 'pubsub' label after processing, preventing reprocessing
         return [msg['id'] for msg in messages]
         
     except Exception as e:
