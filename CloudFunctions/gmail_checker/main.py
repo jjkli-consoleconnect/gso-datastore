@@ -36,6 +36,20 @@ EMAIL_PATTERNS = [
         "from": "noreply-bmchelix@onbmc.com",
         "label": "pubsub",
         "pubsub_topic": "gmail-to-bq-hdwl"
+    },
+    {
+        "name": "Training Data",
+        "subject": "Learning@Connect Background Report Job Email Notification",
+        "from": "system@successfactors.com",
+        "label": "pubsub",
+        "pubsub_topic": "gmail-to-training-data"
+    },
+    {
+        "name": "SHR People",
+        "subject": "pubsub - GSO.SHR-People",
+        "from": "noreply-bmchelix@onbmc.com",
+        "label": "pubsub",
+        "pubsub_topic": "gmail-to-shr-people"
     }
 ]
 
@@ -65,11 +79,13 @@ def search_gmail_for_pattern(service, pattern: Dict) -> List[str]:
     """Search Gmail for messages matching the pattern"""
     try:
         # Build search query
-        query_parts = [
-            f'subject:"{pattern["subject"]}"',
-            f'from:{pattern["from"]}',
-            f'label:{pattern["label"]}'
-        ]
+        query_parts = []
+        if pattern.get("subject"):
+            query_parts.append(f'subject:"{pattern["subject"]}"')
+        if pattern.get("from"):
+            query_parts.append(f'from:{pattern["from"]}')
+        if pattern.get("label"):
+            query_parts.append(f'label:{pattern["label"]}')
         search_query = ' '.join(query_parts)
         
         logger.info(f"Searching Gmail with query: {search_query}")
@@ -83,6 +99,23 @@ def search_gmail_for_pattern(service, pattern: Dict) -> List[str]:
         
         messages = results.get('messages', [])
         logger.info(f"Found {len(messages)} messages for pattern: {pattern['name']}")
+        if messages:
+            logger.info(f"Matched message IDs for {pattern['name']}: {[m['id'] for m in messages]}")
+        else:
+            # Troubleshooting: check if any messages exist with just the label
+            label_query = f'label:{pattern["label"]}'
+            label_results = service.users().messages().list(
+                userId='me',
+                q=label_query,
+                maxResults=5
+            ).execute()
+            label_messages = label_results.get('messages', [])
+            logger.info(
+                f"No matches for pattern {pattern['name']}. "
+                f"Label-only query found {len(label_messages)} messages."
+            )
+            if label_messages:
+                logger.info(f"Label-only message IDs: {[m['id'] for m in label_messages]}")
         
         # Return message IDs directly - filtering is not needed since we remove
         # the 'pubsub' label after processing, preventing reprocessing

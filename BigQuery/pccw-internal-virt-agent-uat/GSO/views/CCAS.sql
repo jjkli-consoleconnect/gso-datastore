@@ -107,18 +107,23 @@ SELECT
   END AS Resolution_days,
 
   -- SLA target (example: 24h for most, 8h for Incident, 1d for Service Request)
-  CASE
-    WHEN twk.T IN ('Platform Improvement', 'Sustaining Reliability Engineering', 'Task') THEN NULL
-    WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
-    WHEN twk.Priority = 'High' THEN 8
-    WHEN twk.Priority IN ('Medium', 'Normal') THEN 16
-    WHEN twk.Priority IN ('Low', 'Minor') THEN 48
-    ELSE NULL
-  END AS SLA_Resolution_Target_hrs,
+  COALESCE(
+    CAST(
+      CASE
+        WHEN twk.T IN ('Platform Improvement', 'Sustaining Reliability Engineering', 'Task') THEN NULL
+        WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
+        WHEN twk.Priority = 'High' THEN 8
+        WHEN twk.Priority IN ('Medium', 'Normal') THEN 16
+        WHEN twk.Priority IN ('Low', 'Minor') THEN 48
+        ELSE NULL
+      END AS STRING
+    ),
+    'No Data'
+  ) AS SLA_Resolution_Target_hrs,
 
   -- SLA met/breached
   CASE
-    WHEN twk.Resolved IS NULL THEN NULL
+    WHEN twk.Resolved IS NULL THEN 'No Data'
     WHEN CASE
            WHEN twk.T IN ('Platform Improvement', 'Sustaining Reliability Engineering', 'Task') THEN NULL
            WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
@@ -126,7 +131,7 @@ SELECT
            WHEN twk.Priority IN ('Medium', 'Normal') THEN 16
            WHEN twk.Priority IN ('Low', 'Minor') THEN 48
            ELSE NULL
-         END IS NULL THEN NULL
+         END IS NULL THEN 'No Data'
     WHEN twk.resolution_minutes / 60.0 <=
          CASE
            WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
