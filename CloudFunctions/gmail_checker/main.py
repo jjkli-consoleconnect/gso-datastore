@@ -23,13 +23,14 @@ PROJECT_ID = "pccw-internal-virt-agent-uat"
 
 # Email patterns to monitor
 EMAIL_PATTERNS = [
-    {
-        "name": "Handover Queue",
-        "subject": "pubsub - Handover Queue",
-        "from": "noreply-bmchelix@onbmc.com",
-        "label": "pubsub",
-        "pubsub_topic": "gmail-handover-reports"
-    },
+    # TEMPORARILY DISABLED - Handover Queue
+    # {
+    #     "name": "Handover Queue",
+    #     "subject": "pubsub - Handover Queue",
+    #     "from": "noreply-bmchelix@onbmc.com",
+    #     "label": "pubsub",
+    #     "pubsub_topic": "gmail-handover-reports"
+    # },
     {
         "name": "BQ HDWL",
         "subject": "pubsub - HDWL",
@@ -117,9 +118,27 @@ def search_gmail_for_pattern(service, pattern: Dict) -> List[str]:
             if label_messages:
                 logger.info(f"Label-only message IDs: {[m['id'] for m in label_messages]}")
         
-        # Return message IDs directly - filtering is not needed since we remove
-        # the 'pubsub' label after processing, preventing reprocessing
-        return [msg['id'] for msg in messages]
+        # Sort oldest-first to avoid newer data being overwritten by older snapshots
+        if not messages:
+            return []
+
+        message_dates = []
+        for msg in messages:
+            try:
+                meta = service.users().messages().get(
+                    userId='me',
+                    id=msg['id'],
+                    format='metadata',
+                    metadataHeaders=['Date']
+                ).execute()
+                internal_date = int(meta.get('internalDate', '0'))
+            except Exception as e:
+                logger.warning(f"Failed to fetch internalDate for {msg['id']}: {e}")
+                internal_date = 0
+            message_dates.append((internal_date, msg['id']))
+
+        message_dates.sort(key=lambda x: x[0])
+        return [msg_id for _, msg_id in message_dates]
         
     except Exception as e:
         logger.error(f"Error searching Gmail for pattern {pattern['name']}: {e}")

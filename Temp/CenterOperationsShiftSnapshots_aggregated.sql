@@ -315,6 +315,10 @@ base_events AS (
     WHERE wl.WorkLog_Submit_Date IS NOT NULL
       AND hd.Assigned_Group != 'Quality Assurance' AND hd.Status != 'Cancelled'
       AND NOT REGEXP_CONTAINS(IFNULL(wl.ExtractedDescription, ''), '(?i)JIRA status change,|From:\\s*globalhelpdesk@pccwglobal\\.com|To:\\s*gsocph@pccwglobal\\.com|Supervisor reviewed')
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY wl.WorkLog_ID
+      ORDER BY wl.WorkLog_Submit_Date DESC, wl.inserted_at DESC
+    ) = 1
   ) AS work_logs
 ),
 enriched AS (

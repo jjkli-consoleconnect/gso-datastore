@@ -1,7 +1,9 @@
+-- View for Verification Dispute data synced from Google Sheets via GAS
+-- Data is cleaned and validated during sync (see GAS/VerificationDispute_to_BQ)
+-- Table is partitioned by File_Dispute_Date and clustered by File_Dispute_Date, Vendor_Name, Dispute_Category__Reason
 SELECT 
-  
-  PARSE_DATE('%e %b %Y', File_Dispute_Date) AS File_Dispute_Date,
-  DATE_TRUNC(PARSE_DATE('%e %b %Y', File_Dispute_Date), MONTH) AS File_Dispute_Month,
+  File_Dispute_Date,
+  DATE_TRUNC(File_Dispute_Date, MONTH) AS File_Dispute_Month,
   IS_ID, 
   Charged_Company, 
   Vendor_Name, 
@@ -31,7 +33,10 @@ SELECT
   Days_of_Resovled, 
   Actual_Days_of_Resolved, 
   Vendor_Group_Name, 
-  TRIM(Dispute_Reason) AS Dispute_Reason
+  Dispute_Reason,
+  ingestion_time,
+  _source_row_number
   
 FROM `pccw-internal-virt-agent-uat.GSO.VerificationDisputeList`
+
 

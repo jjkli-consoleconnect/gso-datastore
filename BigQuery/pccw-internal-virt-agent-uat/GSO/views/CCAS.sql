@@ -17,64 +17,114 @@ WITH TicketWithLinkedKeys AS (
     `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
   WHERE REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAS)')
 ),
-PendingTransitions AS (
+StatusTransitions AS (
   SELECT
     l.Issue_Key,
-    l.Transitioned_To,
-    l.Transition_Timestamp,
-    COALESCE(
-      LEAD(l.Transition_Timestamp) OVER (
-        PARTITION BY l.Issue_Key
-        ORDER BY l.Transition_Timestamp
-      ),
-      twk.Resolved,
-      twk.Updated
-    ) AS next_transition_timestamp
+    l.Transitioned_To AS status,
+    l.Transition_Timestamp AS status_start,
+    LEAD(l.Transition_Timestamp) OVER (
+      PARTITION BY l.Issue_Key
+      ORDER BY l.Transition_Timestamp
+    ) AS status_end
   FROM
     `pccw-internal-virt-agent-uat.GSO.JiraChangelog` l
-  LEFT JOIN
-    TicketWithLinkedKeys twk
-  ON
-    twk.Key = l.Issue_Key
+  WHERE l.Issue_Key IN (SELECT Key FROM TicketWithLinkedKeys)
 ),
-PendingDurations AS (
+FirstTriagingOrReviewing AS (
   SELECT
-    pt.Issue_Key,
+    Issue_Key,
+    MIN(status_start) AS first_ack_timestamp
+  FROM
+    StatusTransitions
+  WHERE status IN ('Triaging', 'Reviewing')
+  GROUP BY
+    Issue_Key
+),
+FirstClosed AS (
+  SELECT
+    Issue_Key,
+    MIN(status_start) AS first_closed_timestamp
+  FROM
+    StatusTransitions
+  WHERE status = 'Closed'
+  GROUP BY
+    Issue_Key
+),
+MTTRDurations AS (
+  SELECT
+    Issue_Key,
+    -- MTTR (SLA): Sum of time in active statuses
     SUM(
       CASE
-        WHEN pt.Transitioned_To LIKE 'Pending%' 
-          OR pt.Transitioned_To LIKE 'Awaiting%'
-          OR pt.Transitioned_To IN ('On Hold', 'ON-HOLD') THEN
+        WHEN status IN ('In Progress', 'Triaging', 'Reviewing', 'Escalated') THEN
           TIMESTAMP_DIFF(
-            pt.next_transition_timestamp,
-            pt.Transition_Timestamp,
+            COALESCE(status_end, CURRENT_TIMESTAMP()),
+            status_start,
             MINUTE
           )
         ELSE 0
       END
-    ) AS pending_minutes
+    ) AS mttr_sla_minutes,
+    -- MTTR (Hold): Sum of time in hold statuses (anything with Pending, plus Acknowledge, Blocked, RPO Coordination)
+    SUM(
+      CASE
+        WHEN status LIKE '%Pending%' 
+          OR status IN ('Acknowledge', 'Blocked', 'RPO Coordination') THEN
+          TIMESTAMP_DIFF(
+            COALESCE(status_end, CURRENT_TIMESTAMP()),
+            status_start,
+            MINUTE
+          )
+        ELSE 0
+      END
+    ) AS mttr_hold_minutes
   FROM
-    PendingTransitions pt
+    StatusTransitions
   GROUP BY
-    pt.Issue_Key
+    Issue_Key
 ),
 TicketWithSla AS (
   SELECT
     twk.*,
-    COALESCE(pd.pending_minutes, 0) AS pending_minutes,
-    CASE
-      WHEN twk.Resolved IS NULL THEN NULL
-      ELSE GREATEST(
-        0,
-        TIMESTAMP_DIFF(twk.Resolved, twk.Created, MINUTE) - COALESCE(pd.pending_minutes, 0)
-      )
-    END AS resolution_minutes
+    ftr.first_ack_timestamp,
+    fc.first_closed_timestamp,
+    mttr.mttr_sla_minutes,
+    mttr.mttr_hold_minutes
   FROM
     TicketWithLinkedKeys twk
   LEFT JOIN
-    PendingDurations pd
-  ON
-    twk.Key = pd.Issue_Key
+    FirstTriagingOrReviewing ftr
+  ON twk.Key = ftr.Issue_Key
+  LEFT JOIN
+    FirstClosed fc
+  ON twk.Key = fc.Issue_Key
+  LEFT JOIN
+    MTTRDurations mttr
+  ON twk.Key = mttr.Issue_Key
+),
+TimeMetrics AS (
+  SELECT
+    tws.* EXCEPT(mttr_sla_minutes, mttr_hold_minutes),
+    
+    -- MTTA: Mean Time to Acknowledge (minutes from creation to first Triaging/Reviewing)
+    CASE
+      WHEN tws.first_ack_timestamp IS NULL THEN NULL
+      ELSE TIMESTAMP_DIFF(tws.first_ack_timestamp, tws.Created, MINUTE)
+    END AS mtta_minutes,
+    
+    -- MTTR (SLA): Sum of active status time
+    COALESCE(tws.mttr_sla_minutes, 0) AS mttr_sla_minutes,
+    
+    -- MTTR (Hold): Sum of hold status time
+    COALESCE(tws.mttr_hold_minutes, 0) AS mttr_hold_minutes,
+    
+    -- MTTC: Mean Time to Close (minutes from creation to first Closed status)
+    CASE
+      WHEN tws.first_closed_timestamp IS NULL THEN NULL
+      ELSE TIMESTAMP_DIFF(tws.first_closed_timestamp, tws.Created, MINUTE)
+    END AS mttc_minutes
+  FROM
+    TicketWithSla tws
 )
 
 SELECT
@@ -91,20 +141,67 @@ SELECT
   twk.Created AS Ticket_Created,
   twk.Updated AS Ticket_Updated,
   twk.Resolved AS Ticket_Resolved,
+  twk.first_closed_timestamp AS Ticket_Closed,
   twk.linkedkeys,
   twk.AppSupEscalation,
   twk.Resolution,
   twk.SyncTime,
 
-  -- Resolution SLA calculation (in hours)
+  -- MTTA: Mean Time to Acknowledge (first response to Triaging/Reviewing)
   CASE
-    WHEN twk.Resolved IS NULL THEN NULL
-    ELSE twk.resolution_minutes / 60.0
-  END AS Resolution_hrs,
+    WHEN twk.mtta_minutes IS NULL THEN NULL
+    ELSE twk.mtta_minutes
+  END AS MTTA_minutes,
   CASE
-    WHEN twk.Resolved IS NULL THEN NULL
-    ELSE twk.resolution_minutes / 1440.0
-  END AS Resolution_days,
+    WHEN twk.mtta_minutes IS NULL THEN NULL
+    ELSE twk.mtta_minutes / 60.0
+  END AS MTTA_hrs,
+  CASE
+    WHEN twk.mtta_minutes IS NULL THEN NULL
+    ELSE twk.mtta_minutes / 1440.0
+  END AS MTTA_days,
+
+  -- MTTR (SLA): Mean Time to Resolve - Active status time
+  CASE
+    WHEN twk.mttr_sla_minutes = 0 THEN NULL
+    ELSE twk.mttr_sla_minutes
+  END AS MTTR_SLA_minutes,
+  CASE
+    WHEN twk.mttr_sla_minutes = 0 THEN NULL
+    ELSE twk.mttr_sla_minutes / 60.0
+  END AS MTTR_SLA_hrs,
+  CASE
+    WHEN twk.mttr_sla_minutes = 0 THEN NULL
+    ELSE twk.mttr_sla_minutes / 1440.0
+  END AS MTTR_SLA_days,
+
+  -- MTTR (Hold): Mean Time to Resolve - Hold status time
+  CASE
+    WHEN twk.mttr_hold_minutes = 0 THEN NULL
+    ELSE twk.mttr_hold_minutes
+  END AS MTTR_Hold_minutes,
+  CASE
+    WHEN twk.mttr_hold_minutes = 0 THEN NULL
+    ELSE twk.mttr_hold_minutes / 60.0
+  END AS MTTR_Hold_hrs,
+  CASE
+    WHEN twk.mttr_hold_minutes = 0 THEN NULL
+    ELSE twk.mttr_hold_minutes / 1440.0
+  END AS MTTR_Hold_days,
+
+  -- MTTC: Mean Time to Close (from creation to Closed status)
+  CASE
+    WHEN twk.mttc_minutes IS NULL THEN NULL
+    ELSE twk.mttc_minutes
+  END AS MTTC_minutes,
+  CASE
+    WHEN twk.mttc_minutes IS NULL THEN NULL
+    ELSE twk.mttc_minutes / 60.0
+  END AS MTTC_hrs,
+  CASE
+    WHEN twk.mttc_minutes IS NULL THEN NULL
+    ELSE twk.mttc_minutes / 1440.0
+  END AS MTTC_days,
 
   -- SLA target (example: 24h for most, 8h for Incident, 1d for Service Request)
   COALESCE(
@@ -121,9 +218,9 @@ SELECT
     'No Data'
   ) AS SLA_Resolution_Target_hrs,
 
-  -- SLA met/breached
+  -- SLA met/breached (based on MTTR_SLA time)
   CASE
-    WHEN twk.Resolved IS NULL THEN 'No Data'
+    WHEN twk.mttr_sla_minutes = 0 OR twk.mttr_sla_minutes IS NULL THEN 'No Data'
     WHEN CASE
            WHEN twk.T IN ('Platform Improvement', 'Sustaining Reliability Engineering', 'Task') THEN NULL
            WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
@@ -132,7 +229,7 @@ SELECT
            WHEN twk.Priority IN ('Low', 'Minor') THEN 48
            ELSE NULL
          END IS NULL THEN 'No Data'
-    WHEN twk.resolution_minutes / 60.0 <=
+    WHEN twk.mttr_sla_minutes / 60.0 <=
          CASE
            WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
            WHEN twk.Priority = 'High' THEN 8
@@ -189,7 +286,7 @@ SELECT
   l.Transitioned_By_Display_Name
 
 FROM
-  TicketWithSla twk
+  TimeMetrics twk
 LEFT JOIN
   `pccw-internal-virt-agent-uat.GSO.JiraComments` c
 ON

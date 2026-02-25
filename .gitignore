@@ -3,6 +3,7 @@
 /.tmp.driveupload/
 *.clasp.json
 *.gsheet
+*.gscript
 *.log
 *.jsonl
 
