@@ -29,12 +29,43 @@ SELECT
   h.Customer_Name,
   h.GSMP_Circuit_ID,
   h.TrueMTTR_mins,
-  h.Initial_Response_Time,
-  h.Second_Response_Time,
-  h.Third_Response_Time,
   h.GCSC_1st_Customer_Update,
   h.GCSC_2nd_Customer_Update,
-  h.GCSC_3rd_Customer_Update,
+  CASE WHEN h.Status = 'Assigned' THEN "1-Assigned"
+        WHEN h.Status = 'In Progress' THEN "2-In Progress"
+        WHEN h.Status = 'Pending' THEN "3-Pending"
+        WHEN h.Status = 'Resolved' THEN "4-Resolved"
+        WHEN h.Status = 'Closed' THEN "5-Closed"
+        WHEN h.Status = 'Cancelled' THEN "6-Cancelled"
+    ELSE NULL 
+  END AS TicketProcess,
+  -- KPI Calculations (Custom)
+  CASE
+    WHEN h.GCSC_1st_Customer_Update IS NOT NULL AND h.ReportedDate IS NOT NULL
+    THEN TIMESTAMP_DIFF(h.GCSC_1st_Customer_Update, h.ReportedDate, MINUTE)
+    ELSE NULL
+  END AS `1st_Response_Minutes`,
+  CASE
+    WHEN h.GCSC_1st_Customer_Update IS NOT NULL AND h.ReportedDate IS NOT NULL
+    THEN CASE 
+      WHEN TIMESTAMP_DIFF(h.GCSC_1st_Customer_Update, h.ReportedDate, MINUTE) <= 30 THEN 'PASS'
+      ELSE 'FAIL'
+    END
+    ELSE 'No Response'
+  END AS `1st_Response_PassFail`,
+  CASE
+    WHEN h.GCSC_1st_Customer_Update IS NOT NULL AND h.GCSC_2nd_Customer_Update IS NOT NULL
+    THEN TIMESTAMP_DIFF(h.GCSC_2nd_Customer_Update, h.GCSC_1st_Customer_Update, MINUTE)
+    ELSE NULL
+  END AS `2nd_Response_Minutes`,
+  CASE
+    WHEN h.GCSC_1st_Customer_Update IS NOT NULL AND h.GCSC_2nd_Customer_Update IS NOT NULL
+    THEN CASE 
+      WHEN TIMESTAMP_DIFF(h.GCSC_2nd_Customer_Update, h.GCSC_1st_Customer_Update, MINUTE) <= 90 THEN 'PASS'
+      ELSE 'FAIL'
+    END
+    ELSE 'No Response'
+  END AS `2nd_Response_PassFail`,
   h.LastModifiedDate as LastModifiedDateHD,
   
   -- WorkLogAllNOC fields
