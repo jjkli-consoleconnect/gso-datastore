@@ -51,6 +51,13 @@ EMAIL_PATTERNS = [
         "from": "noreply-bmchelix@onbmc.com",
         "label": "pubsub",
         "pubsub_topic": "gmail-to-shr-people"
+    },
+    {
+        "name": "Snapshot Reports",
+        "subject": "pubsub - BQ - Snapshot by Shift",
+        "from": "noreply-bmchelix@onbmc.com",
+        "label": "pubsub",
+        "pubsub_topic": "gmail-snapshot-reports"
     }
 ]
 

@@ -27,6 +27,7 @@ MIN_PROGRESS_WINDOW_SEC = 600
 MIN_WINDOW_HOURS = 1  # Skip windows smaller than 1 hour
 OVERLAP_MINUTES = 10
 MIN_START = datetime(2024, 7, 1, tzinfo=timezone.utc)
+ENABLE_SOFT_DELETE_RECONCILIATION = os.environ.get('ENABLE_SOFT_DELETE_RECONCILIATION', '').strip().lower() == 'true'
 
 DEFAULT_PROJECTS = [
     'GS&O Data Analytics',
@@ -69,6 +70,16 @@ def ensure_progress_table(client, dataset_id, table_id):
     )
     client.query(
         f"CREATE TABLE IF NOT EXISTS `{dataset_id}.{table_id}` ({schema})"
+    ).result()
+
+
+def ensure_soft_delete_columns(client, dataset_id, table_id):
+    """Ensure soft-delete columns exist on the target table."""
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IsDeleted BOOL"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS DeletedAt TIMESTAMP"
     ).result()
 
 
@@ -246,6 +257,8 @@ def fetch_and_sync_jira_comments_nightly():
         run_started = datetime.now(timezone.utc)
         client = bigquery.Client(project="pccw-internal-virt-agent-uat")
         log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
+
+        ensure_soft_delete_columns(client, dataset_id, table_id)
 
         ensure_progress_table(client, dataset_id, progress_table_id)
         projects = DEFAULT_PROJECTS
@@ -446,9 +459,9 @@ def fetch_and_sync_jira_comments_nightly():
                 merge = f"""
                                     MERGE `{dataset_id}.{table_id}` T USING (SELECT DISTINCT * FROM `{dataset_id}.{temp_table_id_run}`) S
                   ON T.Comment_ID=S.Comment_ID AND T.Updated=S.Updated
-                  WHEN MATCHED THEN UPDATE SET T.Issue_Key=S.Issue_Key,T.Author_Account_ID=S.Author_Account_ID,T.Author_Display_Name=S.Author_Display_Name,T.Created=S.Created,T.Body=S.Body,T.Visibility_Type=S.Visibility_Type,T.Visibility_Value=S.Visibility_Value,T.SyncTime=S.SyncTime
-                  WHEN NOT MATCHED THEN INSERT (Issue_Key,Comment_ID,Author_Account_ID,Author_Display_Name,Created,Updated,Body,Visibility_Type,Visibility_Value,SyncTime)
-                  VALUES (S.Issue_Key,S.Comment_ID,S.Author_Account_ID,S.Author_Display_Name,S.Created,S.Updated,S.Body,S.Visibility_Type,S.Visibility_Value,S.SyncTime)
+                                    WHEN MATCHED THEN UPDATE SET T.Issue_Key=S.Issue_Key,T.Author_Account_ID=S.Author_Account_ID,T.Author_Display_Name=S.Author_Display_Name,T.Created=S.Created,T.Body=S.Body,T.Visibility_Type=S.Visibility_Type,T.Visibility_Value=S.Visibility_Value,T.SyncTime=S.SyncTime,T.IsDeleted=FALSE,T.DeletedAt=NULL
+                                    WHEN NOT MATCHED THEN INSERT (Issue_Key,Comment_ID,Author_Account_ID,Author_Display_Name,Created,Updated,Body,Visibility_Type,Visibility_Value,SyncTime,IsDeleted,DeletedAt)
+                                    VALUES (S.Issue_Key,S.Comment_ID,S.Author_Account_ID,S.Author_Display_Name,S.Created,S.Updated,S.Body,S.Visibility_Type,S.Visibility_Value,S.SyncTime,FALSE,NULL)
                 """
                 try:
                     client.query(merge).result()
@@ -466,6 +479,40 @@ def fetch_and_sync_jira_comments_nightly():
                 duration_seconds = (run_ended - run_started).total_seconds()
                 log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Window complete", status="SUCCESS", rows_merged=int(rows_this_window), duration_seconds=duration_seconds, window_start=ws.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'))
                 # Continue to next window if backlog remains
+
+                if ENABLE_SOFT_DELETE_RECONCILIATION:
+                        # Reconciliation step: soft-delete comments for deleted/missing tickets; restore when ticket is active.
+                        mark_deleted_query = f'''
+                                UPDATE `{dataset_id}.{table_id}` C
+                                SET IsDeleted = TRUE,
+                                        DeletedAt = CURRENT_TIMESTAMP()
+                                WHERE (C.IsDeleted IS NULL OR C.IsDeleted = FALSE)
+                                    AND (
+                                        NOT EXISTS (
+                                            SELECT 1 FROM `{dataset_id}.JiraTickets` T
+                                            WHERE T.Key = C.Issue_Key
+                                        )
+                                        OR EXISTS (
+                                            SELECT 1 FROM `{dataset_id}.JiraTickets` T
+                                            WHERE T.Key = C.Issue_Key AND COALESCE(T.IsDeleted, FALSE) = TRUE
+                                        )
+                                    )
+                        '''
+                        client.query(mark_deleted_query).result()
+
+                        clear_deleted_query = f'''
+                                UPDATE `{dataset_id}.{table_id}` C
+                                SET IsDeleted = FALSE,
+                                        DeletedAt = NULL
+                                WHERE (C.IsDeleted IS TRUE OR C.DeletedAt IS NOT NULL)
+                                    AND EXISTS (
+                                        SELECT 1 FROM `{dataset_id}.JiraTickets` T
+                                        WHERE T.Key = C.Issue_Key AND COALESCE(T.IsDeleted, FALSE) = FALSE
+                                    )
+                        '''
+                        client.query(clear_deleted_query).result()
+                else:
+                        logging.warning("Soft-delete reconciliation disabled; skipping comments nightly delete-marking")
 
         run_ended = datetime.now(timezone.utc)
         duration_seconds = (run_ended - run_started).total_seconds()

@@ -28,6 +28,7 @@ MIN_PROGRESS_WINDOW_SEC = 600  # 10 minutes to avoid thrashing tiny windows
 MIN_WINDOW_HOURS = 1  # Skip windows smaller than 1 hour
 OVERLAP_MINUTES = 10
 MIN_START = datetime(2024, 7, 1, tzinfo=timezone.utc)
+ENABLE_SOFT_DELETE_RECONCILIATION = os.environ.get('ENABLE_SOFT_DELETE_RECONCILIATION', '').strip().lower() == 'true'
 
 DEFAULT_PROJECTS = [
     'GS&O Data Analytics',
@@ -71,6 +72,23 @@ def ensure_progress_table(client, dataset_id, table_id):
     client.query(
         f"CREATE TABLE IF NOT EXISTS `{dataset_id}.{table_id}` ({schema})"
     ).result()
+
+
+def ensure_soft_delete_columns(client, dataset_id, table_id):
+    """Ensure soft-delete columns exist on the target table."""
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IsDeleted BOOL"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS DeletedAt TIMESTAMP"
+    ).result()
+
+
+def _to_sql_string_list(values):
+    escaped = []
+    for value in values:
+        escaped.append("'" + str(value).replace("'", "''") + "'")
+    return ", ".join(escaped)
 
 
 def select_window(client, dataset_id, table_id, project, base_days=3):
@@ -298,6 +316,8 @@ def fetch_and_sync_jira_tickets_nightly():
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
         ]
 
+        ensure_soft_delete_columns(client, dataset_id, table_id)
+
         def fetch_issue_detail(issue_key):
             issue_url = f"https://consoleconnect.atlassian.net/rest/api/3/issue/{issue_key}"
             headers = {"Accept": "application/json", "Content-Type": "application/json"}
@@ -329,6 +349,40 @@ def fetch_and_sync_jira_tickets_nightly():
             except Exception as e:
                 logging.warning(f"Could not fetch full details for issue {issue_key}: {e}")
                 return None
+
+        def search_issue_keys(jql: str, label: str):
+            headers_local = {'Accept': 'application/json'}
+            start_at = 0
+            max_results = 100
+            all_keys = []
+            auth_local = (username, api_token)
+            had_error = False
+
+            while True:
+                try:
+                    params_local = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
+                    resp = requests.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=30)
+                    if resp.status_code == 429:
+                        ra = int(resp.headers.get('Retry-After', 30) or 30)
+                        logging.warning(f"429 {label} search; sleeping {ra}s")
+                        time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
+                        continue
+                    resp.raise_for_status()
+                    data_local = resp.json()
+                    issues_local = data_local.get('issues', [])
+                    total = data_local.get('total', 0)
+                    keys = [i.get('key') for i in issues_local if i.get('key')]
+                    all_keys.extend(keys)
+                    start_at += len(issues_local)
+                    if start_at >= total or not issues_local:
+                        break
+                except Exception as e:
+                    had_error = True
+                    logging.error(f"{label} pass error: {e}")
+                    break
+
+            logging.info(f"{label} pass fetched {len(all_keys)} issue keys")
+            return all_keys, had_error
 
         total_rows_merged = 0
         # Use single temp table with run_id suffix for all projects
@@ -376,39 +430,11 @@ def fetch_and_sync_jira_tickets_nightly():
                 rows_to_insert = []
                 issue_keys_total = set()
 
-                def search_issue_keys(jql: str, label: str):
-                    headers_local = {'Accept': 'application/json'}
-                    start_at = 0
-                    max_results = 100
-                    all_keys = []
-                    auth_local = (username, api_token)
-                    
-                    while True:
-                        try:
-                            params_local = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
-                            resp = requests.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=30)
-                            if resp.status_code == 429:
-                                ra = int(resp.headers.get('Retry-After', 30) or 30)
-                                logging.warning(f"429 {label} search; sleeping {ra}s")
-                                time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
-                                continue
-                            resp.raise_for_status()
-                            data_local = resp.json()
-                            issues_local = data_local.get('issues', [])
-                            total = data_local.get('total', 0)
-                            keys = [i.get('key') for i in issues_local if i.get('key')]
-                            all_keys.extend(keys)
-                            start_at += len(issues_local)
-                            if start_at >= total or not issues_local:
-                                break
-                        except Exception as e:
-                            logging.error(f"{label} pass error: {e}")
-                            break
-                    
-                    logging.info(f"{label} pass fetched {len(all_keys)} issue keys")
-                    return all_keys
-
-                combined_keys = search_issue_keys(jql_combined, 'combined')
+                combined_keys, combined_had_error = search_issue_keys(jql_combined, 'combined')
+                if combined_had_error:
+                    logging.warning(f"Skipping window for project {proj} due to Jira search errors")
+                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'degraded', row_count=0)
+                    break
                 for k in combined_keys:
                     issue_keys_total.add(k)
                 logging.info(f"Distinct issue keys to detail fetch: {len(issue_keys_total)}")
@@ -453,9 +479,11 @@ def fetch_and_sync_jira_tickets_nightly():
                             T.Assignee = S.Assignee,
                             T.Component = IF(S.Component IS NULL, NULL, [S.Component]),
                             T.{SR_REF_BQ_NAME} = S.{SR_REF_BQ_NAME},
-                            T.SyncTime = S.SyncTime
-                        WHEN NOT MATCHED THEN INSERT (T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, {SR_REF_BQ_NAME}, SyncTime)
-                        VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), S.{SR_REF_BQ_NAME}, S.SyncTime)
+                            T.SyncTime = S.SyncTime,
+                            T.IsDeleted = FALSE,
+                            T.DeletedAt = NULL
+                        WHEN NOT MATCHED THEN INSERT (T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, {SR_REF_BQ_NAME}, SyncTime, IsDeleted, DeletedAt)
+                        VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), S.{SR_REF_BQ_NAME}, S.SyncTime, FALSE, NULL)
                     '''
                     client.query(merge_query).result()
                     logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")
@@ -479,6 +507,106 @@ def fetch_and_sync_jira_tickets_nightly():
                     window_end=we.strftime('%Y-%m-%d %H:%M:%S'),
                 )
                 # Move to next window for this project
+
+        if not ENABLE_SOFT_DELETE_RECONCILIATION:
+            logging.warning("Soft-delete reconciliation disabled; skipping nightly delete-marking")
+            delete_temp_table(client, dataset_id, temp_table_id_run)
+
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="INFO",
+                message="Pipeline finished",
+                status="SUCCESS",
+                rows_merged=total_rows_merged,
+                duration_seconds=duration_seconds,
+            )
+            return
+
+        # Reconciliation step: mark rows as soft-deleted if key no longer exists in Jira.
+        active_keys = set()
+        failed_projects = []
+        for proj in projects:
+            proj_clause = f'project = "{proj}"' if (' ' in proj or '&' in proj) else f'project = {proj}'
+            current_keys, had_error = search_issue_keys(proj_clause, f'full_keyset:{proj}')
+            if had_error:
+                failed_projects.append(proj)
+                continue
+            for key in current_keys:
+                active_keys.add(key)
+
+        if failed_projects:
+            failed_projects_str = ', '.join(failed_projects)
+            logging.error(f"Soft-delete reconciliation skipped due to Jira key fetch errors for projects: {failed_projects_str}")
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="WARNING",
+                message=f"Soft-delete reconciliation skipped due to Jira key fetch errors for: {failed_projects_str}",
+                status="SUCCESS",
+            )
+            delete_temp_table(client, dataset_id, temp_table_id_run)
+
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="INFO",
+                message="Pipeline finished",
+                status="SUCCESS",
+                rows_merged=total_rows_merged,
+                duration_seconds=duration_seconds,
+            )
+            return
+
+        keys_table_id = f"JiraTickets_active_keys_{run_id.replace('-', '_')[:8]}"
+        keys_schema = [bigquery.SchemaField("Key", "STRING", mode="REQUIRED")]
+        if not create_or_replace_temp_table(client, dataset_id, keys_table_id, keys_schema):
+            raise Exception("Failed to create active key snapshot table for soft-delete reconciliation")
+        if not wait_for_table(client, dataset_id, keys_table_id, retries=30, delay=2):
+            raise Exception("Active key snapshot table was not available for reconciliation")
+
+        keys_rows = [{"Key": k} for k in active_keys]
+        if keys_rows:
+            if not insert_rows_resilient(client, dataset_id, keys_table_id, keys_rows, keys_schema):
+                raise Exception("Failed to populate active key snapshot table")
+
+        scoped_projects = _to_sql_string_list(projects)
+        mark_deleted_query = f'''
+            UPDATE `{dataset_id}.{table_id}` T
+            SET IsDeleted = TRUE,
+                DeletedAt = CURRENT_TIMESTAMP()
+            WHERE T.Project IN ({scoped_projects})
+              AND (T.IsDeleted IS NULL OR T.IsDeleted = FALSE)
+              AND NOT EXISTS (
+                SELECT 1
+                FROM `{dataset_id}.{keys_table_id}` S
+                WHERE S.Key = T.Key
+              )
+        '''
+        client.query(mark_deleted_query).result()
+
+        clear_deleted_query = f'''
+            UPDATE `{dataset_id}.{table_id}` T
+            SET IsDeleted = FALSE,
+                DeletedAt = NULL
+            WHERE T.Project IN ({scoped_projects})
+              AND EXISTS (
+                SELECT 1
+                FROM `{dataset_id}.{keys_table_id}` S
+                WHERE S.Key = T.Key
+              )
+              AND (T.IsDeleted IS TRUE OR T.DeletedAt IS NOT NULL)
+        '''
+        client.query(clear_deleted_query).result()
+
+        delete_temp_table(client, dataset_id, keys_table_id)
 
         # Clean up temp table after all projects processed
         delete_temp_table(client, dataset_id, temp_table_id_run)
