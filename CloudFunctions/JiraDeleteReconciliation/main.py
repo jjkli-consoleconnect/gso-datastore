@@ -16,21 +16,21 @@ ALGORITHM
 ---------
 For each project:
 
-  1. Count-gate:
-      Query Jira for an approximate count via Jira's dedicated
-      /search/approximate-count endpoint.
-      The JQL is scoped to created >= MIN(BQ.Created) so the comparison is
-      over the same date range as BQ data (handles projects where BQ did not
-      sync from Jira day 1).
-     If jira_count < COUNT_GATE_RATIO -- bq_active_count, Jira is clearly
-     returning incomplete data --- skip the project entirely (conservative).
-
-  2. Candidate selection:
+  1. Candidate selection:
       Pull keys from BQ where IsDeleted = FALSE and Key is non-empty.
       If STALE_DAYS > 0, additionally require SyncTime older than STALE_DAYS.
       If STALE_DAYS <= 0, staleness filtering is disabled.
 
-  3. Direct per-key verification (strongly consistent):
+  2. Batch existence prefilter (dramatically reduces individual API calls):
+     Chunk candidates into groups of BATCH_SIZE.  One search call per batch:
+       JQL: issuekey in (KEY-1, KEY-2, ..., KEY-N)
+     Keys returned by Jira = confirmed to exist → skip.
+     Keys absent from the response = possibly deleted → proceed to step 3.
+     On batch API error → all chunk keys fall through to step 3
+     (conservative: never lose a deletion candidate on ambiguity).
+
+  3. Direct per-key verification of possibly-deleted candidates (strongly
+     consistent):
      For each candidate key, call GET /rest/api/3/issue/{key}.
        200  ---  still exists; leave as-is.
        404  ---  confirmed deleted; soft-delete in BQ.
@@ -42,9 +42,11 @@ For each project:
 
 SAFETY GATES (layered)
 ----------------------
-  --- Count-gate per project (default 70 % threshold).
-  --- Per-key 404 proof required before any deletion.
+  --- Per-key 404 proof required before any deletion (strongly consistent
+      direct-issue API, bypasses the search index entirely).
   --- Any ambiguous API error --- skip; never delete on doubt.
+  --- Batch prefilter falls back conservatively on any error (routes chunk
+      to per-key check, never silently drops candidates).
   --- MAX_CANDIDATES_PER_PROJECT cap (default 500) per run.
   --- DRY_RUN mode: log intent but apply no BQ changes.
 
@@ -53,11 +55,21 @@ ENVIRONMENT VARIABLES
   DRY_RUN                    "true" --- log only, no BQ updates  (default: false)
     STALE_DAYS                 Min days since last SyncTime to qualify as
                                                          candidate; set 0 to disable       (default: 90)
-  COUNT_GATE_RATIO           Min jira/bq ratio to proceed       (default: 0.70)
   MAX_CANDIDATES_PER_PROJECT Safety cap on candidates checked   (default: 500)
+  BATCH_SIZE                 Keys per issuekey-in batch check   (default: 100)
   RATE_LIMIT_PER_SEC         Token-bucket rate for Jira calls   (default: 30)
   CONCURRENT_REQUESTS        ThreadPoolExecutor max workers     (default: 10)
   SINGLE_PROJECT / PROJECTS  Scope to one or comma-list of projects
+
+SAFETY GATES (layered)
+----------------------
+  See the SAFETY GATES block below — same as existing, except the circuit
+  breaker is now documented here too:
+  --- Circuit breaker: if ≥ CIRCUIT_BREAKER_SKIP_THRESHOLD of the first
+      CIRCUIT_BREAKER_MIN_CHECKS per-key results are "skip" (timeout/error),
+      the project is aborted immediately.  This prevents a single Jira-
+      unresponsive project from consuming the entire Cloud Run timeout and
+      blocking all subsequent projects.
 """
 
 import logging
@@ -82,7 +94,6 @@ setup_root_logging()
 
 JIRA_BASE_URL = "https://consoleconnect.atlassian.net"
 JIRA_SEARCH_URL = f"{JIRA_BASE_URL}/rest/api/3/search/jql"
-JIRA_APPROX_COUNT_URL = f"{JIRA_BASE_URL}/rest/api/3/search/approximate-count"
 JIRA_ISSUE_URL_TEMPLATE = f"{JIRA_BASE_URL}/rest/api/3/issue/{{key}}"
 
 BQ_PROJECT = "pccw-internal-virt-agent-uat"
@@ -98,10 +109,14 @@ JITTER_MAX_SECONDS = 0.5
 
 DRY_RUN: bool = os.environ.get("DRY_RUN", "").strip().lower() == "true"
 STALE_DAYS: int = int(os.environ.get("STALE_DAYS", "90"))
-COUNT_GATE_RATIO: float = float(os.environ.get("COUNT_GATE_RATIO", "0.70"))
 MAX_CANDIDATES_PER_PROJECT: int = int(os.environ.get("MAX_CANDIDATES_PER_PROJECT", "500"))
+BATCH_SIZE: int = int(os.environ.get("BATCH_SIZE", "100"))
 RATE_LIMIT_PER_SEC: float = float(os.environ.get("RATE_LIMIT_PER_SEC", "30"))
 CONCURRENT_REQUESTS: int = int(os.environ.get("CONCURRENT_REQUESTS", "10"))
+
+# Circuit breaker: abort per-key loop if Jira is consistently unresponsive
+CIRCUIT_BREAKER_MIN_CHECKS: int = 10        # minimum results before evaluating
+CIRCUIT_BREAKER_SKIP_THRESHOLD: float = 0.80  # trip if ≥80% are skips
 
 # ------ Project scope (matches JiraTicketsNightly) ---------------------------------------------------------------------------------------------
 
@@ -153,71 +168,11 @@ class TokenBucket:
             time.sleep(0.02)
 
 
-# ------ Pure / injectable helper functions ---------------------------------------------------------------------------------------------------------------------
-
-def _build_proj_jql(project: str) -> str:
-    """
-    Build a JQL project clause that handles project names with spaces or
-    special characters (e.g. 'GS&O Data Analytics').
-    Names with spaces or & are wrapped in double-quotes per Jira JQL syntax.
-    """
-    if " " in project or "&" in project:
-        safe = project.replace('"', '\\"')
-        return f'project = "{safe}"'
-    return f"project = {project}"
-
-
-def get_jira_approximate_count(
-    jql: str,
-    auth: tuple,
-    max_retries: int = 5,
-) -> int | None:
-    """
-    Return Jira's approximate total count for a JQL query.
-
-    Uses Jira's dedicated approximate-count endpoint instead of the search
-    result `total` field, which has been observed to return 0 incorrectly for
-    this tenant even when issues are present.
-
-    Returns None on unrecoverable error (caller must skip the project).
-    """
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    payload = {"jql": jql}
-    delay = 2.0
-
-    for attempt in range(max_retries):
-        try:
-            resp = requests.post(
-                JIRA_APPROX_COUNT_URL,
-                headers=headers,
-                auth=auth,
-                json=payload,
-                timeout=30,
-            )
-            if resp.status_code == 429:
-                ra = min(int(resp.headers.get("Retry-After", 30) or 30), 120)
-                logging.warning(f"429 on count query (attempt {attempt+1}); sleeping {ra}s")
-                time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
-                continue
-            resp.raise_for_status()
-            body = resp.json()
-            total = int(body.get("count", 0))
-            logging.debug(f"Jira count for [{jql}] = {total:,}")
-            return total
-        except Exception as exc:
-            logging.warning(f"Count query attempt {attempt+1}/{max_retries} failed: {exc}")
-            if attempt < max_retries - 1:
-                time.sleep(delay)
-                delay = min(delay * 1.5, 30.0)
-
-    logging.error(f"Could not get Jira count for [{jql}] after {max_retries} attempts")
-    return None
-
-
 def check_key_exists(
     key: str,
     auth: tuple,
     max_retries: int = 5,
+    abort_event: threading.Event | None = None,
 ) -> str:
     """
     Strongly-consistent single-key existence check via the Jira issue API.
@@ -227,6 +182,9 @@ def check_key_exists(
       "deleted"  HTTP 404  --- ticket does not exist (or no permission; treated
                              as deleted when the API account has full access).
       "skip"     Any other outcome --- conservative: do NOT soft-delete.
+
+    abort_event: when set (e.g. by the circuit breaker), exits between retry
+    attempts rather than completing all max_retries.
     """
     url = JIRA_ISSUE_URL_TEMPLATE.format(key=key)
     headers = {"Accept": "application/json"}
@@ -264,6 +222,8 @@ def check_key_exists(
             logging.warning(f"Error on key {key} (attempt {attempt+1}/{max_retries}): {exc}")
 
         if attempt < max_retries - 1:
+            if abort_event and abort_event.is_set():
+                return "skip"  # circuit breaker: exit before next retry
             time.sleep(delay)
             delay = min(delay * 2, 30.0)
 
@@ -271,56 +231,73 @@ def check_key_exists(
     return "skip"
 
 
-def get_bq_active_count(
-    client: bigquery.Client,
-    dataset: str,
-    table: str,
-    project: str,
-) -> int:
-    """Return the count of non-deleted rows for a project in BQ."""
-    rows = list(
-        client.query(
-            f"SELECT COUNT(*) AS cnt FROM `{dataset}.{table}` "
-            "WHERE Project = @proj AND COALESCE(IsDeleted, FALSE) = FALSE",
-            job_config=bigquery.QueryJobConfig(
-                query_parameters=[
-                    bigquery.ScalarQueryParameter("proj", "STRING", project)
-                ]
-            ),
-        ).result()
-    )
-    return int(rows[0].cnt) if rows else 0
-
-
-def get_bq_min_created(
-    client: bigquery.Client,
-    dataset: str,
-    table: str,
-    project: str,
-) -> str | None:
+def batch_check_keys_exist(
+    keys: list[str],
+    auth: tuple,
+    bucket: TokenBucket,
+    batch_size: int = BATCH_SIZE,
+) -> tuple[set[str], set[str]]:
     """
-    Return the earliest Created date (YYYY-MM-DD) for active rows of a project
-    in BQ, or None if all Created values are NULL or no rows exist.
+    Batch-check key existence using JQL ``issuekey in (K1, K2, ...)``.
 
-    Used to scope the count-gate JQL to the same date range as BQ data, so
-    that a partial sync (BQ not starting from Jira day 1) does not inflate the
-    Jira count relative to BQ — which would make the count gate trivially pass
-    and unable to signal Jira API issues.
+    Sends one POST /rest/api/3/search/jql request per chunk of ``batch_size``
+    keys.  Keys present in the Jira response are confirmed to exist; keys
+    absent from the response are *possibly* deleted and must be verified
+    individually via :func:`check_key_exists`.
+
+    On any API error the entire failing chunk is routed to ``possibly_deleted``
+    so that per-key confirmation still runs --- conservative by design.
+
+    Returns:
+        (confirmed_exist, possibly_deleted) --- two disjoint sets covering
+        every key in ``keys``.
     """
-    rows = list(
-        client.query(
-            f"SELECT MIN(Created) AS min_created FROM `{dataset}.{table}` "
-            "WHERE Project = @proj AND COALESCE(IsDeleted, FALSE) = FALSE",
-            job_config=bigquery.QueryJobConfig(
-                query_parameters=[
-                    bigquery.ScalarQueryParameter("proj", "STRING", project)
-                ]
-            ),
-        ).result()
-    )
-    if rows and rows[0].min_created is not None:
-        return rows[0].min_created.strftime("%Y-%m-%d")
-    return None
+    confirmed_exist: set[str] = set()
+    possibly_deleted: set[str] = set()
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+
+    for i in range(0, len(keys), batch_size):
+        chunk = keys[i : i + batch_size]
+        bucket.take()
+        jql = f"issuekey in ({', '.join(chunk)})"
+        payload = {"jql": jql, "fields": ["key"], "maxResults": len(chunk)}
+
+        try:
+            resp = requests.post(
+                JIRA_SEARCH_URL, headers=headers, auth=auth, json=payload, timeout=30
+            )
+
+            if resp.status_code == 429:
+                ra = min(int(resp.headers.get("Retry-After", 30) or 30), 120)
+                logging.warning(
+                    f"429 on batch check (chunk {i // batch_size + 1}); sleeping {ra}s"
+                )
+                time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
+                resp = requests.post(
+                    JIRA_SEARCH_URL, headers=headers, auth=auth, json=payload, timeout=30
+                )
+
+            if resp.status_code == 200:
+                returned = {issue["key"] for issue in resp.json().get("issues", [])}
+                for k in chunk:
+                    if k in returned:
+                        confirmed_exist.add(k)
+                    else:
+                        possibly_deleted.add(k)
+            else:
+                logging.warning(
+                    f"Batch check got HTTP {resp.status_code} for chunk of {len(chunk)} keys; "
+                    "routing all to per-key verification"
+                )
+                possibly_deleted.update(chunk)
+
+        except Exception as exc:
+            logging.warning(
+                f"Batch check error ({exc}); routing {len(chunk)} keys to per-key verification"
+            )
+            possibly_deleted.update(chunk)
+
+    return confirmed_exist, possibly_deleted
 
 
 def get_stale_candidate_keys(
@@ -416,23 +393,6 @@ def apply_soft_deletes_bq(
     return len(keys_to_delete)
 
 
-def passes_count_gate(
-    jira_count: int,
-    bq_active_count: int,
-    ratio_threshold: float,
-) -> tuple[bool, float]:
-    """
-    Return (passes, observed_ratio).
-
-    Rule: jira_count must be >= ratio_threshold -- bq_active_count.
-    If bq_active_count is 0 the gate always passes (nothing to protect).
-    """
-    if bq_active_count == 0:
-        return True, 1.0
-    ratio = jira_count / bq_active_count
-    return ratio >= ratio_threshold, ratio
-
-
 # ------ Per-project orchestration ---------------------------------------------------------------------------------------------------------------------------------------------------
 
 def reconcile_project(
@@ -442,7 +402,6 @@ def reconcile_project(
     bucket: TokenBucket,
     dry_run: bool = DRY_RUN,
     stale_days: int = STALE_DAYS,
-    count_gate_ratio: float = COUNT_GATE_RATIO,
     max_candidates: int = MAX_CANDIDATES_PER_PROJECT,
     concurrent_requests: int = CONCURRENT_REQUESTS,
 ) -> dict:
@@ -452,9 +411,7 @@ def reconcile_project(
     Returns a stats dict:
       {
         "project":           str,
-        "status":            "ok" | "skipped_count_gate" | "skipped_error" | "no_candidates",
-        "jira_count":        int | None,
-        "bq_count":          int,
+        "status":            "ok" | "no_candidates",
         "candidates":        int,
         "checked":           int,
         "confirmed_deleted": int,
@@ -465,8 +422,6 @@ def reconcile_project(
     stats: dict = {
         "project": project,
         "status": "ok",
-        "jira_count": None,
-        "bq_count": 0,
         "candidates": 0,
         "checked": 0,
         "confirmed_deleted": 0,
@@ -476,53 +431,7 @@ def reconcile_project(
 
     logging.info(f"--------------- [{project}] Starting reconciliation ---------------")
 
-    # ------ Step 1: Count gate ------------------------------------------------------------------------------------------------------------------------------------------------
-    proj_jql = _build_proj_jql(project)
-
-    # Scope the count-gate JQL to BQ's actual data range so the comparison is
-    # apples-to-apples when BQ did not sync from Jira day 1.  Without this,
-    # Jira would return all historical tickets (many more than BQ has), making
-    # the gate trivially pass and losing its ability to detect Jira API issues.
-    min_created = get_bq_min_created(client, BQ_DATASET, BQ_TABLE, project)
-    if min_created:
-        count_gate_jql = f'{proj_jql} AND created >= "{min_created}"'
-        logging.info(f"[{project}] Count-gate scoped to BQ data range: created >= {min_created}")
-    else:
-        count_gate_jql = proj_jql
-
-    jira_count = get_jira_approximate_count(count_gate_jql, auth)
-    stats["jira_count"] = jira_count
-
-    if jira_count is None:
-        logging.error(f"[{project}] Failed to get Jira count; skipping project")
-        stats["status"] = "skipped_error"
-        return stats
-
-    bq_count = get_bq_active_count(client, BQ_DATASET, BQ_TABLE, project)
-    stats["bq_count"] = bq_count
-
-    if bq_count == 0:
-        logging.info(f"[{project}] No active BQ rows; nothing to check")
-        stats["status"] = "no_candidates"
-        return stats
-
-    passes, ratio = passes_count_gate(jira_count, bq_count, count_gate_ratio)
-    logging.info(
-        f"[{project}] Count-gate: Jira---{jira_count:,}  BQ_active={bq_count:,}  "
-        f"ratio={ratio:.1%}  threshold={count_gate_ratio:.0%}  "
-        f"--- {'PASS' if passes else 'FAIL'}"
-    )
-
-    if not passes:
-        logging.warning(
-            f"[{project}] Count-gate FAILED --- Jira returned only {ratio:.1%} of BQ "
-            f"active rows ({jira_count:,} vs {bq_count:,}).  "
-            "Jira API may be returning incomplete data; skipping to avoid false deletes."
-        )
-        stats["status"] = "skipped_count_gate"
-        return stats
-
-    # ------ Step 2: Get stale candidates ------------------------------------------------------------------------------------------------------------------
+    # ------ Step 1: Get stale candidates ------------------------------------------------------------------------------------------------------------------
     candidate_keys = get_stale_candidate_keys(
         client, BQ_DATASET, BQ_TABLE, project, stale_days, max_candidates
     )
@@ -547,17 +456,34 @@ def reconcile_project(
             "(staleness filter disabled)"
         )
 
-    # ------ Step 3: Per-key verification ------------------------------------------------------------------------------------------------------------------
+    # ------ Step 2: Batch existence prefilter -------------------------------------------------------------------------------------------------------------------
+    # One JQL call per BATCH_SIZE keys: issuekey in (K1, K2, ...).
+    # Keys returned by Jira are confirmed to exist; only absent keys need
+    # expensive per-key GET verification.  Dramatically reduces API call
+    # volume and eliminates most timeout-retry chains.
+    confirmed_exist_batch, possibly_deleted = batch_check_keys_exist(
+        candidate_keys, auth, bucket=bucket
+    )
+    logging.info(
+        f"[{project}] Batch prefilter: {len(confirmed_exist_batch)} confirmed exist, "
+        f"{len(possibly_deleted)} need per-key check"
+    )
+
+    # ------ Step 3: Per-key verification of possibly-deleted candidates -------------------------------------------------------------------------------------
     keys_to_delete: list[str] = []
-    keys_still_exist: list[str] = []
+    keys_still_exist: list[str] = list(confirmed_exist_batch)
     keys_skipped: list[str] = []
 
+    circuit_tripped = threading.Event()
+
     def _verify(key: str) -> tuple[str, str]:
+        if circuit_tripped.is_set():
+            return key, "skip"  # fast return — no HTTP call
         bucket.take()  # honour rate limit
-        return key, check_key_exists(key, auth)
+        return key, check_key_exists(key, auth, abort_event=circuit_tripped)
 
     with ThreadPoolExecutor(max_workers=concurrent_requests) as executor:
-        futures = {executor.submit(_verify, k): k for k in candidate_keys}
+        futures = {executor.submit(_verify, k): k for k in possibly_deleted}
         for fut in as_completed(futures):
             key, outcome = fut.result()
             stats["checked"] += 1
@@ -572,8 +498,30 @@ def reconcile_project(
                 keys_skipped.append(key)
                 logging.warning(f"[{project}] SKIP (ambiguous/error): {key}")
 
+            # Circuit breaker: abort project if Jira is consistently unresponsive
+            if (
+                not circuit_tripped.is_set()
+                and stats["checked"] >= CIRCUIT_BREAKER_MIN_CHECKS
+                and len(keys_skipped) / stats["checked"] >= CIRCUIT_BREAKER_SKIP_THRESHOLD
+            ):
+                logging.warning(
+                    f"[{project}] Circuit breaker tripped: "
+                    f"{len(keys_skipped)/stats['checked']:.0%} skip rate after "
+                    f"{stats['checked']} checks — remaining keys will be skipped"
+                )
+                circuit_tripped.set()
+
+    stats["checked"] += len(confirmed_exist_batch)
     stats["confirmed_deleted"] = len(keys_to_delete)
     stats["skipped_on_error"] = len(keys_skipped)
+
+    if circuit_tripped.is_set():
+        logging.warning(
+            f"[{project}] Aborting after circuit breaker trip — "
+            f"0 soft-deletes applied to protect data integrity"
+        )
+        stats["status"] = "skipped_high_error_rate"
+        return stats
 
     logging.info(
         f"[{project}] Verification complete --- "
@@ -623,7 +571,6 @@ def run_reconciliation(dry_run_override: bool | None = None) -> None:
             message=(
                 f"Reconciliation started --- "
                 f"dry_run={effective_dry_run}, stale_days={STALE_DAYS}, "
-                f"count_gate_ratio={COUNT_GATE_RATIO}, "
                 f"max_candidates_per_project={MAX_CANDIDATES_PER_PROJECT}"
             ),
             status="RUNNING",
@@ -663,7 +610,7 @@ def run_reconciliation(dry_run_override: bool | None = None) -> None:
         total_confirmed_deleted = sum(s["confirmed_deleted"] for s in all_stats)
         total_skipped_on_error = sum(s["skipped_on_error"] for s in all_stats)
         skipped_projects = [s["project"] for s in all_stats
-                            if s["status"] in ("skipped_count_gate", "skipped_error")]
+                            if s["status"] not in ("ok", "no_candidates")]
 
         summary_msg = (
             f"Reconciliation complete --- "

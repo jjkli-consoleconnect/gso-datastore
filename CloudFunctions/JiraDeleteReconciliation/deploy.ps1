@@ -18,7 +18,6 @@ $dryRunEnvValue = if ($dryRunEnabled) { "true" } else { "false" }
 $deployProfile = "full"   # valid: "smoke", "full"
 
 $staleDays = 0
-$countGateRatio = "0.70"
 $rateLimitPerSec = 30
 $concurrentRequests = 10
 $maxCandidatesPerProject = 500
@@ -27,9 +26,6 @@ $singleProject = ""
 if ($deployProfile -eq "smoke") {
     # Keep smoke mode available for targeted validation on one project.
     $singleProject = "Mobility SMS - CE"
-    # SMSCE has confirmed historical drift between Jira and BQ counts.
-    # Lowering the gate for this smoke run allows per-key 404 proof to drive deletes.
-    $countGateRatio = "0.30"
     $staleDays = 0
     $maxCandidatesPerProject = 50
     $concurrentRequests = 6
@@ -39,7 +35,6 @@ if ($deployProfile -eq "smoke") {
 $envVars = @(
     "DRY_RUN=$dryRunEnvValue",
     "STALE_DAYS=$staleDays",
-    "COUNT_GATE_RATIO=$countGateRatio",
     "MAX_CANDIDATES_PER_PROJECT=$maxCandidatesPerProject",
     "RATE_LIMIT_PER_SEC=$rateLimitPerSec",
     "CONCURRENT_REQUESTS=$concurrentRequests"

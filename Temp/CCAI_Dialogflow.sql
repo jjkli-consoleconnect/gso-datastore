@@ -28,6 +28,75 @@ WITH UserFirstUse AS (
     GROUP BY
         1
 ),
+TrainingData AS (
+  SELECT
+    TRIM(UPPER(UserID)) AS UserID,
+    REGEXP_REPLACE(LOWER(TRIM(UserID)), r'[^a-z0-9]', '') AS UserID_compact,
+    TRIM(REGEXP_REPLACE(ANY_VALUE(Department), r'\s*\(.*$', '')) AS Department,
+    TRIM(REGEXP_REPLACE(ANY_VALUE(Division), r'\s*\(.*$', '')) AS Division,
+    TRIM(
+      REGEXP_REPLACE(
+        REGEXP_REPLACE(
+          REGEXP_REPLACE(
+            REGEXP_REPLACE(
+              REGEXP_REPLACE(
+                REGEXP_REPLACE(
+                  REGEXP_REPLACE(ANY_VALUE(Team), r'\s*\(.*$', ''),
+                  r'(?i)\bProject\s+Management\b',
+                  'PM'
+                ),
+                r'(?i)\bInformation\s+Security\b',
+                'InfoSec'
+              ),
+              r'(?i)\bManagement\b',
+              'Mgmt'
+            ),
+            r'(?i)\bTechnology\b',
+            'Tech'
+          ),
+          r'(?i)\bDevelopment\b',
+          'Dev'
+        ),
+        r'(?i)\bEngineering\b',
+        'Eng'
+      )
+    ) AS Team
+  FROM
+    `pccw-internal-virt-agent-uat.GSO.TrainingData_cleaned`
+  WHERE
+    UserID IS NOT NULL
+  GROUP BY
+    1,
+    2
+),
+TrainingDataCompact AS (
+  SELECT
+    UserID_compact,
+    ANY_VALUE(Department) AS Department,
+    ANY_VALUE(Division) AS Division,
+    ANY_VALUE(Team) AS Team
+  FROM
+    TrainingData
+  WHERE
+    UserID_compact IS NOT NULL
+    AND UserID_compact != ''
+  GROUP BY
+    1
+),
+ManualOverrides AS (
+  SELECT 'ASFYEUNG' AS slack_userid, 'ANGIE.SF.YEUNG' AS override_userid UNION ALL
+  SELECT 'GKFWAN', 'GARY.KF.WAN' UNION ALL
+  SELECT 'TWLUK', 'JASON.TW.LUK' UNION ALL
+  SELECT 'JBELATCHA', 'JOHNMELVIN.JM.BELATCHA' UNION ALL
+  SELECT 'LROLLONFR', 'ROLLON.LEOPOLDOJR' UNION ALL
+  SELECT 'PPANG', 'PATTEN.TP.PANG' UNION ALL
+  SELECT 'RWKWONG', 'RICKY.WK2.WONG' UNION ALL
+  SELECT 'SSORIANO', 'SORIANO.SHERWIN' UNION ALL
+  SELECT 'SMAN', 'SIMON.W.MAN' UNION ALL
+  SELECT 'SWYCHOI2', 'SOLA.WY.CHOI' UNION ALL
+  SELECT 'VWCLEE', 'VICTOR.WC.LEE' UNION ALL
+  SELECT 'YLI', 'YIKIE.Y.LI'
+),
 BaseConversationData AS (
     SELECT
         REGEXP_EXTRACT(cc.conversationName, r"conversations\/([a-zA-Z0-9-_]+)$") AS conversation_id,
@@ -75,6 +144,10 @@ BaseConversationData AS (
         JSON_VALUE(df.request, "$.queryInput.text.text") AS user_query_text,
         JSON_VALUE(df.request, "$.queryParams.payload.data.channel_id") AS platform_channel,
         JSON_VALUE(df.request, "$.queryParams.payload.data.email") AS slack_email,
+        REGEXP_EXTRACT(
+          JSON_VALUE(df.request, "$.queryParams.payload.data.email"),
+          r'^[^@]+'
+        ) AS slack_UserID,
         JSON_VALUE(df.request, "$.queryParams.payload.data.files") AS slack_attached_files,
         JSON_VALUE(df.request, "$.queryParams.payload.data.full_name") AS slack_fullname,
         JSON_VALUE(df.request, "$.queryParams.payload.data.team_id") AS slack_team_id,
@@ -249,14 +322,14 @@ SELECT
   b.sentence_highlights,
   b.sentence_highlights[SAFE_OFFSET(0)].highlight_display_name AS highlight_display_name,
   CASE b.sentence_highlights[SAFE_OFFSET(0)].highlight_display_name
-    WHEN 'Circuits' THEN 'Ticket Analysis'
+    WHEN 'Circuits' THEN 'Ticket Analysis Agent'
     WHEN 'Wanda Enquiry' THEN 'Wanda Enquiry'
     WHEN 'CHECK_ISSUE_RESOLVED' THEN 'CHECK_ISSUE_RESOLVED'
     WHEN 'Remedy Ticket' THEN 'Remedy Ticket Agent'
     WHEN 'Check status' THEN 'Remedy Ticket Agent'
     WHEN 'Knowledge Base ' THEN 'KMS Agent'
     WHEN 'RFO' THEN 'RFO'
-    WHEN 'Check customer' THEN 'Ticket Analysis'
+    WHEN 'Check customer' THEN 'Ticket Analysis Agent'
     WHEN 'JIRA' THEN 'Jira Ticket Agent'
     WHEN 'Revenue' THEN NULL
     WHEN 'Pricing' THEN NULL
@@ -276,7 +349,7 @@ SELECT
     WHEN 'Customer Incident Report' THEN 'Customer Incident Report'
     WHEN 'Document Agent' THEN 'Document Agent'
     WHEN 'KMS Agent' THEN 'KMS Agent'
-    WHEN 'Ticket Analysis' THEN 'Ticket Analysis'
+    WHEN 'Ticket Analysis' THEN 'Ticket Analysis Agent'
     WHEN 'Ticket Creation Agent' THEN 'Ticket Creation Agent'
     ELSE b.sentence_highlights[SAFE_OFFSET(0)].highlight_display_name
   END AS HighlightAgentCleansed,
@@ -316,6 +389,10 @@ SELECT
     b.user_query_text,
     b.platform_channel,
     b.slack_email,
+    b.slack_UserID,
+    COALESCE(td_id.Department, td_override.Department, td_name.Department) AS Department,
+    COALESCE(td_id.Division, td_override.Division, td_name.Division) AS Division,
+    COALESCE(td_id.Team, td_override.Team, td_name.Team) AS Team,
     b.slack_attached_files,
     b.slack_fullname,
     b.slack_team_id,
@@ -386,5 +463,15 @@ FROM
     BaseConversationData b
 LEFT JOIN
     UserFirstUse ufu ON b.slack_user_id = ufu.slack_user_id
+LEFT JOIN
+  TrainingData td_id ON TRIM(UPPER(b.slack_UserID)) = td_id.UserID
+LEFT JOIN
+  ManualOverrides mo ON TRIM(UPPER(b.slack_UserID)) = mo.slack_userid
+LEFT JOIN
+  TrainingData td_override ON mo.override_userid = td_override.UserID
+LEFT JOIN
+  TrainingDataCompact td_name ON td_id.UserID IS NULL
+    AND td_override.UserID IS NULL
+    AND REGEXP_REPLACE(LOWER(TRIM(b.slack_fullname)), r'[^a-z0-9]', '') = td_name.UserID_compact
 
 ORDER BY b.requisitionStartTime DESC

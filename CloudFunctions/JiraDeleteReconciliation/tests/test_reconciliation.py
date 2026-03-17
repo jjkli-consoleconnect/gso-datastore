@@ -30,73 +30,7 @@ import main  # noqa: E402  --- loaded after conftest.py installs stubs
 
 
 # ===========================================================================
-# 1.  Pure helper: _build_proj_jql
-# ===========================================================================
-class TestBuildProjJql(unittest.TestCase):
-
-    def test_simple_name_no_quotes(self):
-        result = main._build_proj_jql("TAC")
-        self.assertEqual(result, "project = TAC")
-
-    def test_name_with_space_is_quoted(self):
-        result = main._build_proj_jql("Global Service Delivery Team")
-        self.assertIn('"', result)
-        self.assertIn("Global Service Delivery Team", result)
-
-    def test_name_with_ampersand_is_quoted(self):
-        result = main._build_proj_jql("GS&O Data Analytics")
-        self.assertIn('"', result)
-        self.assertIn("GS&O Data Analytics", result)
-
-    def test_quoted_name_has_correct_jql_structure(self):
-        result = main._build_proj_jql("Console Connect Provisioning")
-        self.assertEqual(result, 'project = "Console Connect Provisioning"')
-
-    def test_name_with_embedded_quote_is_escaped(self):
-        # Should not raise; backslash-escape any internal double-quotes
-        result = main._build_proj_jql('Foo "Bar"')
-        self.assertIn('\\"', result)
-
-
-# ===========================================================================
-# 2.  Pure helper: passes_count_gate
-# ===========================================================================
-class TestPassesCountGate(unittest.TestCase):
-
-    def test_passes_when_ratio_above_threshold(self):
-        passes, ratio = main.passes_count_gate(1000, 1000, 0.70)
-        self.assertTrue(passes)
-        self.assertAlmostEqual(ratio, 1.0)
-
-    def test_passes_at_exact_threshold(self):
-        passes, ratio = main.passes_count_gate(700, 1000, 0.70)
-        self.assertTrue(passes)
-        self.assertAlmostEqual(ratio, 0.70)
-
-    def test_fails_below_threshold(self):
-        passes, ratio = main.passes_count_gate(100, 229_064, 0.70)
-        self.assertFalse(passes)
-        self.assertLess(ratio, 0.001)
-
-    def test_passes_when_bq_count_is_zero(self):
-        # Nothing to protect --- always passes
-        passes, ratio = main.passes_count_gate(0, 0, 0.70)
-        self.assertTrue(passes)
-        self.assertAlmostEqual(ratio, 1.0)
-
-    def test_fails_when_jira_count_is_zero_bq_nonempty(self):
-        passes, _ = main.passes_count_gate(0, 500, 0.70)
-        self.assertFalse(passes)
-
-    def test_custom_threshold(self):
-        passes_hi, _ = main.passes_count_gate(800, 1000, 0.90)
-        self.assertFalse(passes_hi)
-        passes_lo, _ = main.passes_count_gate(800, 1000, 0.75)
-        self.assertTrue(passes_lo)
-
-
-# ===========================================================================
-# 3.  TokenBucket --- rate limiting
+# 1.  TokenBucket --- rate limiting
 # ===========================================================================
 class TestTokenBucket(unittest.TestCase):
 
@@ -146,63 +80,7 @@ class TestTokenBucket(unittest.TestCase):
 
 
 # ===========================================================================
-# 4.  get_jira_approximate_count
-# ===========================================================================
-class TestGetJiraApproximateCount(unittest.TestCase):
-
-    def _mock_response(self, status_code, json_body=None, headers=None):
-        resp = MagicMock()
-        resp.status_code = status_code
-        resp.json.return_value = json_body or {}
-        resp.headers = headers or {}
-        # raise_for_status: raise for 4xx/5xx, pass otherwise
-        if status_code >= 400:
-            resp.raise_for_status.side_effect = Exception(f"HTTP {status_code}")
-        else:
-            resp.raise_for_status.return_value = None
-        return resp
-
-    @patch("main.requests.post")
-    def test_returns_total_on_success(self, mock_get):
-        mock_get.return_value = self._mock_response(200, {"count": 12345})
-        count = main.get_jira_approximate_count("project = TAC", ("user", "tok"))
-        self.assertEqual(count, 12345)
-        self.assertEqual(mock_get.call_args.args[0], main.JIRA_APPROX_COUNT_URL)
-        self.assertEqual(mock_get.call_args.kwargs["json"]["jql"], "project = TAC")
-
-    @patch("main.requests.post")
-    def test_returns_zero_total(self, mock_get):
-        mock_get.return_value = self._mock_response(200, {"count": 0})
-        count = main.get_jira_approximate_count("project = TAC", ("user", "tok"))
-        self.assertEqual(count, 0)
-
-    @patch("main.requests.post")
-    @patch("main.time.sleep", return_value=None)
-    def test_returns_none_after_all_failures(self, mock_sleep, mock_get):
-        mock_get.side_effect = Exception("network error")
-        count = main.get_jira_approximate_count(
-            "project = TAC", ("user", "tok"), max_retries=3
-        )
-        self.assertIsNone(count)
-        self.assertEqual(mock_get.call_count, 3)
-
-    @patch("main.requests.post")
-    @patch("main.time.sleep", return_value=None)
-    def test_retries_on_429_then_succeeds(self, mock_sleep, mock_get):
-        rate_limited = self._mock_response(429, headers={"Retry-After": "1"})
-        rate_limited.raise_for_status.return_value = None  # 429 not raised here
-        success = self._mock_response(200, {"count": 500})
-        mock_get.side_effect = [rate_limited, success]
-
-        count = main.get_jira_approximate_count(
-            "project = TAC", ("user", "tok"), max_retries=5
-        )
-        self.assertEqual(count, 500)
-        self.assertEqual(mock_get.call_count, 2)
-
-
-# ===========================================================================
-# 5.  check_key_exists
+# 2.  check_key_exists
 # ===========================================================================
 class TestCheckKeyExists(unittest.TestCase):
 
@@ -272,7 +150,89 @@ class TestCheckKeyExists(unittest.TestCase):
 
 
 # ===========================================================================
-# 6.  apply_soft_deletes_bq
+# 3.  batch_check_keys_exist
+# ===========================================================================
+class TestBatchCheckKeysExist(unittest.TestCase):
+
+    def _bucket(self):
+        return main.TokenBucket(1_000_000)
+
+    def _mock_search_response(self, status_code, issues=None, headers=None):
+        resp = MagicMock()
+        resp.status_code = status_code
+        resp.json.return_value = {"issues": [{"key": k} for k in (issues or [])]}
+        resp.headers = headers or {}
+        return resp
+
+    @patch("main.requests.post")
+    def test_returned_keys_go_to_confirmed_exist(self, mock_post):
+        mock_post.return_value = self._mock_search_response(200, issues=["PROJ-1", "PROJ-2"])
+        exist, maybe_del = main.batch_check_keys_exist(
+            ["PROJ-1", "PROJ-2", "PROJ-3"], ("u", "t"), self._bucket()
+        )
+        self.assertIn("PROJ-1", exist)
+        self.assertIn("PROJ-2", exist)
+        self.assertIn("PROJ-3", maybe_del)
+        self.assertNotIn("PROJ-3", exist)
+
+    @patch("main.requests.post")
+    def test_all_missing_go_to_possibly_deleted(self, mock_post):
+        mock_post.return_value = self._mock_search_response(200, issues=[])
+        exist, maybe_del = main.batch_check_keys_exist(
+            ["PROJ-1", "PROJ-2"], ("u", "t"), self._bucket()
+        )
+        self.assertEqual(exist, set())
+        self.assertEqual(maybe_del, {"PROJ-1", "PROJ-2"})
+
+    @patch("main.requests.post")
+    def test_http_error_routes_chunk_to_possibly_deleted(self, mock_post):
+        mock_post.return_value = self._mock_search_response(500)
+        exist, maybe_del = main.batch_check_keys_exist(
+            ["PROJ-1", "PROJ-2"], ("u", "t"), self._bucket()
+        )
+        self.assertEqual(exist, set())
+        self.assertEqual(maybe_del, {"PROJ-1", "PROJ-2"})
+
+    @patch("main.requests.post")
+    def test_exception_routes_chunk_to_possibly_deleted(self, mock_post):
+        mock_post.side_effect = Exception("network failure")
+        exist, maybe_del = main.batch_check_keys_exist(
+            ["PROJ-5", "PROJ-6"], ("u", "t"), self._bucket()
+        )
+        self.assertEqual(exist, set())
+        self.assertEqual(maybe_del, {"PROJ-5", "PROJ-6"})
+
+    @patch("main.requests.post")
+    @patch("main.time.sleep", return_value=None)
+    def test_429_sleeps_then_retries(self, mock_sleep, mock_post):
+        rate_limited = self._mock_search_response(429, headers={"Retry-After": "1"})
+        ok = self._mock_search_response(200, issues=["PROJ-1"])
+        mock_post.side_effect = [rate_limited, ok]
+        exist, _ = main.batch_check_keys_exist(["PROJ-1"], ("u", "t"), self._bucket())
+        self.assertIn("PROJ-1", exist)
+        self.assertEqual(mock_post.call_count, 2)
+
+    @patch("main.requests.post")
+    def test_batches_by_batch_size(self, mock_post):
+        mock_post.return_value = self._mock_search_response(200, issues=[])
+        keys = [f"PROJ-{i}" for i in range(25)]
+        main.batch_check_keys_exist(keys, ("u", "t"), self._bucket(), batch_size=10)
+        # 25 keys / batch_size 10 = 3 batches
+        self.assertEqual(mock_post.call_count, 3)
+
+    @patch("main.requests.post")
+    def test_sets_are_disjoint_and_cover_all_keys(self, mock_post):
+        mock_post.return_value = self._mock_search_response(
+            200, issues=["PROJ-1", "PROJ-2"]
+        )
+        keys = ["PROJ-1", "PROJ-2", "PROJ-3", "PROJ-4"]
+        exist, maybe_del = main.batch_check_keys_exist(keys, ("u", "t"), self._bucket())
+        self.assertEqual(exist & maybe_del, set(), "sets must be disjoint")
+        self.assertEqual(exist | maybe_del, set(keys), "sets must cover all keys")
+
+
+# ===========================================================================
+# 4.  apply_soft_deletes_bq
 # ===========================================================================
 class TestApplySoftDeletesBq(unittest.TestCase):
 
@@ -334,87 +294,8 @@ class TestApplySoftDeletesBq(unittest.TestCase):
 
 
 # ===========================================================================
-# 7.  get_bq_active_count
-# ===========================================================================
-class TestGetBqActiveCount(unittest.TestCase):
-
-    def _make_bq_client(self, count_value):
-        row = MagicMock()
-        row.cnt = count_value
-        client = MagicMock()
-        client.query.return_value.result.return_value = [row]
-        return client
-
-    def test_returns_count(self):
-        client = self._make_bq_client(12_345)
-        result = main.get_bq_active_count(client, "GSO", "JiraTickets", "TAC")
-        self.assertEqual(result, 12_345)
-
-    def test_parameterised_query_used(self):
-        client = self._make_bq_client(0)
-        main.get_bq_active_count(client, "GSO", "JiraTickets", "TAC")
-        job_config = client.query.call_args[1]["job_config"]
-        params = {p.name: p.value for p in job_config.query_parameters}
-        self.assertEqual(params["proj"], "TAC")
-
-    def test_zero_rows_returns_zero(self):
-        client = MagicMock()
-        client.query.return_value.result.return_value = []
-        result = main.get_bq_active_count(client, "GSO", "JiraTickets", "TAC")
-        self.assertEqual(result, 0)
-
-
-# ===========================================================================
-# 7b.  get_bq_min_created
-# ===========================================================================
-class TestGetBqMinCreated(unittest.TestCase):
-
-    def _make_client(self, min_created_value):
-        row = MagicMock()
-        row.min_created = min_created_value
-        client = MagicMock()
-        client.query.return_value.result.return_value = [row]
-        return client
-
-    def test_returns_date_string_when_created_found(self):
-        from datetime import datetime
-        dt = datetime(2021, 9, 24, 12, 50, 26)
-        client = self._make_client(dt)
-        result = main.get_bq_min_created(client, "GSO", "JiraTickets", "Mobility SMS - CE")
-        self.assertEqual(result, "2021-09-24")
-
-    def test_returns_none_when_no_rows(self):
-        client = MagicMock()
-        client.query.return_value.result.return_value = []
-        result = main.get_bq_min_created(client, "GSO", "JiraTickets", "TAC")
-        self.assertIsNone(result)
-
-    def test_returns_none_when_min_created_is_null(self):
-        row = MagicMock()
-        row.min_created = None
-        client = MagicMock()
-        client.query.return_value.result.return_value = [row]
-        result = main.get_bq_min_created(client, "GSO", "JiraTickets", "TAC")
-        self.assertIsNone(result)
-
-    def test_parameterised_query_used(self):
-        from datetime import datetime
-        client = self._make_client(datetime(2022, 1, 1))
-        main.get_bq_min_created(client, "GSO", "JiraTickets", "Mobility SMS - CE")
-        job_config = client.query.call_args[1]["job_config"]
-        params = {p.name: p.value for p in job_config.query_parameters}
-        self.assertEqual(params["proj"], "Mobility SMS - CE")
-
-    def test_sql_selects_min_created(self):
-        from datetime import datetime
-        client = self._make_client(datetime(2022, 1, 1))
-        main.get_bq_min_created(client, "GSO", "JiraTickets", "TAC")
-        sql = client.query.call_args[0][0]
-        self.assertIn("MIN(Created)", sql)
-
-
-# ===========================================================================
-# 8.  get_stale_candidate_keys
+# 5.  get_bq_active_count --- removed (no longer needed without count gate)
+# 6.  get_stale_candidate_keys
 # ===========================================================================
 class TestGetStaleCandidateKeys(unittest.TestCase):
 
@@ -451,7 +332,7 @@ class TestGetStaleCandidateKeys(unittest.TestCase):
 
 
 # ===========================================================================
-# 9.  reconcile_project --- integration (all IO mocked)
+# 7.  reconcile_project --- integration (all IO mocked)
 # ===========================================================================
 class TestReconcileProject(unittest.TestCase):
 
@@ -459,20 +340,13 @@ class TestReconcileProject(unittest.TestCase):
         """A TokenBucket with very high rate so tests don't wait."""
         return main.TokenBucket(1_000_000)
 
-    def _bq_client(self, active_count, candidate_keys):
-        """Return a BQ client mock pre-wired for count + candidates."""
-        count_row = MagicMock()
-        count_row.cnt = active_count
-
+    def _bq_client(self, candidate_keys):
+        """Return a BQ client mock pre-wired for candidates query + update."""
         candidate_rows = [MagicMock(Key=k) for k in candidate_keys]
-
         client = MagicMock()
-
-        # First call --- count, subsequent calls --- candidates / update
         call_results = [
-            [count_row],        # get_bq_active_count
-            candidate_rows,     # get_stale_candidate_keys
-            None,               # apply_soft_deletes_bq (UPDATE)
+            candidate_rows,  # get_stale_candidate_keys
+            None,            # apply_soft_deletes_bq (UPDATE)
         ]
         result_iter = iter(call_results)
 
@@ -484,54 +358,11 @@ class TestReconcileProject(unittest.TestCase):
         client.query.side_effect = _query_side_effect
         return client
 
-    # ------ Count gate failure ------------------------------------------------------------------------------------------------------------------------------------------------------
-
-    @patch("main.get_jira_approximate_count", return_value=50)
-    def test_count_gate_fail_skips_project(self, mock_count):
-        """When Jira returns far fewer keys than BQ, the project is skipped."""
-        # BQ has 10,000 active rows; Jira returns 50 --- ratio = 0.5% (< 70%)
-        count_row = MagicMock(); count_row.cnt = 10_000
-        client = MagicMock()
-        client.query.return_value.result.return_value = [count_row]
-
-        stats = main.reconcile_project(
-            project="TAC", auth=("u", "t"), client=client,
-            bucket=self._bucket(), dry_run=False,
-        )
-        self.assertEqual(stats["status"], "skipped_count_gate")
-        self.assertEqual(stats["soft_deleted_bq"], 0)
-        self.assertEqual(stats["candidates"], 0)
-
-    # ------ Jira count API failure ------------------------------------------------------------------------------------------------------------------------------------
-
-    @patch("main.get_jira_approximate_count", return_value=None)
-    def test_count_api_failure_skips_project(self, mock_count):
-        client = MagicMock()
-        stats = main.reconcile_project(
-            project="TAC", auth=("u", "t"), client=client,
-            bucket=self._bucket(), dry_run=False,
-        )
-        self.assertEqual(stats["status"], "skipped_error")
-        self.assertEqual(stats["soft_deleted_bq"], 0)
-
     # ------ No candidates ------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    @patch("main.get_jira_approximate_count", return_value=1_000)
-    def test_no_candidates_returns_no_candidates_status(self, mock_count):
-        count_row = MagicMock(); count_row.cnt = 1_000  # ratio = 1.0 (passes gate)
+    def test_no_candidates_returns_no_candidates_status(self):
         client = MagicMock()
-
-        def _query_side_effect(*args, **kwargs):
-            mock_job = MagicMock()
-            sql = args[0] if args else ""
-            if "COUNT(*)" in sql:
-                mock_job.result.return_value = [count_row]
-            else:
-                mock_job.result.return_value = []  # no stale candidates
-            return mock_job
-
-        client.query.side_effect = _query_side_effect
-
+        client.query.return_value.result.return_value = []  # no stale candidates
         stats = main.reconcile_project(
             project="TAC", auth=("u", "t"), client=client,
             bucket=self._bucket(), dry_run=False,
@@ -542,9 +373,9 @@ class TestReconcileProject(unittest.TestCase):
 
     # ------ Normal flow: 3 candidates, 1 deleted, 1 exists, 1 error ------------------------------
 
-    @patch("main.get_jira_approximate_count", return_value=1_000)
     @patch("main.check_key_exists")
-    def test_normal_flow_correct_stats(self, mock_check, mock_count):
+    @patch("main.batch_check_keys_exist", side_effect=lambda keys, auth, bucket, **kw: (set(), set(keys)))
+    def test_normal_flow_correct_stats(self, mock_batch, mock_check):
         """End-to-end: 3 candidates --- 1 soft-deleted, 1 kept, 1 skipped."""
         jira_outcomes = {
             "PROJ-100": "deleted",
@@ -553,19 +384,13 @@ class TestReconcileProject(unittest.TestCase):
         }
         mock_check.side_effect = lambda key, auth, **kw: jira_outcomes[key]
 
-        count_row = MagicMock(); count_row.cnt = 1_000
         candidate_rows = [MagicMock(Key=k) for k in jira_outcomes]
-
         client = MagicMock()
 
         def _query_side_effect(*args, **kwargs):
             mock_job = MagicMock()
             sql = args[0] if args else ""
-            if "COUNT(*)" in sql:
-                mock_job.result.return_value = [count_row]
-            elif "MIN(Created)" in sql:
-                mock_job.result.return_value = []   # no min date
-            elif "SyncTime" in sql:
+            if "SyncTime" in sql:
                 mock_job.result.return_value = candidate_rows
             else:
                 mock_job.result.return_value = None  # UPDATE
@@ -587,26 +412,12 @@ class TestReconcileProject(unittest.TestCase):
 
     # ------ Dry-run: verified deletes are not written to BQ ---------------------------------------------------------
 
-    @patch("main.get_jira_approximate_count", return_value=1_000)
     @patch("main.check_key_exists", return_value="deleted")
-    def test_dry_run_no_bq_write(self, mock_check, mock_count):
-        count_row = MagicMock(); count_row.cnt = 1_000
+    @patch("main.batch_check_keys_exist", side_effect=lambda keys, auth, bucket, **kw: (set(), set(keys)))
+    def test_dry_run_no_bq_write(self, mock_batch, mock_check):
         candidate_rows = [MagicMock(Key="PROJ-1"), MagicMock(Key="PROJ-2")]
-
         client = MagicMock()
-
-        def _query_side_effect(*args, **kwargs):
-            mock_job = MagicMock()
-            sql = args[0] if args else ""
-            if "COUNT(*)" in sql:
-                mock_job.result.return_value = [count_row]
-            elif "MIN(Created)" in sql:
-                mock_job.result.return_value = []   # no min date
-            else:
-                mock_job.result.return_value = candidate_rows
-            return mock_job
-
-        client.query.side_effect = _query_side_effect
+        client.query.return_value.result.return_value = candidate_rows
 
         stats = main.reconcile_project(
             project="TAC", auth=("u", "t"), client=client,
@@ -630,22 +441,11 @@ class TestReconcileProject(unittest.TestCase):
 
     # ------ max_candidates cap respected ---------------------------------------------------------------------------------------------------------------------
 
-    @patch("main.get_jira_approximate_count", return_value=1_000)
     @patch("main.check_key_exists", return_value="exists")
-    def test_max_candidates_passed_to_bq(self, mock_check, mock_count):
-        count_row = MagicMock(); count_row.cnt = 1_000
+    @patch("main.batch_check_keys_exist", side_effect=lambda keys, auth, bucket, **kw: (set(), set(keys)))
+    def test_max_candidates_passed_to_bq(self, mock_batch, mock_check):
         client = MagicMock()
-
-        def _query_side_effect(*args, **kwargs):
-            mock_job = MagicMock()
-            sql = args[0] if args else ""
-            if "COUNT(*)" in sql:
-                mock_job.result.return_value = [count_row]
-            else:
-                mock_job.result.return_value = []
-            return mock_job
-
-        client.query.side_effect = _query_side_effect
+        client.query.return_value.result.return_value = []
 
         main.reconcile_project(
             project="TAC", auth=("u", "t"), client=client,
@@ -661,58 +461,34 @@ class TestReconcileProject(unittest.TestCase):
                     self.assertEqual(params["max_candidates"], 42)
                     break
 
-    # ------ Date-aligned count gate JQL -----------------------------------------------------------------------
+    # ------ Circuit breaker trips on sustained timeouts/errors ------------------------------------------------------------------
 
-    @patch("main.get_bq_min_created", return_value="2021-09-24")
-    @patch("main.get_jira_approximate_count")
-    def test_count_gate_jql_scoped_when_min_created_known(self, mock_count, mock_min):
-        """Count-gate JQL must include created >= filter when BQ min date is available."""
-        mock_count.return_value = 5_000
-        count_row = MagicMock(); count_row.cnt = 5_000
+    @patch("main.check_key_exists", return_value="skip")
+    @patch("main.batch_check_keys_exist", side_effect=lambda keys, auth, bucket, **kw: (set(), set(keys)))
+    def test_circuit_breaker_trips_on_high_skip_rate(self, mock_batch, mock_check):
+        """When ≥80% of first 10 checks are skips, circuit breaker aborts project."""
+        # 15 candidates (> CIRCUIT_BREAKER_MIN_CHECKS=10), all timeout → skip
+        candidates = [MagicMock(Key=f"PROJ-{i}") for i in range(15)]
         client = MagicMock()
+        client.query.return_value.result.return_value = candidates
 
-        def _query_side_effect(*args, **kwargs):
-            mock_job = MagicMock()
-            sql = args[0] if args else ""
-            if "COUNT(*)" in sql:
-                mock_job.result.return_value = [count_row]
-            else:
-                mock_job.result.return_value = []  # no candidates
-            return mock_job
-
-        client.query.side_effect = _query_side_effect
-
-        main.reconcile_project(
-            project="Mobility SMS - CE", auth=("u", "t"), client=client,
-            bucket=self._bucket(), dry_run=True,
+        stats = main.reconcile_project(
+            project="TAC", auth=("u", "t"), client=client,
+            bucket=self._bucket(), dry_run=False,
         )
 
-        jql_used = mock_count.call_args[0][0]
-        self.assertIn('created >= "2021-09-24"', jql_used)
-        self.assertIn("Mobility SMS - CE", jql_used)
+        self.assertEqual(stats["status"], "skipped_high_error_rate")
+        self.assertEqual(stats["soft_deleted_bq"], 0)
+        self.assertGreater(stats["skipped_on_error"], 0)
 
     # ------ Conservative on all-skip (no false deletions) ------------------------------------------------------------------
 
-    @patch("main.get_jira_approximate_count", return_value=1_000)
     @patch("main.check_key_exists", return_value="skip")
-    def test_all_skip_results_in_zero_deletes(self, mock_check, mock_count):
-        count_row = MagicMock(); count_row.cnt = 1_000
+    @patch("main.batch_check_keys_exist", side_effect=lambda keys, auth, bucket, **kw: (set(), set(keys)))
+    def test_all_skip_results_in_zero_deletes(self, mock_batch, mock_check):
         candidates = [MagicMock(Key=f"PROJ-{i}") for i in range(10)]
-
         client = MagicMock()
-
-        def _query_side_effect(*args, **kwargs):
-            mock_job = MagicMock()
-            sql = args[0] if args else ""
-            if "COUNT(*)" in sql:
-                mock_job.result.return_value = [count_row]
-            elif "MIN(Created)" in sql:
-                mock_job.result.return_value = []   # no min date
-            else:
-                mock_job.result.return_value = candidates
-            return mock_job
-
-        client.query.side_effect = _query_side_effect
+        client.query.return_value.result.return_value = candidates
 
         stats = main.reconcile_project(
             project="TAC", auth=("u", "t"), client=client,
@@ -725,32 +501,26 @@ class TestReconcileProject(unittest.TestCase):
 
 
 # ===========================================================================
-# 10. End-to-end data accuracy scenarios
+# 8.  End-to-end data accuracy scenarios
 # ===========================================================================
 class TestDataAccuracyScenarios(unittest.TestCase):
     """
     Scenario-driven tests that verify the core data-accuracy guarantee:
-    a ticket MUST NOT be soft-deleted unless:
-      (a) the count gate passes, AND
-      (b) the individual Jira API returns exactly HTTP 404.
+    a ticket MUST NOT be soft-deleted unless the individual Jira API
+    returns exactly HTTP 404.  The per-key check is the sole accuracy guard.
     """
 
     def _bucket(self):
         return main.TokenBucket(1_000_000)
 
-    def _setup_bq_client(self, bq_count, candidate_keys):
-        count_row = MagicMock(); count_row.cnt = bq_count
+    def _setup_bq_client(self, candidate_keys):
         candidates = [MagicMock(Key=k) for k in candidate_keys]
         client = MagicMock()
 
         def _query(sql_or_positional, *args, **kwargs):
             mock_job = MagicMock()
             sql = sql_or_positional if isinstance(sql_or_positional, str) else ""
-            if "COUNT(*)" in sql:
-                mock_job.result.return_value = [count_row]
-            elif "MIN(Created)" in sql:
-                mock_job.result.return_value = []   # no min date
-            elif "SyncTime" in sql:
+            if "SyncTime" in sql:
                 mock_job.result.return_value = candidates
             else:
                 mock_job.result.return_value = None
@@ -759,27 +529,12 @@ class TestDataAccuracyScenarios(unittest.TestCase):
         client.query.side_effect = _query
         return client
 
-    @patch("main.get_jira_approximate_count", return_value=100)
-    def test_scenario_truncated_response_blocked_by_count_gate(self, mock_count):
-        """
-        Simulates the original bug: Jira returns 100 keys for a project that
-        has 229,064 BQ rows.  Count gate must block all deletes.
-        """
-        client = self._setup_bq_client(229_064, [f"GSDT-{i}" for i in range(500)])
-        stats = main.reconcile_project(
-            project="Global Service Delivery Team", auth=("u", "t"),
-            client=client, bucket=self._bucket(), dry_run=False,
-        )
-        self.assertEqual(stats["status"], "skipped_count_gate",
-                         "Truncated Jira result must be blocked by count gate")
-        self.assertEqual(stats["soft_deleted_bq"], 0)
-
-    @patch("main.get_jira_approximate_count", return_value=229_064)
     @patch("main.check_key_exists", return_value="exists")
-    def test_scenario_all_tickets_exist_zero_deletes(self, mock_check, mock_count):
+    @patch("main.batch_check_keys_exist", side_effect=lambda keys, auth, bucket, **kw: (set(), set(keys)))
+    def test_scenario_all_tickets_exist_zero_deletes(self, mock_batch, mock_check):
         """When every candidate is confirmed to still exist, nothing is deleted."""
         keys = [f"GSDT-{i}" for i in range(50)]
-        client = self._setup_bq_client(229_064, keys)
+        client = self._setup_bq_client(keys)
         stats = main.reconcile_project(
             project="Global Service Delivery Team", auth=("u", "t"),
             client=client, bucket=self._bucket(), dry_run=False,
@@ -787,9 +542,9 @@ class TestDataAccuracyScenarios(unittest.TestCase):
         self.assertEqual(stats["soft_deleted_bq"], 0)
         self.assertEqual(stats["confirmed_deleted"], 0)
 
-    @patch("main.get_jira_approximate_count", return_value=229_000)
     @patch("main.check_key_exists")
-    def test_scenario_partial_deletion_only_confirmed(self, mock_check, mock_count):
+    @patch("main.batch_check_keys_exist", side_effect=lambda keys, auth, bucket, **kw: (set(), set(keys)))
+    def test_scenario_partial_deletion_only_confirmed(self, mock_batch, mock_check):
         """
         Of 5 stale candidates: 2 are 404, 2 are 200, 1 has a connection error.
         Only the 2 confirmed-404 tickets must be soft-deleted.
@@ -802,7 +557,7 @@ class TestDataAccuracyScenarios(unittest.TestCase):
             "GSDT-50": "skip",   # network error
         }
         mock_check.side_effect = lambda key, auth, **kw: outcomes[key]
-        client = self._setup_bq_client(229_000, list(outcomes.keys()))
+        client = self._setup_bq_client(list(outcomes.keys()))
 
         stats = main.reconcile_project(
             project="Global Service Delivery Team", auth=("u", "t"),
@@ -812,12 +567,12 @@ class TestDataAccuracyScenarios(unittest.TestCase):
         self.assertEqual(stats["soft_deleted_bq"], 2)
         self.assertEqual(stats["skipped_on_error"], 1)
 
-    @patch("main.get_jira_approximate_count", return_value=500)
     @patch("main.check_key_exists", return_value="deleted")
-    def test_scenario_count_gate_passes_then_deletes_applied(self, mock_check, mock_count):
-        """When Jira count is close to BQ count and all candidates are 404."""
+    @patch("main.batch_check_keys_exist", side_effect=lambda keys, auth, bucket, **kw: (set(), set(keys)))
+    def test_scenario_all_candidates_confirmed_deleted(self, mock_batch, mock_check):
+        """When all candidates return 404, all are soft-deleted."""
         keys = [f"TAC-{i}" for i in range(10)]
-        client = self._setup_bq_client(500, keys)
+        client = self._setup_bq_client(keys)
 
         stats = main.reconcile_project(
             project="TAC", auth=("u", "t"),
@@ -829,20 +584,9 @@ class TestDataAccuracyScenarios(unittest.TestCase):
 
     def test_scenario_no_stale_tickets_zero_api_calls(self):
         """If all tickets are recent, we make no Jira verification calls at all."""
-        with patch("main.get_jira_approximate_count", return_value=300) as mock_cnt, \
-             patch("main.check_key_exists") as mock_chk:
-            count_row = MagicMock(); count_row.cnt = 300
+        with patch("main.check_key_exists") as mock_chk:
             client = MagicMock()
-
-            def _query(sql, *args, **kwargs):
-                mock_job = MagicMock()
-                if "COUNT(*)" in sql:
-                    mock_job.result.return_value = [count_row]
-                else:
-                    mock_job.result.return_value = []  # no candidates
-                return mock_job
-
-            client.query.side_effect = _query
+            client.query.return_value.result.return_value = []  # no candidates
 
             stats = main.reconcile_project(
                 project="TAC", auth=("u", "t"),
@@ -853,7 +597,7 @@ class TestDataAccuracyScenarios(unittest.TestCase):
 
 
 # ===========================================================================
-# 11. SQL injection safety
+# 9.  SQL injection safety
 # ===========================================================================
 class TestSqlInjectionSafety(unittest.TestCase):
 
@@ -882,7 +626,7 @@ class TestSqlInjectionSafety(unittest.TestCase):
 
 
 # ===========================================================================
-# 12. Request-level dry-run override
+# 10. Request-level dry-run override
 # ===========================================================================
 class TestRequestDryRunOverride(unittest.TestCase):
 
