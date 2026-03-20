@@ -1,5 +1,5 @@
 param(
-    [switch]$AllowUnauthenticated = $true
+  [switch]$AllowUnauthenticated
 )
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -9,6 +9,10 @@ $REGION = "europe-west2"
 $CONNECTOR = "eu-prod-wanda-vpc-conn"
 $FUNC_NAME = "jira-tickets-nightly"
 $SERVICE_ACCOUNT = "370161436243-compute@developer.gserviceaccount.com"
+
+if (-not $PSBoundParameters.ContainsKey('AllowUnauthenticated')) {
+  $AllowUnauthenticated = $true
+}
 
 Write-Host "Deploying $FUNC_NAME to project $PROJECT region $REGION"
 
@@ -29,6 +33,7 @@ Write-Host "Deploying $FUNC_NAME to project $PROJECT region $REGION"
   --vpc-connector "projects/$PROJECT/locations/$REGION/connectors/$CONNECTOR" `
   --egress-settings all `
   --service-account $SERVICE_ACCOUNT `
+  --set-env-vars "MISSING_KEY_CATCHUP_PER_PROJECT=50000,MIN_START=2023-01-01T00:00:00Z" `
   $(if ($AllowUnauthenticated) {"--allow-unauthenticated"} else {"--no-allow-unauthenticated"})
 
 $LASTEXITCODE = $?

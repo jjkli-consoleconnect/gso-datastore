@@ -58,6 +58,12 @@ EMAIL_PATTERNS = [
         "from": "noreply-bmchelix@onbmc.com",
         "label": "pubsub",
         "pubsub_topic": "gmail-snapshot-reports"
+    },
+    {
+        "name": "SRInventory",
+        "subject": "TIP GCSC Region detail",
+        "label": "pubsub",
+        "pubsub_topic": "gmail-to-srinventory"
     }
 ]
 

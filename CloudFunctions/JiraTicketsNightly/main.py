@@ -9,7 +9,6 @@ import time
 import random
 import os
 from datetime import datetime, timedelta, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery, secretmanager
 import functions_framework
 
@@ -27,8 +26,12 @@ JITTER_MAX_SECONDS = 0.3
 MIN_PROGRESS_WINDOW_SEC = 600  # 10 minutes to avoid thrashing tiny windows
 MIN_WINDOW_HOURS = 1  # Skip windows smaller than 1 hour
 OVERLAP_MINUTES = 10
-MIN_START = datetime(2024, 7, 1, tzinfo=timezone.utc)
+MIN_START_ENV = os.environ.get('MIN_START', '2023-01-01T00:00:00Z')
+MIN_START = datetime.fromisoformat(MIN_START_ENV.replace('Z', '+00:00'))
 ENABLE_SOFT_DELETE_RECONCILIATION = os.environ.get('ENABLE_SOFT_DELETE_RECONCILIATION', '').strip().lower() == 'true'
+MISSING_KEY_CATCHUP_PER_PROJECT = int(os.environ.get('MISSING_KEY_CATCHUP_PER_PROJECT', '50000'))
+CACHE_BATCHED_FETCH_SIZE = int(os.environ.get('CACHE_BATCHED_FETCH_SIZE', '500'))  # Issues cached in each batch
+CACHE_BATCH_DURATION_SEC = int(os.environ.get('CACHE_BATCH_DURATION_SEC', '120'))  # 2-minute window
 
 DEFAULT_PROJECTS = [
     'GS&O Data Analytics',
@@ -89,6 +92,54 @@ def _to_sql_string_list(values):
     for value in values:
         escaped.append("'" + str(value).replace("'", "''") + "'")
     return ", ".join(escaped)
+
+
+def get_known_project_keys(client, dataset_id, table_id, project):
+    """Return known non-empty keys already present in BQ for a project."""
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('p', 'STRING', project),
+        ]
+    )
+    rows = client.query(
+        f"""
+        SELECT DISTINCT Key
+        FROM `{dataset_id}.{table_id}`
+        WHERE Project = @p
+          AND Key IS NOT NULL
+          AND TRIM(Key) <> ''
+        """,
+        job_config=job_config,
+    ).result()
+    return {r.Key for r in rows if getattr(r, 'Key', None)}
+
+
+def get_very_stale_project_keys(client, dataset_id, table_id, project, stale_days=30):
+    """Return keys in BQ that haven't been updated in > stale_days."""
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('p', 'STRING', project),
+            bigquery.ScalarQueryParameter('stale_cutoff', 'TIMESTAMP', 
+              (datetime.now(timezone.utc) - timedelta(days=stale_days))),
+        ]
+    )
+    rows = client.query(
+        f"""
+        WITH latest AS (
+          SELECT Key, SyncTime,
+                 ROW_NUMBER() OVER (PARTITION BY Key ORDER BY SyncTime DESC, Updated DESC) AS rn
+          FROM `{dataset_id}.{table_id}`
+          WHERE Project = @p
+            AND Key IS NOT NULL
+            AND TRIM(Key) <> ''
+        )
+        SELECT DISTINCT Key
+        FROM latest
+        WHERE rn = 1 AND SyncTime < @stale_cutoff
+        """,
+        job_config=job_config,
+    ).result()
+    return {r.Key for r in rows if getattr(r, 'Key', None)}
 
 
 def select_window(client, dataset_id, table_id, project, base_days=3):
@@ -256,6 +307,33 @@ def extract_issue_links(issuelinks):
     return ', '.join(links) if links else None
 
 
+def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name):
+    if not issue:
+        return None
+    key = issue.get('key')
+    if not key or not str(key).strip():
+        return None
+    fields = issue.get('fields', {})
+    return {
+        "T": fields.get('issuetype', {}).get('name'),
+        "Project": fields.get('project', {}).get('name'),
+        "Key": key,
+        "Summary": fields.get('summary'),
+        "Status": fields.get('status', {}).get('name'),
+        "Created": convert_timestamp(fields.get('created')),
+        "Updated": convert_timestamp(fields.get('updated')),
+        "Resolved": convert_timestamp(fields.get('resolutiondate')),
+        "Reporter": get_field_value(fields.get('reporter')),
+        "Assignee": get_field_value(fields.get('assignee')),
+        "Component": ', '.join([get_field_value(component) for component in fields.get('components', [])]) if fields.get('components') else None,
+        "Links": extract_issue_links(fields.get('issuelinks')),
+        sr_ref_bq_name: get_field_value(fields.get(sr_ref_jira_id)),
+        "Priority": get_field_value(fields.get('priority')),
+        "Resolution": get_field_value(fields.get('resolution')),
+        "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+    }
+
+
 def fetch_and_sync_jira_tickets_nightly():
     config = load_config()
     if config is None:
@@ -275,6 +353,12 @@ def fetch_and_sync_jira_tickets_nightly():
 
     run_id = str(uuid.uuid4())
     client = None
+    run_started = None
+    total_rows_merged = 0
+    final_status = "ERROR"
+    final_level = "ERROR"
+    final_message = "Pipeline did not complete"
+    final_error_code = None
 
     try:
         run_started = datetime.now(timezone.utc)
@@ -318,49 +402,36 @@ def fetch_and_sync_jira_tickets_nightly():
 
         ensure_soft_delete_columns(client, dataset_id, table_id)
 
-        def fetch_issue_detail(issue_key):
-            issue_url = f"https://consoleconnect.atlassian.net/rest/api/3/issue/{issue_key}"
-            headers = {"Accept": "application/json", "Content-Type": "application/json"}
-            auth = (username, api_token)
-            try:
-                issue_resp = requests.get(issue_url, headers=headers, auth=auth, timeout=30)
-                issue_resp.raise_for_status()
-                full_issue = issue_resp.json()
-                fields = full_issue.get('fields', {})
-                row = {
-                    "T": fields.get('issuetype', {}).get('name'),
-                    "Project": fields.get('project', {}).get('name'),
-                    "Key": issue_key,
-                    "Summary": fields.get('summary'),
-                    "Status": fields.get('status', {}).get('name'),
-                    "Created": convert_timestamp(fields.get('created')),
-                    "Updated": convert_timestamp(fields.get('updated')),
-                    "Resolved": convert_timestamp(fields.get('resolutiondate')),
-                    "Reporter": get_field_value(fields.get('reporter')),
-                    "Assignee": get_field_value(fields.get('assignee')),
-                    "Component": ', '.join([get_field_value(c) for c in fields.get('components', [])]) if fields.get('components') else None,
-                    "Links": None,
-                    SR_REF_BQ_NAME: get_field_value(fields.get(SR_REF_JIRA_ID)),
-                    "Priority": get_field_value(fields.get('priority')),
-                    "Resolution": get_field_value(fields.get('resolution')),
-                    "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-                }
-                return row
-            except Exception as e:
-                logging.warning(f"Could not fetch full details for issue {issue_key}: {e}")
-                return None
+        ticket_search_fields = [
+            'key',
+            'issuetype',
+            'project',
+            'summary',
+            'status',
+            'created',
+            'updated',
+            'resolutiondate',
+            'reporter',
+            'assignee',
+            'components',
+            'priority',
+            'resolution',
+            'issuelinks',
+            SR_REF_JIRA_ID,
+        ]
 
-        def search_issue_keys(jql: str, label: str):
+        def search_issues(jql: str, label: str, fields):
             headers_local = {'Accept': 'application/json'}
             start_at = 0
             max_results = 100
-            all_keys = []
+            all_issues = []
             auth_local = (username, api_token)
             had_error = False
+            fields_param = ','.join(fields)
 
             while True:
                 try:
-                    params_local = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
+                    params_local = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': fields_param}
                     resp = requests.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=30)
                     if resp.status_code == 429:
                         ra = int(resp.headers.get('Retry-After', 30) or 30)
@@ -371,8 +442,7 @@ def fetch_and_sync_jira_tickets_nightly():
                     data_local = resp.json()
                     issues_local = data_local.get('issues', [])
                     total = data_local.get('total', 0)
-                    keys = [i.get('key') for i in issues_local if i.get('key')]
-                    all_keys.extend(keys)
+                    all_issues.extend(issues_local)
                     start_at += len(issues_local)
                     if start_at >= total or not issues_local:
                         break
@@ -381,10 +451,88 @@ def fetch_and_sync_jira_tickets_nightly():
                     logging.error(f"{label} pass error: {e}")
                     break
 
-            logging.info(f"{label} pass fetched {len(all_keys)} issue keys")
-            return all_keys, had_error
+            logging.info(f"{label} pass fetched {len(all_issues)} issues")
+            return all_issues, had_error
 
-        total_rows_merged = 0
+        def search_issue_keys(jql: str, label: str):
+            issues, had_error = search_issues(jql, label, ['key'])
+            keys = [issue.get('key') for issue in issues if issue.get('key')]
+            logging.info(f"{label} pass fetched {len(keys)} issue keys")
+            return keys, had_error
+
+        def fetch_ticket_rows_for_keys(issue_keys, label):
+            if not issue_keys:
+                return []
+            rows = []
+            chunk_size = 50
+            for index in range(0, len(issue_keys), chunk_size):
+                key_chunk = issue_keys[index:index + chunk_size]
+                keys_jql = ', '.join([f'"{key}"' for key in key_chunk if key])
+                if not keys_jql:
+                    continue
+                chunk_jql = f"key in ({keys_jql})"
+                issues, had_error = search_issues(chunk_jql, f"{label}:chunk{index // chunk_size + 1}", ticket_search_fields)
+                if had_error:
+                    logging.warning(f"{label} bulk fetch had Jira search errors for chunk {index // chunk_size + 1}")
+                for issue in issues:
+                    row = build_ticket_row(issue, SR_REF_JIRA_ID, SR_REF_BQ_NAME)
+                    if row:
+                        rows.append(row)
+            return rows
+
+        def fetch_and_insert_ticket_rows_batched(issue_keys, label, dataset_id_inner, temp_table_id_inner, bq_schema_inner):
+            """
+            Fetch and insert ticket rows in batches to minimize memory usage.
+            Processes keys in CACHE_BATCHED_FETCH_SIZE chunks, fetching and inserting each batch.
+            Returns total count inserted.
+            """
+            if not issue_keys:
+                return 0
+            
+            total_inserted = 0
+            batch_start_idx = 0
+            
+            while batch_start_idx < len(issue_keys):
+                batch_end_idx = min(batch_start_idx + CACHE_BATCHED_FETCH_SIZE, len(issue_keys))
+                batch_keys = issue_keys[batch_start_idx:batch_end_idx]
+                
+                logging.debug(f"{label}: Processing batch {batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1} "
+                            f"({len(batch_keys)} keys, indices {batch_start_idx}-{batch_end_idx})")
+                
+                # Fetch rows for this batch
+                batch_rows = []
+                chunk_size = 50
+                for chunk_idx in range(0, len(batch_keys), chunk_size):
+                    key_chunk = batch_keys[chunk_idx:chunk_idx + chunk_size]
+                    keys_jql = ', '.join([f'"{key}"' for key in key_chunk if key])
+                    if not keys_jql:
+                        continue
+                    chunk_jql = f"key in ({keys_jql})"
+                    issues, had_error = search_issues(chunk_jql, 
+                                                    f"{label}:batch{batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1}"
+                                                    f":chunk{chunk_idx // chunk_size + 1}", 
+                                                    ticket_search_fields)
+                    if had_error:
+                        logging.warning(f"{label} had Jira search errors for batch chunk")
+                    for issue in issues:
+                        row = build_ticket_row(issue, SR_REF_JIRA_ID, SR_REF_BQ_NAME)
+                        if row:
+                            batch_rows.append(row)
+                
+                # Insert this batch
+                if batch_rows:
+                    if insert_rows_resilient(client, dataset_id_inner, temp_table_id_inner, batch_rows, bq_schema_inner):
+                        total_inserted += len(batch_rows)
+                        logging.info(f"{label}: Inserted {len(batch_rows)} rows from batch "
+                                   f"{batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1}")
+                    else:
+                        logging.error(f"{label}: Failed to insert batch {batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1}")
+                        return total_inserted  # Return what we've inserted so far; let caller retry
+                
+                batch_start_idx = batch_end_idx
+            
+            return total_inserted
+
         # Use single temp table with run_id suffix for all projects
         temp_table_id_run = f"{temp_table_id}_{run_id.replace('-', '_')[:8]}"
         
@@ -398,6 +546,8 @@ def fetch_and_sync_jira_tickets_nightly():
         
         for proj in projects:
             logging.info(f"Starting nightly window selection for project {proj}")
+            project_current_keys = set()
+            proj_clause = f'project = "{proj}"' if (' ' in proj or '&' in proj) else f'project = {proj}'
             
             while True:
                 ws, we = select_window(client, dataset_id, progress_table_id, proj, base_days=1)
@@ -420,7 +570,6 @@ def fetch_and_sync_jira_tickets_nightly():
                     window_end=we.strftime('%Y-%m-%d %H:%M:%S'),
                 )
 
-                proj_clause = f'project = "{proj}"' if (' ' in proj or '&' in proj) else f'project = {proj}'
                 time_clause = f"updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
                 resolved_clause = f"resolutiondate >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND resolutiondate < \"{we.strftime('%Y/%m/%d %H:%M')}\""
                 # Combined JQL - single search instead of two
@@ -428,27 +577,22 @@ def fetch_and_sync_jira_tickets_nightly():
                 logging.info(f"JQL combined window: {jql_combined}")
 
                 rows_to_insert = []
-                issue_keys_total = set()
-
-                combined_keys, combined_had_error = search_issue_keys(jql_combined, 'combined')
+                combined_issues, combined_had_error = search_issues(jql_combined, 'combined', ticket_search_fields)
                 if combined_had_error:
                     logging.warning(f"Skipping window for project {proj} due to Jira search errors")
                     mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'degraded', row_count=0)
                     break
-                for k in combined_keys:
-                    issue_keys_total.add(k)
-                logging.info(f"Distinct issue keys to detail fetch: {len(issue_keys_total)}")
-
-                BULK_FETCH_SIZE = 50
-                for i in range(0, len(issue_keys_total), BULK_FETCH_SIZE):
-                    batch_keys = list(issue_keys_total)[i:i + BULK_FETCH_SIZE]
-                    with ThreadPoolExecutor(max_workers=min(10, len(batch_keys))) as executor:
-                        fut_map = {executor.submit(fetch_issue_detail, key): key for key in batch_keys}
-                        for fut in as_completed(fut_map):
-                            row = fut.result()
-                            if row:
-                                rows_to_insert.append(row)
-                    logging.info(f"Detail fetched batch {i // BULK_FETCH_SIZE + 1}; cumulative rows={len(rows_to_insert)}")
+                seen_keys = set()
+                for issue in combined_issues:
+                    key = issue.get('key')
+                    if not key or key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    project_current_keys.add(key)
+                    row = build_ticket_row(issue, SR_REF_JIRA_ID, SR_REF_BQ_NAME)
+                    if row:
+                        rows_to_insert.append(row)
+                logging.info(f"Distinct issue keys to detail fetch: {len(seen_keys)}")
 
                 if rows_to_insert:
                     if not insert_rows_resilient(client, dataset_id, temp_table_id_run, rows_to_insert, bq_schema):
@@ -462,7 +606,7 @@ def fetch_and_sync_jira_tickets_nightly():
                         USING (
                             SELECT * EXCEPT(rownum) FROM (
                                 SELECT *, ROW_NUMBER() OVER (PARTITION BY Key ORDER BY Updated DESC) AS rownum FROM `{dataset_id}.{temp_table_id_run}`
-                            ) WHERE rownum = 1 AND Project = '{proj}'
+                            ) WHERE rownum = 1 AND Project = '{proj}' AND Key IS NOT NULL AND TRIM(Key) <> ''
                         ) S
                         ON T.Key = S.Key
                         WHEN MATCHED THEN UPDATE SET
@@ -508,22 +652,82 @@ def fetch_and_sync_jira_tickets_nightly():
                 )
                 # Move to next window for this project
 
+            # Nightly catch-up: fill active Jira keys missing in BQ, and refresh very stale rows.
+            if MISSING_KEY_CATCHUP_PER_PROJECT > 0:
+                try:
+                    catchup_keys, catchup_had_error = search_issue_keys(proj_clause, f'catchup_keyset:{proj}')
+                    if catchup_had_error:
+                        logging.warning(f"[{proj}] Catch-up skipped due to Jira key search errors")
+                        continue
+                    project_current_keys = {k for k in catchup_keys if k}
+                    known_keys = get_known_project_keys(client, dataset_id, table_id, proj)
+                    
+                    # Find missing keys
+                    missing_keys = sorted([k for k in project_current_keys if k not in known_keys])
+                    
+                    # Find very stale keys (>30 days old without update)
+                    stale_keys = sorted(get_very_stale_project_keys(client, dataset_id, table_id, proj, stale_days=30))
+                    
+                    # Combine and deduplicate
+                    to_refresh = sorted(set(missing_keys + stale_keys))
+                    
+                    # Limit total per run
+                    to_fetch = to_refresh[:MISSING_KEY_CATCHUP_PER_PROJECT]
+                    
+                    if to_fetch:
+                        missing_count = len([k for k in to_fetch if k in missing_keys])
+                        stale_count = len([k for k in to_fetch if k in stale_keys])
+                        logging.info(
+                            f"[{proj}] Catch-up: {len(missing_keys)} missing keys, {len(stale_keys)} stale keys; "
+                            f"fetching {len(to_fetch)} ({missing_count} missing + {stale_count} stale) this run"
+                        )
+
+                        # Use batched fetch and insert to minimize memory usage
+                        catchup_rows_count = fetch_and_insert_ticket_rows_batched(
+                            to_fetch, f'catchup:{proj}', dataset_id, temp_table_id_run, bq_schema
+                        )
+
+                        if catchup_rows_count > 0:
+                            merge_query = f'''
+                                MERGE `{dataset_id}.{table_id}` T
+                                USING (
+                                    SELECT * EXCEPT(rownum) FROM (
+                                        SELECT *, ROW_NUMBER() OVER (PARTITION BY Key ORDER BY Updated DESC) AS rownum
+                                        FROM `{dataset_id}.{temp_table_id_run}`
+                                    ) WHERE rownum = 1 AND Project = '{proj}' AND Key IS NOT NULL AND TRIM(Key) <> ''
+                                ) S
+                                ON T.Key = S.Key
+                                WHEN MATCHED THEN UPDATE SET
+                                    T.T = S.T,
+                                    T.Project = S.Project,
+                                    T.Summary = S.Summary,
+                                    T.Status = S.Status,
+                                    T.Priority = S.Priority,
+                                    T.Resolution = S.Resolution,
+                                    T.Created = S.Created,
+                                    T.Updated = S.Updated,
+                                    T.Resolved = S.Resolved,
+                                    T.Reporter = S.Reporter,
+                                    T.Assignee = S.Assignee,
+                                    T.Component = IF(S.Component IS NULL, NULL, [S.Component]),
+                                    T.{SR_REF_BQ_NAME} = S.{SR_REF_BQ_NAME},
+                                    T.SyncTime = S.SyncTime,
+                                    T.IsDeleted = FALSE,
+                                    T.DeletedAt = NULL
+                                WHEN NOT MATCHED THEN INSERT (T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, {SR_REF_BQ_NAME}, SyncTime, IsDeleted, DeletedAt)
+                                VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), S.{SR_REF_BQ_NAME}, S.SyncTime, FALSE, NULL)
+                            '''
+                            client.query(merge_query).result()
+                            total_rows_merged += catchup_rows_count
+                            logging.info(f"[{proj}] Catch-up merged {catchup_rows_count} missing key rows")
+                except Exception as catchup_exc:
+                    logging.warning(f"[{proj}] Missing-key catch-up skipped due to error: {catchup_exc}")
+
         if not ENABLE_SOFT_DELETE_RECONCILIATION:
             logging.warning("Soft-delete reconciliation disabled; skipping nightly delete-marking")
-            delete_temp_table(client, dataset_id, temp_table_id_run)
-
-            run_ended = datetime.now(timezone.utc)
-            duration_seconds = (run_ended - run_started).total_seconds()
-            log_pipeline_run(
-                client,
-                pipeline_name=pipeline_name,
-                run_id=run_id,
-                level="INFO",
-                message="Pipeline finished",
-                status="SUCCESS",
-                rows_merged=total_rows_merged,
-                duration_seconds=duration_seconds,
-            )
+            final_status = "SUCCESS"
+            final_level = "INFO"
+            final_message = "Pipeline finished"
             return
 
         # Reconciliation step: mark rows as soft-deleted if key no longer exists in Jira.
@@ -549,20 +753,9 @@ def fetch_and_sync_jira_tickets_nightly():
                 message=f"Soft-delete reconciliation skipped due to Jira key fetch errors for: {failed_projects_str}",
                 status="SUCCESS",
             )
-            delete_temp_table(client, dataset_id, temp_table_id_run)
-
-            run_ended = datetime.now(timezone.utc)
-            duration_seconds = (run_ended - run_started).total_seconds()
-            log_pipeline_run(
-                client,
-                pipeline_name=pipeline_name,
-                run_id=run_id,
-                level="INFO",
-                message="Pipeline finished",
-                status="SUCCESS",
-                rows_merged=total_rows_merged,
-                duration_seconds=duration_seconds,
-            )
+            final_status = "SUCCESS"
+            final_level = "INFO"
+            final_message = "Pipeline finished"
             return
 
         keys_table_id = f"JiraTickets_active_keys_{run_id.replace('-', '_')[:8]}"
@@ -583,6 +776,8 @@ def fetch_and_sync_jira_tickets_nightly():
             SET IsDeleted = TRUE,
                 DeletedAt = CURRENT_TIMESTAMP()
             WHERE T.Project IN ({scoped_projects})
+                            AND T.Key IS NOT NULL
+                            AND TRIM(T.Key) <> ''
               AND (T.IsDeleted IS NULL OR T.IsDeleted = FALSE)
               AND NOT EXISTS (
                 SELECT 1
@@ -597,6 +792,8 @@ def fetch_and_sync_jira_tickets_nightly():
             SET IsDeleted = FALSE,
                 DeletedAt = NULL
             WHERE T.Project IN ({scoped_projects})
+                            AND T.Key IS NOT NULL
+                            AND TRIM(T.Key) <> ''
               AND EXISTS (
                 SELECT 1
                 FROM `{dataset_id}.{keys_table_id}` S
@@ -608,37 +805,39 @@ def fetch_and_sync_jira_tickets_nightly():
 
         delete_temp_table(client, dataset_id, keys_table_id)
 
-        # Clean up temp table after all projects processed
-        delete_temp_table(client, dataset_id, temp_table_id_run)
-        
-        run_ended = datetime.now(timezone.utc)
-        duration_seconds = (run_ended - run_started).total_seconds()
-
-        log_pipeline_run(
-            client,
-            pipeline_name=pipeline_name,
-            run_id=run_id,
-            level="INFO",
-            message="Pipeline finished",
-            status="SUCCESS",
-            rows_merged=total_rows_merged,
-            duration_seconds=duration_seconds,
-        )
+        final_status = "SUCCESS"
+        final_level = "INFO"
+        final_message = "Pipeline finished"
     except Exception as e:
-        run_ended = datetime.now(timezone.utc)
-        duration_seconds = (run_ended - run_started).total_seconds()
-        log_pipeline_run(
-            client,
-            pipeline_name=pipeline_name,
-            run_id=run_id,
-            level="ERROR",
-            message=f"Exception: {e}",
-            status="ERROR",
-            error_code=getattr(e, "code", None),
-            duration_seconds=duration_seconds,
-        )
+        final_status = "ERROR"
+        final_level = "ERROR"
+        final_message = f"Exception: {e}"
+        final_error_code = getattr(e, "code", None)
         raise
+    finally:
+        try:
+            if client and run_started:
+                run_ended = datetime.now(timezone.utc)
+                duration_seconds = (run_ended - run_started).total_seconds()
+                log_pipeline_run(
+                    client,
+                    pipeline_name=pipeline_name,
+                    run_id=run_id,
+                    level=final_level,
+                    message=final_message,
+                    status=final_status,
+                    rows_merged=total_rows_merged,
+                    error_code=final_error_code,
+                    duration_seconds=duration_seconds,
+                )
+        except Exception as log_err:
+            logging.warning(f"Failed to write final pipeline status for {run_id}: {log_err}")
 
+        try:
+            if client:
+                delete_temp_table(client, dataset_id, temp_table_id_run)
+        except Exception as cleanup_err:
+            logging.warning(f"Failed to cleanup temp table {temp_table_id_run}: {cleanup_err}")
 
 @functions_framework.http
 def main(request):

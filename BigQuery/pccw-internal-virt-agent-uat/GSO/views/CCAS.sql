@@ -60,11 +60,11 @@ MTTRDurations AS (
           TIMESTAMP_DIFF(
             COALESCE(status_end, CURRENT_TIMESTAMP()),
             status_start,
-            MINUTE
+            SECOND
           )
         ELSE 0
       END
-    ) AS mttr_sla_minutes,
+    ) AS mttr_sla_seconds,
     -- MTTR (Hold): Sum of time in hold statuses (anything with Pending, plus Acknowledge, Blocked, RPO Coordination)
     SUM(
       CASE
@@ -73,11 +73,11 @@ MTTRDurations AS (
           TIMESTAMP_DIFF(
             COALESCE(status_end, CURRENT_TIMESTAMP()),
             status_start,
-            MINUTE
+            SECOND
           )
         ELSE 0
       END
-    ) AS mttr_hold_minutes
+    ) AS mttr_hold_seconds
   FROM
     StatusTransitions
   GROUP BY
@@ -88,8 +88,8 @@ TicketWithSla AS (
     twk.*,
     ftr.first_ack_timestamp,
     fc.first_closed_timestamp,
-    mttr.mttr_sla_minutes,
-    mttr.mttr_hold_minutes
+    mttr.mttr_sla_seconds,
+    mttr.mttr_hold_seconds
   FROM
     TicketWithLinkedKeys twk
   LEFT JOIN
@@ -104,25 +104,25 @@ TicketWithSla AS (
 ),
 TimeMetrics AS (
   SELECT
-    tws.* EXCEPT(mttr_sla_minutes, mttr_hold_minutes),
+    tws.* EXCEPT(mttr_sla_seconds, mttr_hold_seconds),
     
-    -- MTTA: Mean Time to Acknowledge (minutes from creation to first Triaging/Reviewing)
+    -- MTTA: Mean Time to Acknowledge (seconds from creation to first Triaging/Reviewing)
     CASE
       WHEN tws.first_ack_timestamp IS NULL THEN NULL
-      ELSE TIMESTAMP_DIFF(tws.first_ack_timestamp, tws.Created, MINUTE)
-    END AS mtta_minutes,
+      ELSE TIMESTAMP_DIFF(tws.first_ack_timestamp, tws.Created, SECOND)
+    END AS mtta_seconds,
     
     -- MTTR (SLA): Sum of active status time
-    COALESCE(tws.mttr_sla_minutes, 0) AS mttr_sla_minutes,
+    COALESCE(tws.mttr_sla_seconds, 0) AS mttr_sla_seconds,
     
     -- MTTR (Hold): Sum of hold status time
-    COALESCE(tws.mttr_hold_minutes, 0) AS mttr_hold_minutes,
+    COALESCE(tws.mttr_hold_seconds, 0) AS mttr_hold_seconds,
     
-    -- MTTC: Mean Time to Close (minutes from creation to first Closed status)
+    -- MTTC: Mean Time to Close (seconds from creation to first Closed status)
     CASE
       WHEN tws.first_closed_timestamp IS NULL THEN NULL
-      ELSE TIMESTAMP_DIFF(tws.first_closed_timestamp, tws.Created, MINUTE)
-    END AS mttc_minutes
+      ELSE TIMESTAMP_DIFF(tws.first_closed_timestamp, tws.Created, SECOND)
+    END AS mttc_seconds
   FROM
     TicketWithSla tws
 )
@@ -149,58 +149,74 @@ SELECT
 
   -- MTTA: Mean Time to Acknowledge (first response to Triaging/Reviewing)
   CASE
-    WHEN twk.mtta_minutes IS NULL THEN NULL
-    ELSE twk.mtta_minutes
+    WHEN twk.mtta_seconds IS NULL THEN NULL
+    ELSE twk.mtta_seconds
+  END AS MTTA_seconds,
+  CASE
+    WHEN twk.mtta_seconds IS NULL THEN NULL
+    ELSE twk.mtta_seconds / 60.0
   END AS MTTA_minutes,
   CASE
-    WHEN twk.mtta_minutes IS NULL THEN NULL
-    ELSE twk.mtta_minutes / 60.0
+    WHEN twk.mtta_seconds IS NULL THEN NULL
+    ELSE twk.mtta_seconds / 3600.0
   END AS MTTA_hrs,
   CASE
-    WHEN twk.mtta_minutes IS NULL THEN NULL
-    ELSE twk.mtta_minutes / 1440.0
+    WHEN twk.mtta_seconds IS NULL THEN NULL
+    ELSE twk.mtta_seconds / 86400.0
   END AS MTTA_days,
 
   -- MTTR (SLA): Mean Time to Resolve - Active status time
   CASE
-    WHEN twk.mttr_sla_minutes = 0 THEN NULL
-    ELSE twk.mttr_sla_minutes
+    WHEN twk.mttr_sla_seconds = 0 THEN NULL
+    ELSE twk.mttr_sla_seconds
+  END AS MTTR_SLA_seconds,
+  CASE
+    WHEN twk.mttr_sla_seconds = 0 THEN NULL
+    ELSE twk.mttr_sla_seconds / 60.0
   END AS MTTR_SLA_minutes,
   CASE
-    WHEN twk.mttr_sla_minutes = 0 THEN NULL
-    ELSE twk.mttr_sla_minutes / 60.0
+    WHEN twk.mttr_sla_seconds = 0 THEN NULL
+    ELSE twk.mttr_sla_seconds / 3600.0
   END AS MTTR_SLA_hrs,
   CASE
-    WHEN twk.mttr_sla_minutes = 0 THEN NULL
-    ELSE twk.mttr_sla_minutes / 1440.0
+    WHEN twk.mttr_sla_seconds = 0 THEN NULL
+    ELSE twk.mttr_sla_seconds / 86400.0
   END AS MTTR_SLA_days,
 
   -- MTTR (Hold): Mean Time to Resolve - Hold status time
   CASE
-    WHEN twk.mttr_hold_minutes = 0 THEN NULL
-    ELSE twk.mttr_hold_minutes
+    WHEN twk.mttr_hold_seconds = 0 THEN NULL
+    ELSE twk.mttr_hold_seconds
+  END AS MTTR_Hold_seconds,
+  CASE
+    WHEN twk.mttr_hold_seconds = 0 THEN NULL
+    ELSE twk.mttr_hold_seconds / 60.0
   END AS MTTR_Hold_minutes,
   CASE
-    WHEN twk.mttr_hold_minutes = 0 THEN NULL
-    ELSE twk.mttr_hold_minutes / 60.0
+    WHEN twk.mttr_hold_seconds = 0 THEN NULL
+    ELSE twk.mttr_hold_seconds / 3600.0
   END AS MTTR_Hold_hrs,
   CASE
-    WHEN twk.mttr_hold_minutes = 0 THEN NULL
-    ELSE twk.mttr_hold_minutes / 1440.0
+    WHEN twk.mttr_hold_seconds = 0 THEN NULL
+    ELSE twk.mttr_hold_seconds / 86400.0
   END AS MTTR_Hold_days,
 
   -- MTTC: Mean Time to Close (from creation to Closed status)
   CASE
-    WHEN twk.mttc_minutes IS NULL THEN NULL
-    ELSE twk.mttc_minutes
+    WHEN twk.mttc_seconds IS NULL THEN NULL
+    ELSE twk.mttc_seconds
+  END AS MTTC_seconds,
+  CASE
+    WHEN twk.mttc_seconds IS NULL THEN NULL
+    ELSE twk.mttc_seconds / 60.0
   END AS MTTC_minutes,
   CASE
-    WHEN twk.mttc_minutes IS NULL THEN NULL
-    ELSE twk.mttc_minutes / 60.0
+    WHEN twk.mttc_seconds IS NULL THEN NULL
+    ELSE twk.mttc_seconds / 3600.0
   END AS MTTC_hrs,
   CASE
-    WHEN twk.mttc_minutes IS NULL THEN NULL
-    ELSE twk.mttc_minutes / 1440.0
+    WHEN twk.mttc_seconds IS NULL THEN NULL
+    ELSE twk.mttc_seconds / 86400.0
   END AS MTTC_days,
 
   -- SLA target (example: 24h for most, 8h for Incident, 1d for Service Request)
@@ -220,7 +236,7 @@ SELECT
 
   -- SLA met/breached (based on MTTR_SLA time)
   CASE
-    WHEN twk.mttr_sla_minutes = 0 OR twk.mttr_sla_minutes IS NULL THEN 'No Data'
+    WHEN twk.mttr_sla_seconds = 0 OR twk.mttr_sla_seconds IS NULL THEN 'No Data'
     WHEN CASE
            WHEN twk.T IN ('Platform Improvement', 'Sustaining Reliability Engineering', 'Task') THEN NULL
            WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
@@ -229,7 +245,7 @@ SELECT
            WHEN twk.Priority IN ('Low', 'Minor') THEN 48
            ELSE NULL
          END IS NULL THEN 'No Data'
-    WHEN twk.mttr_sla_minutes / 60.0 <=
+    WHEN twk.mttr_sla_seconds / 3600.0 <=
          CASE
            WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
            WHEN twk.Priority = 'High' THEN 8
@@ -295,3 +311,13 @@ LEFT JOIN
   `pccw-internal-virt-agent-uat.GSO.JiraChangelog` l
 ON
   twk.Key = l.Issue_Key
+WHERE
+  c.Author_Display_Name IS NULL
+  OR c.Author_Display_Name NOT IN (
+    'Liza Necio',
+    'Necio Liza Fernandez',
+    'Mary Grace Ydel',
+    'Ydel Mary Grace',
+    'Fregie Esguerra',
+    'Esguerra Fregie'
+  )

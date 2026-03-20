@@ -217,6 +217,12 @@ def fetch_and_sync_jira_changelogs_nightly():
     dataset_id = 'GSO'
     pipeline_name = "GCP - JiraChangelogsNightly"
     client = None
+    run_started = None
+    total_rows = 0
+    final_status = "ERROR"
+    final_level = "ERROR"
+    final_message = "Pipeline did not complete"
+    final_error_code = None
 
     try:
         run_started = datetime.now(timezone.utc)
@@ -359,8 +365,6 @@ def fetch_and_sync_jira_changelogs_nightly():
                                     "SyncTime": now_str,
                                 }
 
-        total_rows = 0
-
         if not create_or_replace_temp_table(client, dataset_id, temp_table_id_run, bq_schema):
             logging.error("Setup failed: Could not create run-scoped temp table.")
             log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Temp table create failed", status="ERROR")
@@ -478,15 +482,33 @@ def fetch_and_sync_jira_changelogs_nightly():
                 else:
                         logging.warning("Soft-delete reconciliation disabled; skipping changelogs nightly delete-marking")
 
-        run_ended = datetime.now(timezone.utc)
-        duration_seconds = (run_ended - run_started).total_seconds()
-        log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline finished", status="SUCCESS", rows_merged=int(total_rows), duration_seconds=duration_seconds)
+        final_status = "SUCCESS"
+        final_level = "INFO"
+        final_message = "Pipeline finished"
     except Exception as e:
-        run_ended = datetime.now(timezone.utc)
-        duration_seconds = (run_ended - run_started).total_seconds()
-        log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message=f"Exception: {e}", status="ERROR", error_code=getattr(e, "code", None), duration_seconds=duration_seconds)
+        final_status = "ERROR"
+        final_level = "ERROR"
+        final_message = f"Exception: {e}"
+        final_error_code = getattr(e, "code", None)
         raise
     finally:
+        try:
+            if client and run_started:
+                run_ended = datetime.now(timezone.utc)
+                duration_seconds = (run_ended - run_started).total_seconds()
+                log_pipeline_run(
+                    client,
+                    pipeline_name=pipeline_name,
+                    run_id=run_id,
+                    level=final_level,
+                    message=final_message,
+                    status=final_status,
+                    rows_merged=int(total_rows),
+                    error_code=final_error_code,
+                    duration_seconds=duration_seconds,
+                )
+        except Exception as log_err:
+            logging.warning(f"Failed to write final pipeline status for {run_id}: {log_err}")
         try:
             if client:
                 delete_temp_table(client, dataset_id, temp_table_id_run)

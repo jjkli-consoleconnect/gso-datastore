@@ -211,10 +211,10 @@ SELECT
     ELSE NULL
   END AS TierAssist,
   
-  -- T2 Escalated: T2 project escalated to T3 (has T3 links) - sequential escalation
+    -- T2 Escalated: Support Jira key escalated from T2 to T3 (has T3 links)
   CASE
-    WHEN hd.Incident_Number IS NOT NULL AND (
-      (STRPOS(st.Key, 'TAC') > 0 OR STRPOS(st.Key, 'CCAS') > 0 OR STRPOS(st.Key, 'VOICECE') > 0 OR STRPOS(st.Key, 'IOTCE') > 0 OR STRPOS(st.Key, 'TXCE') > 0 OR STRPOS(st.Key, 'SMSCE') > 0 OR STRPOS(st.Key, 'MSS') > 0) AND
+      WHEN (
+        (STRPOS(st.Key, 'TAC') > 0 OR STRPOS(st.Key, 'CCAS') > 0 OR STRPOS(st.Key, 'VOICECE') > 0 OR STRPOS(st.Key, 'IOTCE') > 0 OR STRPOS(st.Key, 'TXCE') > 0 OR STRPOS(st.Key, 'SMSCE') > 0 OR STRPOS(st.Key, 'MSS') > 0) AND
       (
         STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 OR
         STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 OR
@@ -222,7 +222,7 @@ SELECT
         STRPOS(COALESCE(st.Links_clean, ''), 'COPS') > 0 OR
         STRPOS(COALESCE(st.Links_clean, ''), 'CSCM') > 0
       )
-    ) THEN hd.Incident_Number
+      ) THEN st.Key
     ELSE NULL
   END AS T2Escalated,
   
@@ -254,10 +254,9 @@ SELECT
     ELSE NULL
   END AS SolvedBy,
   
-  -- T2 Solved: T2 project ticket WITH Remedy link, no T3 escalation
+  -- T2 Solved: Support Jira key solved at T2, including self-created Jira without Remedy link
   CASE
-    WHEN hd.Incident_Number IS NOT NULL AND
-      (STRPOS(st.Key, 'TAC') > 0 OR STRPOS(st.Key, 'CCAS') > 0 OR STRPOS(st.Key, 'VOICECE') > 0 OR STRPOS(st.Key, 'IOTCE') > 0 OR STRPOS(st.Key, 'TXCE') > 0 OR STRPOS(st.Key, 'SMSCE') > 0 OR STRPOS(st.Key, 'MSS') > 0) AND
+    WHEN (STRPOS(st.Key, 'TAC') > 0 OR STRPOS(st.Key, 'CCAS') > 0 OR STRPOS(st.Key, 'VOICECE') > 0 OR STRPOS(st.Key, 'IOTCE') > 0 OR STRPOS(st.Key, 'TXCE') > 0 OR STRPOS(st.Key, 'SMSCE') > 0 OR STRPOS(st.Key, 'MSS') > 0) AND
       (
         st.Links_clean IS NULL OR NOT (
           STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 OR
@@ -271,10 +270,9 @@ SELECT
     ELSE NULL
   END AS T2Solved,
   
-  -- T3 Solved: T2 project WITH Remedy link escalated to T3 (has T3 links)
+  -- T3 Solved: Support Jira key solved at T3 (has T3 links), including self-created Jira without Remedy link
   CASE
-    WHEN hd.Incident_Number IS NOT NULL AND
-      (STRPOS(st.Key, 'TAC') > 0 OR STRPOS(st.Key, 'CCAS') > 0 OR STRPOS(st.Key, 'VOICECE') > 0 OR STRPOS(st.Key, 'IOTCE') > 0 OR STRPOS(st.Key, 'TXCE') > 0 OR STRPOS(st.Key, 'SMSCE') > 0 OR STRPOS(st.Key, 'MSS') > 0) AND
+    WHEN (STRPOS(st.Key, 'TAC') > 0 OR STRPOS(st.Key, 'CCAS') > 0 OR STRPOS(st.Key, 'VOICECE') > 0 OR STRPOS(st.Key, 'IOTCE') > 0 OR STRPOS(st.Key, 'TXCE') > 0 OR STRPOS(st.Key, 'SMSCE') > 0 OR STRPOS(st.Key, 'MSS') > 0) AND
       (
         STRPOS(COALESCE(st.Links_clean, ''), 'SH') > 0 OR
         STRPOS(COALESCE(st.Links_clean, ''), 'AS3491') > 0 OR

@@ -31,11 +31,14 @@ def log_pipeline_run(
     - Idempotency by (PipelineName, RunID).
     - Context currently set to NULL to avoid JSON casting issues across clients.
     """
+    resolved_project = project
     if client is None:
         client = bigquery.Client(project=project)
+    else:
+        resolved_project = client.project or project
 
     sql = f"""
-        MERGE `{project}.{dataset}.{table}` T
+        MERGE `{resolved_project}.{dataset}.{table}` T
         USING (
           SELECT
             @pipeline AS PipelineName,
