@@ -32,6 +32,8 @@ ENABLE_SOFT_DELETE_RECONCILIATION = os.environ.get('ENABLE_SOFT_DELETE_RECONCILI
 MISSING_KEY_CATCHUP_PER_PROJECT = int(os.environ.get('MISSING_KEY_CATCHUP_PER_PROJECT', '50000'))
 CACHE_BATCHED_FETCH_SIZE = int(os.environ.get('CACHE_BATCHED_FETCH_SIZE', '500'))  # Issues cached in each batch
 CACHE_BATCH_DURATION_SEC = int(os.environ.get('CACHE_BATCH_DURATION_SEC', '120'))  # 2-minute window
+MAX_RUN_SECONDS = int(os.environ.get('MAX_RUN_SECONDS', '3300'))  # Exit before 3600s hard timeout
+RUNNING_STALE_MINUTES = int(os.environ.get('RUNNING_STALE_MINUTES', '70'))  # Auto-clean stale RUNNING rows sooner
 
 DEFAULT_PROJECTS = [
     'GS&O Data Analytics',
@@ -480,7 +482,12 @@ def fetch_and_sync_jira_tickets_nightly():
                         rows.append(row)
             return rows
 
-        def fetch_and_insert_ticket_rows_batched(issue_keys, label, dataset_id_inner, temp_table_id_inner, bq_schema_inner):
+        def time_budget_reached():
+            if not run_started:
+                return False
+            return (datetime.now(timezone.utc) - run_started).total_seconds() >= MAX_RUN_SECONDS
+
+        def fetch_and_insert_ticket_rows_batched(issue_keys, label, dataset_id_inner, temp_table_id_inner, bq_schema_inner, stop_checker=None):
             """
             Fetch and insert ticket rows in batches to minimize memory usage.
             Processes keys in CACHE_BATCHED_FETCH_SIZE chunks, fetching and inserting each batch.
@@ -493,6 +500,9 @@ def fetch_and_sync_jira_tickets_nightly():
             batch_start_idx = 0
             
             while batch_start_idx < len(issue_keys):
+                if stop_checker and stop_checker():
+                    logging.warning(f"{label}: stopping early due to runtime budget")
+                    break
                 batch_end_idx = min(batch_start_idx + CACHE_BATCHED_FETCH_SIZE, len(issue_keys))
                 batch_keys = issue_keys[batch_start_idx:batch_end_idx]
                 
@@ -543,13 +553,25 @@ def fetch_and_sync_jira_tickets_nightly():
         if not wait_for_table(client, dataset_id, temp_table_id_run, retries=30, delay=2):
             logging.error("Temp table not available after extended wait.")
             raise Exception("Temp table not available")
+
+        budget_reached = False
         
         for proj in projects:
+            if time_budget_reached():
+                logging.warning("Runtime budget reached before next project; ending run early")
+                budget_reached = True
+                break
+
             logging.info(f"Starting nightly window selection for project {proj}")
             project_current_keys = set()
             proj_clause = f'project = "{proj}"' if (' ' in proj or '&' in proj) else f'project = {proj}'
             
             while True:
+                if time_budget_reached():
+                    logging.warning(f"Runtime budget reached while processing {proj}; ending run early")
+                    budget_reached = True
+                    break
+
                 ws, we = select_window(client, dataset_id, progress_table_id, proj, base_days=1)
                 if not ws or not we:
                     logging.info(f"No further window for {proj} (too close to now or complete)")
@@ -652,8 +674,11 @@ def fetch_and_sync_jira_tickets_nightly():
                 )
                 # Move to next window for this project
 
+            if budget_reached:
+                break
+
             # Nightly catch-up: fill active Jira keys missing in BQ, and refresh very stale rows.
-            if MISSING_KEY_CATCHUP_PER_PROJECT > 0:
+            if MISSING_KEY_CATCHUP_PER_PROJECT > 0 and not budget_reached:
                 try:
                     catchup_keys, catchup_had_error = search_issue_keys(proj_clause, f'catchup_keyset:{proj}')
                     if catchup_had_error:
@@ -684,7 +709,7 @@ def fetch_and_sync_jira_tickets_nightly():
 
                         # Use batched fetch and insert to minimize memory usage
                         catchup_rows_count = fetch_and_insert_ticket_rows_batched(
-                            to_fetch, f'catchup:{proj}', dataset_id, temp_table_id_run, bq_schema
+                            to_fetch, f'catchup:{proj}', dataset_id, temp_table_id_run, bq_schema, stop_checker=time_budget_reached
                         )
 
                         if catchup_rows_count > 0:
@@ -722,6 +747,15 @@ def fetch_and_sync_jira_tickets_nightly():
                             logging.info(f"[{proj}] Catch-up merged {catchup_rows_count} missing key rows")
                 except Exception as catchup_exc:
                     logging.warning(f"[{proj}] Missing-key catch-up skipped due to error: {catchup_exc}")
+
+            if budget_reached:
+                break
+
+        if budget_reached:
+            final_status = "SUCCESS"
+            final_level = "WARNING"
+            final_message = "Run budget reached; partial progress saved"
+            return
 
         if not ENABLE_SOFT_DELETE_RECONCILIATION:
             logging.warning("Soft-delete reconciliation disabled; skipping nightly delete-marking")
@@ -841,15 +875,15 @@ def fetch_and_sync_jira_tickets_nightly():
 
 @functions_framework.http
 def main(request):
-    # Cleanup stale RUNNING entries older than 2 hours
+    # Cleanup stale RUNNING entries older than RUNNING_STALE_MINUTES
     try:
         client = bigquery.Client(project="pccw-internal-virt-agent-uat")
-        cleanup_query = '''
+        cleanup_query = f'''
             UPDATE `GSO.PipelineRuns`
             SET Status = 'ERROR', Message = 'Function timeout or crash (auto-cleaned)'
             WHERE PipelineName = 'GCP - JiraTicketsNightly'
               AND Status = 'RUNNING'
-              AND RunTime < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
+              AND RunTime < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {RUNNING_STALE_MINUTES} MINUTE)
         '''
         client.query(cleanup_query).result()
     except Exception as e:

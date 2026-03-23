@@ -33,7 +33,7 @@ Write-Host "Deploying $FUNC_NAME to project $PROJECT region $REGION"
   --vpc-connector "projects/$PROJECT/locations/$REGION/connectors/$CONNECTOR" `
   --egress-settings all `
   --service-account $SERVICE_ACCOUNT `
-  --set-env-vars "MISSING_KEY_CATCHUP_PER_PROJECT=50000,MIN_START=2023-01-01T00:00:00Z" `
+  --set-env-vars "MISSING_KEY_CATCHUP_PER_PROJECT=50000,MIN_START=2023-01-01T00:00:00Z,MAX_RUN_SECONDS=3300,RUNNING_STALE_MINUTES=70" `
   $(if ($AllowUnauthenticated) {"--allow-unauthenticated"} else {"--no-allow-unauthenticated"})
 
 $LASTEXITCODE = $?
