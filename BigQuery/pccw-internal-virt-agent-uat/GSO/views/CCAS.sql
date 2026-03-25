@@ -122,7 +122,59 @@ TimeMetrics AS (
     CASE
       WHEN tws.first_closed_timestamp IS NULL THEN NULL
       ELSE TIMESTAMP_DIFF(tws.first_closed_timestamp, tws.Created, SECOND)
-    END AS mttc_seconds
+    END AS mttc_seconds,
+
+    -- SLA grouping based on documented work-type scope
+    CASE
+      WHEN tws.T IN ('Application Problem', 'Application Incident', 'Proactive Alert') THEN 'Incident'
+      WHEN tws.T IN (
+        'Support Request',
+        'Customer Change Request',
+        'Platform Change Request',
+        'Migration Request',
+        'Device/Port Onboard',
+        'Cloud NNI Turn Up'
+      ) THEN 'Service Request'
+      ELSE 'Other'
+    END AS SLA_Work_Type,
+
+    -- MTTA target by work-type and priority
+    CASE
+      WHEN tws.T IN ('Application Problem', 'Application Incident', 'Proactive Alert') THEN
+        CASE
+          WHEN tws.Priority IN ('Blocker', 'Critical', 'Highest') THEN 0
+          WHEN tws.Priority = 'High' THEN 1200
+          WHEN tws.Priority IN ('Medium', 'Normal') THEN 7200
+          WHEN tws.Priority IN ('Low', 'Minor') THEN 259200
+          ELSE NULL
+        END
+      WHEN tws.T IN (
+        'Support Request',
+        'Customer Change Request',
+        'Platform Change Request',
+        'Migration Request',
+        'Device/Port Onboard',
+        'Cloud NNI Turn Up'
+      ) THEN
+        CASE
+          WHEN tws.Priority IN ('Blocker', 'Critical', 'Highest') THEN 0
+          WHEN tws.Priority = 'High' THEN 3600
+          WHEN tws.Priority IN ('Medium', 'Normal') THEN 7200
+          WHEN tws.Priority IN ('Low', 'Minor') THEN 14400
+          ELSE NULL
+        END
+      ELSE NULL
+    END AS mtta_target_seconds,
+
+    -- MTTR target by priority for SLA-enabled work types
+    CASE
+      WHEN tws.T IN ('Platform Improvement', 'Sustaining Reliability Engineering', 'Task') THEN NULL
+      WHEN tws.Priority IN ('Blocker', 'Critical', 'Highest') THEN 14400
+      WHEN tws.Priority = 'High' THEN 28800
+      WHEN tws.Priority IN ('Medium', 'Normal') THEN 57600
+      WHEN tws.Priority IN ('Low', 'Minor') THEN 172800
+      ELSE NULL
+    END AS mttr_target_seconds
   FROM
     TicketWithSla tws
 )
@@ -164,6 +216,21 @@ SELECT
     WHEN twk.mtta_seconds IS NULL THEN NULL
     ELSE twk.mtta_seconds / 86400.0
   END AS MTTA_days,
+
+  -- MTTA SLA target and status
+  CASE
+    WHEN twk.mtta_target_seconds IS NULL THEN 'No Data'
+    ELSE CAST(twk.mtta_target_seconds AS STRING)
+  END AS SLA_MTTA_Target_seconds,
+  CASE
+    WHEN twk.mtta_target_seconds IS NULL THEN 'No Data'
+    ELSE CAST(twk.mtta_target_seconds / 60.0 AS STRING)
+  END AS SLA_MTTA_Target_minutes,
+  CASE
+    WHEN twk.mtta_target_seconds IS NULL OR twk.mtta_seconds IS NULL THEN 'No Data'
+    WHEN twk.mtta_seconds <= twk.mtta_target_seconds THEN 'Met'
+    ELSE 'Breached'
+  END AS SLA_MTTA_Status,
 
   -- MTTR (SLA): Mean Time to Resolve - Active status time
   CASE
@@ -219,40 +286,21 @@ SELECT
     ELSE twk.mttc_seconds / 86400.0
   END AS MTTC_days,
 
-  -- SLA target (example: 24h for most, 8h for Incident, 1d for Service Request)
+  -- SLA scope
+  twk.SLA_Work_Type,
+
+  -- SLA target for MTTR
   COALESCE(
-    CAST(
-      CASE
-        WHEN twk.T IN ('Platform Improvement', 'Sustaining Reliability Engineering', 'Task') THEN NULL
-        WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
-        WHEN twk.Priority = 'High' THEN 8
-        WHEN twk.Priority IN ('Medium', 'Normal') THEN 16
-        WHEN twk.Priority IN ('Low', 'Minor') THEN 48
-        ELSE NULL
-      END AS STRING
-    ),
+    CAST(twk.mttr_target_seconds / 3600.0 AS STRING),
     'No Data'
   ) AS SLA_Resolution_Target_hrs,
+  COALESCE(CAST(twk.mttr_target_seconds AS STRING), 'No Data') AS SLA_Resolution_Target_seconds,
 
   -- SLA met/breached (based on MTTR_SLA time)
   CASE
     WHEN twk.mttr_sla_seconds = 0 OR twk.mttr_sla_seconds IS NULL THEN 'No Data'
-    WHEN CASE
-           WHEN twk.T IN ('Platform Improvement', 'Sustaining Reliability Engineering', 'Task') THEN NULL
-           WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
-           WHEN twk.Priority = 'High' THEN 8
-           WHEN twk.Priority IN ('Medium', 'Normal') THEN 16
-           WHEN twk.Priority IN ('Low', 'Minor') THEN 48
-           ELSE NULL
-         END IS NULL THEN 'No Data'
-    WHEN twk.mttr_sla_seconds / 3600.0 <=
-         CASE
-           WHEN twk.Priority IN ('Blocker', 'Critical', 'Highest') THEN 4
-           WHEN twk.Priority = 'High' THEN 8
-           WHEN twk.Priority IN ('Medium', 'Normal') THEN 16
-           WHEN twk.Priority IN ('Low', 'Minor') THEN 48
-           ELSE NULL
-         END
+    WHEN twk.mttr_target_seconds IS NULL THEN 'No Data'
+    WHEN twk.mttr_sla_seconds <= twk.mttr_target_seconds
     THEN 'Met'
     ELSE 'Breached'
   END AS SLA_Resolution_Status,
