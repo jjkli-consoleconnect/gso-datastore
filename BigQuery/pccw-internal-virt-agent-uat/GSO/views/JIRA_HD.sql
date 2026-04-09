@@ -16,7 +16,8 @@ WITH FlattenedTierTwo AS (
   FROM
     `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
     LEFT JOIN UNNEST(t.RemedyTicketNumber) AS remedy_incident
-  WHERE NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC|OCR|QMS|CSM|GSOSI|SH|VIM|VME)')
+  WHERE COALESCE(t.IsDeleted, FALSE) = FALSE
+    AND NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC|OCR|QMS|CSM|GSOSI|SH|VIM|VME)')
 ),
 RankedJira AS (
   -- Deduplicate: per Remedy incident, pick the primary Jira (prioritize T2 projects)
