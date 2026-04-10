@@ -1,5 +1,6 @@
 param(
-    [switch]$AllowUnauthenticated = $true
+    [switch]$AllowUnauthenticated,
+    [switch]$InvokeAfterDeploy
 )
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -36,9 +37,13 @@ $URL = (& gcloud functions describe $FUNC_NAME --region $REGION --format "value(
 if (-not $URL) { throw "Failed to fetch function URL" }
 Write-Host "Function URL: $URL"
 
-$TOKEN = (& gcloud auth print-identity-token)
-Write-Host "Invoking $FUNC_NAME..."
-$resp = Invoke-WebRequest -Uri $URL -Headers @{ Authorization = "Bearer $TOKEN" } -Method POST -UseBasicParsing
-Write-Host "Response status: $($resp.StatusCode)"
-Write-Host "Body: $($resp.Content)"
+if ($InvokeAfterDeploy) {
+  $TOKEN = (& gcloud auth print-identity-token)
+  Write-Host "Invoking $FUNC_NAME..."
+  $resp = Invoke-WebRequest -Uri $URL -Headers @{ Authorization = "Bearer $TOKEN" } -Method POST -UseBasicParsing
+  Write-Host "Response status: $($resp.StatusCode)"
+  Write-Host "Body: $($resp.Content)"
+} else {
+  Write-Host "Skipping post-deploy invocation. Use -InvokeAfterDeploy to run once."
+}
 Pop-Location
