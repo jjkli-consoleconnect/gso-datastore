@@ -54,6 +54,7 @@ DEFAULT_PROJECTS = [
     'QMS Documentation',
     'Operational Case Reviews',
     'IT Helpdesk',
+    'Vendor Verification Team',
     'GS&O Strategic Initiatives'
 ]
 
@@ -80,13 +81,34 @@ def ensure_progress_table(client, dataset_id, table_id):
 
 
 def ensure_soft_delete_columns(client, dataset_id, table_id):
-    """Ensure soft-delete columns exist on the target table."""
+    """Ensure soft-delete and newly tracked custom-field columns exist on the target table."""
+    table_ref = f"{client.project}.{dataset_id}.{table_id}"
+    try:
+        existing_columns = {field.name for field in client.get_table(table_ref).schema}
+    except Exception:
+        existing_columns = set()
+
     client.query(
         f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IsDeleted BOOL"
     ).result()
     client.query(
         f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS DeletedAt TIMESTAMP"
     ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS AssociatedTeam STRING"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS TransactionStatus STRING"
+    ).result()
+
+    if 'TranscationStatus' in existing_columns:
+        client.query(
+            f"""
+            UPDATE `{dataset_id}.{table_id}`
+            SET TransactionStatus = COALESCE(TransactionStatus, TranscationStatus)
+            WHERE TranscationStatus IS NOT NULL
+            """
+        ).result()
 
 
 def _to_sql_string_list(values):
@@ -330,6 +352,8 @@ def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name):
         "Component": ', '.join([get_field_value(component) for component in fields.get('components', [])]) if fields.get('components') else None,
         "Links": extract_issue_links(fields.get('issuelinks')),
         sr_ref_bq_name: get_field_value(fields.get(sr_ref_jira_id)),
+        "AssociatedTeam": get_field_value(fields.get('customfield_11134')),
+        "TransactionStatus": get_field_value(fields.get('customfield_11170')),
         "Priority": get_field_value(fields.get('priority')),
         "Resolution": get_field_value(fields.get('resolution')),
         "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
@@ -347,6 +371,8 @@ def fetch_and_sync_jira_tickets_nightly():
 
     SR_REF_JIRA_ID = 'customfield_10382'
     SR_REF_BQ_NAME = 'SR_Ref'
+    ASSOCIATED_TEAM_JIRA_ID = 'customfield_11134'
+    TRANSACTION_STATUS_JIRA_ID = 'customfield_11170'
 
     table_id = 'JiraTickets'
     temp_table_id = 'JiraTickets_temp'
@@ -399,6 +425,8 @@ def fetch_and_sync_jira_tickets_nightly():
             bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("AssociatedTeam", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("TransactionStatus", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
         ]
 
@@ -420,6 +448,8 @@ def fetch_and_sync_jira_tickets_nightly():
             'resolution',
             'issuelinks',
             SR_REF_JIRA_ID,
+            ASSOCIATED_TEAM_JIRA_ID,
+            TRANSACTION_STATUS_JIRA_ID,
         ]
 
         def search_issues(jql: str, label: str, fields):
@@ -645,11 +675,13 @@ def fetch_and_sync_jira_tickets_nightly():
                             T.Assignee = S.Assignee,
                             T.Component = IF(S.Component IS NULL, NULL, [S.Component]),
                             T.{SR_REF_BQ_NAME} = S.{SR_REF_BQ_NAME},
+                            T.AssociatedTeam = S.AssociatedTeam,
+                            T.TransactionStatus = S.TransactionStatus,
                             T.SyncTime = S.SyncTime,
                             T.IsDeleted = FALSE,
                             T.DeletedAt = NULL
-                        WHEN NOT MATCHED THEN INSERT (T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, {SR_REF_BQ_NAME}, SyncTime, IsDeleted, DeletedAt)
-                        VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), S.{SR_REF_BQ_NAME}, S.SyncTime, FALSE, NULL)
+                        WHEN NOT MATCHED THEN INSERT (T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, SyncTime, IsDeleted, DeletedAt)
+                        VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.SyncTime, FALSE, NULL)
                     '''
                     client.query(merge_query).result()
                     logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")
@@ -736,11 +768,13 @@ def fetch_and_sync_jira_tickets_nightly():
                                     T.Assignee = S.Assignee,
                                     T.Component = IF(S.Component IS NULL, NULL, [S.Component]),
                                     T.{SR_REF_BQ_NAME} = S.{SR_REF_BQ_NAME},
+                                    T.AssociatedTeam = S.AssociatedTeam,
+                                    T.TransactionStatus = S.TransactionStatus,
                                     T.SyncTime = S.SyncTime,
                                     T.IsDeleted = FALSE,
                                     T.DeletedAt = NULL
-                                WHEN NOT MATCHED THEN INSERT (T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, {SR_REF_BQ_NAME}, SyncTime, IsDeleted, DeletedAt)
-                                VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), S.{SR_REF_BQ_NAME}, S.SyncTime, FALSE, NULL)
+                                WHEN NOT MATCHED THEN INSERT (T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, SyncTime, IsDeleted, DeletedAt)
+                                VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.SyncTime, FALSE, NULL)
                             '''
                             client.query(merge_query).result()
                             total_rows_merged += catchup_rows_count

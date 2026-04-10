@@ -1,0 +1,976 @@
+﻿[
+  {
+    "mode": "NULLABLE",
+    "name": "Incident_Number",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Status",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "CaseType",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Assigned_Group",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Categorization_Tier_1",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Categorization_Tier_2",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Categorization_Tier_3",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "GCSC_1st_Customer_Update",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "GCSC_2nd_Customer_Update",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "GCSC_3rd_Customer_Update",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Initial_Response_Time",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Second_Response_Time",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Third_Response_Time",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Prod_ID",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Fault_Cause",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Closed_Date",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Submit_Date",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Assignee",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Closed_By",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Submitter",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TrueMTTR_mins",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Cust_ID",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Carrier",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Customer_Name",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SRno",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "LastResolvedDate",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ReportedDate",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "RespondedDate",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "FaultCauseDetail",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "LastModifiedDate",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ReportedBy",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ProductDescription",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "hdStatus",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "hdAssignee",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "LastModifiedDateHD",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ReportedByHD",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Carrier_Norm",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Customer_Name_Norm",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SRno_Norm",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Type",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Project",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Key",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Summary",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Created",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Updated",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Resolved",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Reporter",
+    "type": "STRING"
+  },
+  {
+    "mode": "REPEATED",
+    "name": "Component",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Component_Joined",
+    "type": "STRING"
+  },
+  {
+    "mode": "REPEATED",
+    "name": "RemedyTicketNumber",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "RemedyTicketNumber_Joined",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Links",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SR_Ref",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SyncTime",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToFirstResponse_Elapsed",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToFirstResponse_Goal",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToFirstResponse_Breached",
+    "type": "BOOLEAN"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToFirstResponse_Cycles",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToResolve_Elapsed",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToResolve_Goal",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToResolve_Breached",
+    "type": "BOOLEAN"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToResolve_Cycles",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToResolution_Elapsed",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToResolution_Goal",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToResolution_Breached",
+    "type": "BOOLEAN"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToResolution_Cycles",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToApproveNormalChange_Elapsed",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToApproveNormalChange_Goal",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToApproveNormalChange_Breached",
+    "type": "BOOLEAN"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToApproveNormalChange_Cycles",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ProlongCase_Elapsed",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ProlongCase_Goal",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ProlongCase_Breached",
+    "type": "BOOLEAN"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ProlongCase_Cycles",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToCloseAfterResolution_Elapsed",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToCloseAfterResolution_Goal",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToCloseAfterResolution_Breached",
+    "type": "BOOLEAN"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TimeToCloseAfterResolution_Cycles",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "AppSupEscalation",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Comment_Count",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Comment_At",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Comment_ID",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Comment_Author_Account_ID",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Comment_Author_Display_Name",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Comment_Created",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Comment_Updated",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Comment_Body",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Comment_Visibility_Type",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Comment_Visibility_Value",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Comment_SyncTime",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Comment_InsertedAt",
+    "type": "TIMESTAMP"
+  },
+  {
+    "fields": [
+      {
+        "mode": "NULLABLE",
+        "name": "Comment_ID",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Author_Account_ID",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Author_Display_Name",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Created",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Updated",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Body",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Visibility_Type",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Visibility_Value",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "SyncTime",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "InsertedAt",
+        "type": "TIMESTAMP"
+      }
+    ],
+    "mode": "REPEATED",
+    "name": "Comments",
+    "type": "RECORD"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Changelog_Count",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Transition_At",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Change_History_ID",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Change_Transition_Timestamp",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Change_Transitioned_From",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Change_Transitioned_To",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Change_Transitioned_By_Account_ID",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Change_Transitioned_By_Display_Name",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Last_Change_SyncTime",
+    "type": "TIMESTAMP"
+  },
+  {
+    "fields": [
+      {
+        "mode": "NULLABLE",
+        "name": "History_ID",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Transition_Timestamp",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Transitioned_From",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Transitioned_To",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Transitioned_By_Account_ID",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Transitioned_By_Display_Name",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "SyncTime",
+        "type": "TIMESTAMP"
+      }
+    ],
+    "mode": "REPEATED",
+    "name": "Changelog",
+    "type": "RECORD"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "RemedyTicketNumber_flat",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "JiraStatus",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SecondTierAssignee",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ProjectCode",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Team",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "GSOTeam",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "GSOTeam_Engineer_Count",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "JiraURL",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "RemedyURL",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "CCAS",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TAC",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "VOICECE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "IOTCE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TXCE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SMSCE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "CCAS_T2",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TAC_T2",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "VOICECE_T2",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "IOTCE_T2",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TXCE_T2",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SMSCE_T2",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedByCCAS",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedByTAC",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedByVOICECE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedByIOTCE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedByTXCE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedBySMSCE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ClosedDateCombined",
+    "type": "TIMESTAMP"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "JiraOutstandingDuration_day",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "JiraOutstandingDuration_hrs",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "LeadTime_secs",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "LeadTime_mins",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "LeadTime_hrs",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "LeadTime_days",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "RemedyLeadTime_hrs",
+    "type": "INTEGER"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "MTTR_mins_value",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "MTTR_hrs",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "MTTR_days",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "MTTRStatus",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "MTTRPassed",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "MTTRFailed",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "MTTRPassed_mins",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "MTTRFailed_mins",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "MTTRFailed_hrs",
+    "type": "FLOAT"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "EscalatedBy_CCAS",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "EscalatedBy_TAC",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "EscalatedBy_VOICECE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "EscalatedBy_IOTCE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "EscalatedBy_TXCE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "EscalatedBy_SMSCE",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "EscalatedBy_T1",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "T1Escalated",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "T1Solved",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "T2Escalated",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "T2Solved",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "T3Solved",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "T3SolvedBy",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "JiraSelfCreate",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TicketType",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedBy",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "TierAssist",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedByAS3491",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedByCCONB",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedByCOPS",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedByCSCM",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedBySH",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "SolvedByProject",
+    "type": "STRING"
+  },
+  {
+    "mode": "REPEATED",
+    "name": "LinkedProject_Clean",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "T1SolvedBy",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "T2SolvedBy",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "JoinPath",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "UnifiedSR",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ProductID",
+    "type": "STRING"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "Product_Family",
+    "type": "STRING"
+  },
+  {
+    "mode": "REPEATED",
+    "name": "Device_Names",
+    "type": "STRING"
+  }
+]

@@ -48,6 +48,7 @@ DEFAULT_PROJECTS = [
     'QMS Documentation',
     'Operational Case Reviews',
     'IT Helpdesk',
+    'Vendor Verification Team',
     'GS&O Strategic Initiatives'
 ]
 
@@ -74,13 +75,19 @@ def ensure_progress_table(client, dataset_id, table_id):
 
 
 def ensure_soft_delete_columns(client, dataset_id, table_id):
-    """Ensure soft-delete columns exist on the target table."""
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IsDeleted BOOL"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS DeletedAt TIMESTAMP"
-    ).result()
+    """Ensure soft-delete and expanded changelog columns exist on the target table."""
+    for ddl in [
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IsDeleted BOOL",
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS DeletedAt TIMESTAMP",
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Changed_Field STRING",
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Changed_FieldType STRING",
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Change_Item_Index INT64",
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS From_ID STRING",
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS From_Value STRING",
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS To_ID STRING",
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS To_Value STRING",
+    ]:
+        client.query(ddl).result()
 
 
 def select_window(client, dataset_id, table_id, project, base_days=1):
@@ -245,11 +252,20 @@ def fetch_and_sync_jira_changelogs_nightly():
             bigquery.SchemaField("Issue_Key", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("History_ID", "STRING", mode="REQUIRED"),
             bigquery.SchemaField("Transition_Timestamp", "TIMESTAMP", mode="REQUIRED"),
+            bigquery.SchemaField("Changed_Field", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("Changed_FieldType", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("Change_Item_Index", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("From_ID", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("From_Value", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("To_ID", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("To_Value", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Transitioned_From", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Transitioned_To", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Transitioned_By_Account_ID", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Transitioned_By_Display_Name", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
+            bigquery.SchemaField("IsDeleted", "BOOL", mode="NULLABLE"),
+            bigquery.SchemaField("DeletedAt", "TIMESTAMP", mode="NULLABLE"),
         ]
 
         headers = {'Accept': 'application/json'}
@@ -351,19 +367,27 @@ def fetch_and_sync_jira_changelogs_nightly():
                             continue
                         author = history.get('author', {})
                         items = history.get('items', [])
-                        for item in items:
+                        for item_index, item in enumerate(items):
                             field = item.get('field')
-                            if field == 'status':
-                                yield {
-                                    "Issue_Key": key,
-                                    "History_ID": history_id,
-                                    "Transition_Timestamp": created_ts,
-                                    "Transitioned_From": item.get('fromString'),
-                                    "Transitioned_To": item.get('toString'),
-                                    "Transitioned_By_Account_ID": author.get('accountId'),
-                                    "Transitioned_By_Display_Name": author.get('displayName'),
-                                    "SyncTime": now_str,
-                                }
+                            yield {
+                                "Issue_Key": key,
+                                "History_ID": history_id,
+                                "Transition_Timestamp": created_ts,
+                                "Changed_Field": field,
+                                "Changed_FieldType": item.get('fieldtype'),
+                                "Change_Item_Index": item_index,
+                                "From_ID": (None if item.get('from') is None else str(item.get('from'))),
+                                "From_Value": item.get('fromString'),
+                                "To_ID": (None if item.get('to') is None else str(item.get('to'))),
+                                "To_Value": item.get('toString'),
+                                "Transitioned_From": item.get('fromString') if field == 'status' else None,
+                                "Transitioned_To": item.get('toString') if field == 'status' else None,
+                                "Transitioned_By_Account_ID": author.get('accountId'),
+                                "Transitioned_By_Display_Name": author.get('displayName'),
+                                "SyncTime": now_str,
+                                "IsDeleted": False,
+                                "DeletedAt": None,
+                            }
 
         if not create_or_replace_temp_table(client, dataset_id, temp_table_id_run, bq_schema):
             logging.error("Setup failed: Could not create run-scoped temp table.")
@@ -426,10 +450,14 @@ def fetch_and_sync_jira_changelogs_nightly():
 
                 merge = f"""
                                     MERGE `{dataset_id}.{table_id}` T USING (SELECT DISTINCT * FROM `{dataset_id}.{temp_table_id_run}`) S
-                  ON T.Issue_Key = S.Issue_Key AND T.History_ID = S.History_ID AND T.Transition_Timestamp = S.Transition_Timestamp
-                                    WHEN MATCHED THEN UPDATE SET T.Transitioned_From=S.Transitioned_From,T.Transitioned_To=S.Transitioned_To,T.Transitioned_By_Account_ID=S.Transitioned_By_Account_ID,T.Transitioned_By_Display_Name=S.Transitioned_By_Display_Name,T.SyncTime=S.SyncTime,T.IsDeleted=FALSE,T.DeletedAt=NULL
-                                    WHEN NOT MATCHED THEN INSERT (Issue_Key,History_ID,Transition_Timestamp,Transitioned_From,Transitioned_To,Transitioned_By_Account_ID,Transitioned_By_Display_Name,SyncTime,IsDeleted,DeletedAt)
-                                    VALUES (S.Issue_Key,S.History_ID,S.Transition_Timestamp,S.Transitioned_From,S.Transitioned_To,S.Transitioned_By_Account_ID,S.Transitioned_By_Display_Name,S.SyncTime,FALSE,NULL)
+                  ON T.Issue_Key = S.Issue_Key
+                    AND T.History_ID = S.History_ID
+                    AND T.Transition_Timestamp = S.Transition_Timestamp
+                    AND COALESCE(T.Changed_Field, 'status') = COALESCE(S.Changed_Field, 'status')
+                    AND COALESCE(T.Change_Item_Index, 0) = COALESCE(S.Change_Item_Index, 0)
+                                    WHEN MATCHED THEN UPDATE SET T.Changed_Field=S.Changed_Field,T.Changed_FieldType=S.Changed_FieldType,T.Change_Item_Index=S.Change_Item_Index,T.From_ID=S.From_ID,T.From_Value=S.From_Value,T.To_ID=S.To_ID,T.To_Value=S.To_Value,T.Transitioned_From=S.Transitioned_From,T.Transitioned_To=S.Transitioned_To,T.Transitioned_By_Account_ID=S.Transitioned_By_Account_ID,T.Transitioned_By_Display_Name=S.Transitioned_By_Display_Name,T.SyncTime=S.SyncTime,T.IsDeleted=FALSE,T.DeletedAt=NULL
+                                    WHEN NOT MATCHED THEN INSERT (Issue_Key,History_ID,Transition_Timestamp,Changed_Field,Changed_FieldType,Change_Item_Index,From_ID,From_Value,To_ID,To_Value,Transitioned_From,Transitioned_To,Transitioned_By_Account_ID,Transitioned_By_Display_Name,SyncTime,IsDeleted,DeletedAt)
+                                    VALUES (S.Issue_Key,S.History_ID,S.Transition_Timestamp,S.Changed_Field,S.Changed_FieldType,S.Change_Item_Index,S.From_ID,S.From_Value,S.To_ID,S.To_Value,S.Transitioned_From,S.Transitioned_To,S.Transitioned_By_Account_ID,S.Transitioned_By_Display_Name,S.SyncTime,FALSE,NULL)
                 """
                 try:
                     client.query(merge).result()
