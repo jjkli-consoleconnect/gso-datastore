@@ -45,6 +45,7 @@ WITH t AS (
     TimeToCloseAfterResolution_Cycles,
     AppSupEscalation
   FROM `pccw-internal-virt-agent-uat.GSO.JiraTickets`
+  WHERE IsDeleted IS FALSE
 ),
 c_all AS (
   SELECT

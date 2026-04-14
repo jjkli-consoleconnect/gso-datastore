@@ -1,7 +1,3 @@
--- VVT_Changelog: Vendor Verification Team assignee/status interval fact view
--- Grain: 1 row per ticket x status x assignee overlap interval
--- Purpose: support visualisation of tickets handled per assignee and time spent in each status.
-
 WITH vvt_tickets AS (
   SELECT
     t.T AS IssueType,
@@ -272,6 +268,7 @@ SELECT
   v.Current_Assignee AS Assignee,
   v.Component,
   v.AssociatedTeam,
+  v.CostType,
   v.TransactionStatus,
   v.SyncTime,
   v.IsDeleted,
@@ -299,4 +296,4 @@ SELECT
 FROM final_intervals f
 JOIN vvt_tickets v
   ON v.Ticket_Key = f.Ticket_Key
-ORDER BY v.Ticket_Key, f.Interval_Start, f.Status_Label, f.Assignee_At_Time;
+ORDER BY v.Ticket_Key, f.Interval_Start, f.Status_Label, f.Assignee_At_Time

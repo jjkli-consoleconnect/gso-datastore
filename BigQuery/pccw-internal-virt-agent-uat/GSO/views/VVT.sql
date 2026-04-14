@@ -1,9 +1,3 @@
--- VVT: Vendor Verification Team ticket-centric view
--- Grain: 1 row per Jira ticket
--- Purpose: dashboard-friendly shape for visualising core ticket fields,
---          VVT custom fields, comment activity, changelog activity,
---          and time spent in each status per ticket.
-
 WITH vvt_tickets AS (
   SELECT
     t.T AS IssueType,
@@ -23,8 +17,8 @@ WITH vvt_tickets AS (
     t.Links,
     t.AssociatedTeam,
     CASE 
-      WHEN t.AssociatedTeam = 'Direct Cost Team' THEN 'Direct Cost Team'
-      WHEN t.AssociatedTeam = 'Network Team' THEN 'Network Team'
+      WHEN t.AssociatedTeam = 'Direct Cost Team' THEN 'Direct Cost'
+      WHEN t.AssociatedTeam = 'Network Team' THEN 'Network'
       ELSE 'Others'
     END AS CostType,
     t.TransactionStatus,
@@ -246,7 +240,7 @@ changelog_agg AS (
     COUNT(*) AS Changelog_Count,
     COUNTIF(LOWER(COALESCE(ch.Changed_Field, 'status')) = 'assignee') AS Assignee_Change_Count,
     MAX(ch.Transition_Timestamp) AS Last_Transition_At,
-    STRING_AGG(DISTINCT ch.Transitioned_To, ' → ' ORDER BY ch.Transitioned_To) AS Distinct_Transition_Targets,
+    STRING_AGG(DISTINCT ch.Transitioned_To, ' ??? ' ORDER BY ch.Transitioned_To) AS Distinct_Transition_Targets,
     STRING_AGG(DISTINCT COALESCE(ch.Changed_Field, 'status'), ', ' ORDER BY COALESCE(ch.Changed_Field, 'status')) AS Distinct_Changed_Fields,
     ARRAY_AGG(
       STRUCT(
@@ -368,4 +362,4 @@ LEFT JOIN comments_agg c
   ON c.Issue_Key = v.Ticket_Key
 LEFT JOIN changelog_agg ch
   ON ch.Issue_Key = v.Ticket_Key
-ORDER BY v.Created DESC;
+ORDER BY v.Created DESC

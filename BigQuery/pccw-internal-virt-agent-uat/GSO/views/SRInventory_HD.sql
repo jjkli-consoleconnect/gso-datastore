@@ -45,7 +45,7 @@ SELECT
   hd.Initial_Response_Time,
   hd.Second_Response_Time,
   hd.Third_Response_Time,
-  hd.Prod_ID,
+  hd.Prod_ID AS HD_Product_ID,
   hd.Fault_Cause,
   hd.FaultCauseDetail,
   hd.Closed_Date,
@@ -80,3 +80,4 @@ ORDER BY
   sri.SR,
   hd.Submit_Date DESC
 ;
+

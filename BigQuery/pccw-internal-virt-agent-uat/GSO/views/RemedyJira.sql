@@ -43,6 +43,7 @@ WITH jira_tickets AS (
     TimeToCloseAfterResolution_Cycles,
     AppSupEscalation
   FROM `pccw-internal-virt-agent-uat.GSO.JiraTickets`
+  WHERE IsDeleted IS FALSE
 ),
 comments_agg AS (
   SELECT
