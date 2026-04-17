@@ -4,11 +4,10 @@
 const SPREADSHEET_ID = '19yP3MfbDZe9DW9P4WM2VHI_zi6RBDweVRGOOAr6Vo8I';
 const PROJECT_ID = 'pccw-internal-virt-agent-uat';
 const DATASET_ID = 'GSO'; // Change to your target dataset
-const TABLE_ID = 'dispute_log';
+const TABLE_ID = 'VerificationDisputeList';
 const SHEET_NAME = 'DisputeList'; // Change if your sheet tab has a different name
 // Composite key - using multiple columns to identify unique disputes
 const KEY_COLUMNS = ['is_id', 'invoice_number', 'line']; // IS ID + Invoice + Line# uniquely identifies a dispute
-const USE_INGESTION_TIMESTAMP = true;
 
 // Main entry: run manually or from a trigger
 function importDisputeLogToBigQuery() {
@@ -19,7 +18,9 @@ function importDisputeLogToBigQuery() {
     return;
   }
 
-  const values = sheet.getDataRange().getValues();
+  const dataRange = sheet.getDataRange();
+  const values = dataRange.getValues();
+  const displayValues = dataRange.getDisplayValues();
   if (!values || values.length < 2) {
     console.log('No data rows found (need header + at least one data row).');
     return;
@@ -27,6 +28,7 @@ function importDisputeLogToBigQuery() {
 
   const headersRaw = values[0].map(String);
   const headers = headersRaw.map(sanitizeHeader);
+  const schemaFields = buildDisputeSchemaFields(headersRaw, headers);
   
   // Log the header mapping for debugging
   console.log('Header mapping:');
@@ -35,7 +37,7 @@ function importDisputeLogToBigQuery() {
   }
 
   // Ensure target table exists with proper schema
-  ensureDisputeTableExists();
+  ensureDisputeTableExists(schemaFields);
 
   // Build row objects with intelligent parsing
   const rows = [];
@@ -43,6 +45,7 @@ function importDisputeLogToBigQuery() {
   
   for (let r = 1; r < values.length; r++) {
     const rowVals = values[r];
+    const displayRowVals = displayValues[r];
     
     // Skip completely empty rows
     if (rowVals.every(c => c === '' || c === null || typeof c === 'undefined')) continue;
@@ -52,7 +55,7 @@ function importDisputeLogToBigQuery() {
     if (isIdIdx >= 0 && !rowVals[isIdIdx]) continue;
     
     try {
-      const obj = parseDisputeRow(headersRaw, headers, rowVals, r + 1);
+      const obj = parseDisputeRow(headersRaw, headers, rowVals, displayRowVals, r + 1);
       if (obj) {
         obj._load_uuid = Utilities.getUuid();
         obj._source_row_number = String(r + 1); // Track source row for debugging
@@ -80,7 +83,7 @@ function importDisputeLogToBigQuery() {
   const tempTableId = TABLE_ID + '_tmp_' + tempTableSuffix;
 
   // Create temp table with same schema as target
-  createDisputeTempTable(tempTableId);
+  createDisputeTempTable(tempTableId, schemaFields);
 
   // Wait for temp table to exist
   const created = waitForTable(PROJECT_ID, DATASET_ID, tempTableId, 30000);
@@ -119,7 +122,7 @@ function importDisputeLogToBigQuery() {
 
   // Build and run MERGE SQL
   try {
-    const mergeSql = buildDisputeMergeSql(tempTableId);
+    const mergeSql = buildDisputeMergeSql(tempTableId, schemaFields);
     console.log('Running MERGE SQL...');
     const jobId = runQueryJob(mergeSql);
     waitForJob(PROJECT_ID, jobId, 600000); // wait up to 10 minutes
@@ -142,12 +145,13 @@ function importDisputeLogToBigQuery() {
 }
 
 // Parse a single dispute row with intelligent data type handling
-function parseDisputeRow(headersRaw, headers, rowVals, rowNum) {
+function parseDisputeRow(headersRaw, headers, rowVals, displayRowVals, rowNum) {
   const obj = {};
   
   for (let c = 0; c < headers.length; c++) {
     const fieldName = headers[c];
     const rawValue = rowVals[c];
+    const displayValue = displayRowVals && displayRowVals[c];
     const headerRaw = headersRaw[c];
     
     // Handle null/undefined
@@ -167,11 +171,11 @@ function parseDisputeRow(headersRaw, headers, rowVals, rowNum) {
                headerRaw.toLowerCase().includes('exchange rate') ||
                headerRaw.toLowerCase().includes('line #') ||
                headerRaw.toLowerCase().includes('days of')) {
-        obj[fieldName] = parseNumeric(rawValue);
+        obj[fieldName] = parseNumeric(rawValue, displayValue);
       }
       // STRING FIELDS - everything else
       else {
-        obj[fieldName] = cleanString(rawValue);
+        obj[fieldName] = cleanString(displayValue !== '' ? displayValue : rawValue);
       }
     } catch (err) {
       console.warn('Row ' + rowNum + ', column "' + headerRaw + '" parse warning: ' + err + '. Using null.');
@@ -265,12 +269,22 @@ function formatDateForBQ(date) {
 }
 
 // Parse numeric values, handling currency symbols and commas
-function parseNumeric(val) {
+function parseNumeric(val, displayVal) {
   if (val === null || val === undefined || val === '') return null;
   
   let num;
   if (typeof val === 'number') {
     num = val;
+  } else if (val instanceof Date) {
+    const displayStr = String(displayVal || '').trim();
+    if (!displayStr) return null;
+
+    const parsedDisplay = parseFloat(displayStr.replace(/[$€£¥,\s]/g, ''));
+    if (isNaN(parsedDisplay)) {
+      console.warn('Numeric column contains date-formatted value with non-numeric display: "' + displayStr + '"');
+      return null;
+    }
+    num = parsedDisplay;
   } else {
     const str = String(val).trim();
     if (!str) return null;
@@ -308,19 +322,17 @@ function cleanString(val) {
 }
 
 // Create the main dispute table with proper schema
-function ensureDisputeTableExists() {
-  let tableExists = false;
+function ensureDisputeTableExists(schemaFields) {
+  let table;
   try {
-    BigQuery.Tables.get(PROJECT_ID, DATASET_ID, TABLE_ID);
-    tableExists = true;
+    table = BigQuery.Tables.get(PROJECT_ID, DATASET_ID, TABLE_ID);
     console.log('Table ' + TABLE_ID + ' already exists.');
   } catch (e) {
     if (!isNotFoundError(e)) throw e;
   }
 
-  if (!tableExists) {
+  if (!table) {
     console.log('Creating table ' + TABLE_ID + '...');
-    const schemaFields = getDisputeTableSchema();
     const tableResource = {
       tableReference: {
         projectId: PROJECT_ID,
@@ -332,53 +344,40 @@ function ensureDisputeTableExists() {
     
     BigQuery.Tables.insert(tableResource, PROJECT_ID, DATASET_ID);
     console.log('Created table ' + TABLE_ID + ' with proper schema.');
+    return;
   }
+
+  ensureTableHasColumns(table, schemaFields);
 }
 
-// Define the BigQuery schema for dispute log
-function getDisputeTableSchema() {
-  return [
-    { name: 'file_dispute_date', type: 'DATE', mode: 'NULLABLE' },
-    { name: 'is_id', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'charged_company', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'vendor_name', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'vendor_code', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'invoice_number', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'line', type: 'NUMERIC', mode: 'NULLABLE' },
-    { name: 'circuit_id', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'po_no', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'charge_date_from', type: 'DATE', mode: 'NULLABLE' },
-    { name: 'charge_date_to', type: 'DATE', mode: 'NULLABLE' },
-    { name: 'invoice_currency', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'line_amount', type: 'NUMERIC', mode: 'NULLABLE' },
-    { name: 'dispute_amount_in_local_currency', type: 'NUMERIC', mode: 'NULLABLE' },
-    { name: 'exchange_rate', type: 'NUMERIC', mode: 'NULLABLE' },
-    { name: 'dispute_amount_in_usd', type: 'NUMERIC', mode: 'NULLABLE' },
-    { name: 'dispute_category_reason', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'dispute_details', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'follow_up_action_remarks', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'ticket_case_no_if_any', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'credit_note_reference', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'received_credit_amount_in_local_currency', type: 'NUMERIC', mode: 'NULLABLE' },
-    { name: 'received_credit_amount_in_usd', type: 'NUMERIC', mode: 'NULLABLE' },
-    { name: 'dispute_resolve_date', type: 'DATE', mode: 'NULLABLE' },
-    { name: 'diff_btw_forecast_and_actual_credit_amount_local_currency', type: 'NUMERIC', mode: 'NULLABLE' },
-    { name: 'diff_btw_forecast_and_actual_credit_amount_usd', type: 'NUMERIC', mode: 'NULLABLE' },
-    { name: 'name_of_verifier', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'days_of_resovled', type: 'NUMERIC', mode: 'NULLABLE' },
-    { name: 'actual_days_of_resolved', type: 'NUMERIC', mode: 'NULLABLE' },
-    { name: 'vendor_group_name', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'dispute_reason', type: 'STRING', mode: 'NULLABLE' },
-    { name: '_source_row_number', type: 'STRING', mode: 'NULLABLE' },
-    { name: 'ingestion_time', type: 'TIMESTAMP', mode: 'NULLABLE' }
-  ];
+// Define the BigQuery schema for dispute log based on current sheet headers
+function buildDisputeSchemaFields(headersRaw, headers) {
+  const schemaFields = [];
+  const seen = {};
+
+  for (let i = 0; i < headers.length; i++) {
+    const fieldName = headers[i];
+    if (seen[fieldName]) continue;
+    seen[fieldName] = true;
+
+    schemaFields.push({
+      name: fieldName,
+      type: inferFieldType(headersRaw[i]),
+      mode: 'NULLABLE'
+    });
+  }
+
+  schemaFields.push({ name: '_source_row_number', type: 'STRING', mode: 'NULLABLE' });
+  schemaFields.push({ name: 'ingestion_time', type: 'TIMESTAMP', mode: 'NULLABLE' });
+
+  return schemaFields;
 }
 
 // Create temp table with same schema as main table
-function createDisputeTempTable(tempTableId) {
-  const schemaFields = getDisputeTableSchema();
+function createDisputeTempTable(tempTableId, schemaFields) {
+  const tempSchemaFields = schemaFields.slice();
   // Add _load_uuid to temp table
-  schemaFields.push({ name: '_load_uuid', type: 'STRING', mode: 'NULLABLE' });
+  tempSchemaFields.push({ name: '_load_uuid', type: 'STRING', mode: 'NULLABLE' });
   
   const tableResource = {
     tableReference: {
@@ -386,7 +385,7 @@ function createDisputeTempTable(tempTableId) {
       datasetId: DATASET_ID,
       tableId: tempTableId
     },
-    schema: { fields: schemaFields }
+    schema: { fields: tempSchemaFields }
   };
   
   BigQuery.Tables.insert(tableResource, PROJECT_ID, DATASET_ID);
@@ -394,7 +393,7 @@ function createDisputeTempTable(tempTableId) {
 }
 
 // Build MERGE SQL with composite key
-function buildDisputeMergeSql(tempTableId) {
+function buildDisputeMergeSql(tempTableId, schemaFields) {
   const targetFqn = '`' + PROJECT_ID + '.' + DATASET_ID + '.' + TABLE_ID + '`';
   const tempFqn = '`' + PROJECT_ID + '.' + DATASET_ID + '.' + tempTableId + '`';
   
@@ -410,8 +409,7 @@ function buildDisputeMergeSql(tempTableId) {
   )`;
   
   // Get all columns from schema except ingestion_time
-  const schema = getDisputeTableSchema();
-  const updateCols = schema
+  const updateCols = schemaFields
     .filter(f => f.name !== 'ingestion_time')
     .map(f => f.name);
   
@@ -432,6 +430,45 @@ WHEN NOT MATCHED THEN
   VALUES (${insertVals})`;
   
   return sql;
+}
+
+function inferFieldType(headerRaw) {
+  const header = String(headerRaw || '').toLowerCase();
+  if (header.includes('date')) return 'DATE';
+  if (header.includes('amount') ||
+      header.includes('exchange rate') ||
+      header.includes('line #') ||
+      header.includes('days of')) {
+    return 'NUMERIC';
+  }
+  return 'STRING';
+}
+
+function ensureTableHasColumns(table, expectedFields) {
+  const existingFields = (table.schema && table.schema.fields) ? table.schema.fields : [];
+  const existingFieldNames = {};
+
+  for (let i = 0; i < existingFields.length; i++) {
+    existingFieldNames[existingFields[i].name] = true;
+  }
+
+  const missingFields = expectedFields.filter(function(field) {
+    return !existingFieldNames[field.name];
+  });
+
+  if (missingFields.length === 0) return;
+
+  const targetFqn = '`' + PROJECT_ID + '.' + DATASET_ID + '.' + TABLE_ID + '`';
+  const addClauses = missingFields.map(function(field) {
+    return 'ADD COLUMN IF NOT EXISTS ' + field.name + ' ' + field.type;
+  }).join(', ');
+  const sql = 'ALTER TABLE ' + targetFqn + ' ' + addClauses;
+  const jobId = runQueryJob(sql);
+  waitForJob(PROJECT_ID, jobId, 120000);
+
+  console.log('Added missing columns to ' + TABLE_ID + ': ' + missingFields.map(function(field) {
+    return field.name;
+  }).join(', '));
 }
 
 // Helper functions (reused from existing pattern)
@@ -498,85 +535,4 @@ function waitForJob(projectId, jobId, timeoutMs) {
     Utilities.sleep(2000);
   }
   throw new Error('Job ' + jobId + ' did not complete within timeout');
-}
-
-// Create a daily trigger (example: every day at 02:00). Call once manually.
-function createDailyTrigger() {
-  ScriptApp.newTrigger('importDisputeLogToBigQuery')
-    .timeBased()
-    .everyDays(1)
-    .atHour(2)
-    .create();
-  console.log('Daily trigger created: importDisputeLogToBigQuery every day at 02:00');
-}
-
-// SMART UPDATE TRIGGER - Runs 15 minutes after last sheet edit
-// Call this once to set up the smart update system
-function setupSmartUpdateTrigger() {
-  // Remove any existing triggers for these functions
-  deleteExistingTriggers();
-  
-  // Create onEdit trigger to track when sheet is modified
-  ScriptApp.newTrigger('onSheetEdit')
-    .forSpreadsheet(SPREADSHEET_ID)
-    .onEdit()
-    .create();
-  
-  // Create time-based trigger that checks every 15 minutes
-  ScriptApp.newTrigger('checkAndRunIfEdited')
-    .timeBased()
-    .everyMinutes(15)
-    .create();
-  
-  console.log('Smart update trigger system created:');
-  console.log('- Sheet edit tracker: active');
-  console.log('- Auto-run check: every 15 minutes');
-}
-
-// Called automatically when sheet is edited (tracks last edit time)
-function onSheetEdit(e) {
-  const props = PropertiesService.getScriptProperties();
-  props.setProperty('lastEditTime', Date.now().toString());
-  console.log('Sheet edited at: ' + new Date().toISOString());
-}
-
-// Called every 15 minutes - runs import if sheet was edited since last run
-function checkAndRunIfEdited() {
-  const props = PropertiesService.getScriptProperties();
-  const lastEditTime = props.getProperty('lastEditTime');
-  const lastRunTime = props.getProperty('lastRunTime');
-  
-  if (!lastEditTime) {
-    console.log('No edits detected since trigger setup.');
-    return;
-  }
-  
-  const editTime = parseInt(lastEditTime, 10);
-  const runTime = lastRunTime ? parseInt(lastRunTime, 10) : 0;
-  
-  // If there was an edit since last run, execute import
-  if (editTime > runTime) {
-    const minutesSinceEdit = Math.floor((Date.now() - editTime) / 60000);
-    console.log('Sheet was edited ' + minutesSinceEdit + ' minutes ago. Running import...');
-    
-    importDisputeLogToBigQuery();
-    
-    // Update last run time
-    props.setProperty('lastRunTime', Date.now().toString());
-  } else {
-    console.log('No new edits since last run. Skipping import.');
-  }
-}
-
-// Remove existing triggers for this function
-function deleteExistingTriggers() {
-  const all = ScriptApp.getProjectTriggers();
-  const functionsToRemove = ['importDisputeLogToBigQuery', 'onSheetEdit', 'checkAndRunIfEdited'];
-  
-  for (let t of all) {
-    if (functionsToRemove.includes(t.getHandlerFunction())) {
-      ScriptApp.deleteTrigger(t);
-    }
-  }
-  console.log('Existing triggers removed.');
 }
