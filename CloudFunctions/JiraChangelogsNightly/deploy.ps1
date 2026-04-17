@@ -13,7 +13,7 @@ if ($Environment -eq "prod") {
     $REGION = "europe-west2"
     $CONNECTOR = "eu-prod-wanda-vpc-conn"
     $FUNC_NAME = "jira-changelogs-nightly"
-    $SERVICE_ACCOUNT = "370161436243-compute@developer.gserviceaccount.com"
+    $SERVICE_ACCOUNT = "jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com"
 } else {
     $PROJECT = "pccw-internal-virt-agent-uat"
     $REGION = "us-central1"

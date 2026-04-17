@@ -24,7 +24,7 @@ gcloud functions deploy $FUNCTION_NAME \
   --source=. \
   --entry-point=main \
   --trigger-http \
-  --allow-unauthenticated \
+  --no-allow-unauthenticated \
   --memory=$MEMORY \
   --timeout=$TIMEOUT \
   --vpc-connector="projects/$PROJECT_ID/locations/$REGION/connectors/$VPC_CONNECTOR" \

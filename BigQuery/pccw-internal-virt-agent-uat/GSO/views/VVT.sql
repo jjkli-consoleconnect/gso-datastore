@@ -21,7 +21,16 @@ WITH vvt_tickets AS (
       WHEN t.AssociatedTeam = 'Network Team' THEN 'Network'
       ELSE 'Others'
     END AS CostType,
-    t.TransactionStatus,
+      CASE
+        WHEN t.TransactionStatus = 'Awaiting for Marking receipt' THEN 'Mark Receipt'
+        WHEN t.TransactionStatus = 'Awaiting for PO - Amount Variance' THEN 'Amount Variance'
+        WHEN t.TransactionStatus = 'Awaiting for Credit note' THEN 'Credit Note'
+        WHEN t.TransactionStatus = 'Awaiting for PO - Replacement PO' THEN 'Replacement PO'
+        WHEN t.TransactionStatus = 'Dispute reason' THEN 'Dispute Reason'
+        WHEN t.TransactionStatus = 'Awaiting for PO - Date Variance' THEN 'Date Variance'
+        WHEN t.TransactionStatus = 'Awaiting for PO - New PO' THEN 'New PO'
+        ELSE t.TransactionStatus
+      END AS TransactionStatus,
     t.SyncTime,
     COALESCE(t.IsDeleted, FALSE) AS IsDeleted,
     t.DeletedAt,

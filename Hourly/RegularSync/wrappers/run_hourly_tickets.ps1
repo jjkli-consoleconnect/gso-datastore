@@ -1,6 +1,0 @@
-$env:GOOGLE_APPLICATION_CREDENTIALS = 'G:\My Drive\Scripts\service-account.json'
-$env:TEST_WINDOW_START = '2025-09-01T00:00:00Z'
-$env:TEST_WINDOW_END = '2025-09-01T01:00:00:00Z'
-$env:SINGLE_PROJECT = 'Sherbet'
-$env:LOG_LEVEL = 'INFO'
-python -u 'Hourly\jira_tickets\main.py'

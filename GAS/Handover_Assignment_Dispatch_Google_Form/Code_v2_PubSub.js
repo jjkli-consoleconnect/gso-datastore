@@ -56,7 +56,7 @@ function getServiceAccountKey() {
   const keyJson = scriptProperties.getProperty("SERVICE_ACCOUNT_KEY");
   
   if (!keyJson) {
-    throw new Error("SERVICE_ACCOUNT_KEY not found in Script Properties. Please add the handover-pubsub-key.json content.");
+    throw new Error("SERVICE_ACCOUNT_KEY not found in Script Properties. Please add the service account JSON content.");
   }
   
   return JSON.parse(keyJson);

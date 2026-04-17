@@ -8,7 +8,7 @@ MEMORY="1024MB"
 TIMEOUT="540s"
 RUNTIME="python311"
 VPC_CONNECTOR="eu-prod-wanda-vpc-conn"
-SERVICE_ACCOUNT="370161436243-compute@developer.gserviceaccount.com"
+SERVICE_ACCOUNT="jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com"
 
 echo "Deploying Jira Tickets Cloud Function..."
 echo "Project: $PROJECT_ID"
@@ -24,7 +24,7 @@ gcloud functions deploy $FUNCTION_NAME \
   --source=. \
   --entry-point=main \
   --trigger-http \
-  --allow-unauthenticated \
+  --no-allow-unauthenticated \
   --memory=$MEMORY \
   --timeout=$TIMEOUT \
   --vpc-connector="projects/$PROJECT_ID/locations/$REGION/connectors/$VPC_CONNECTOR" \

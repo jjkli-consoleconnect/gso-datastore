@@ -22,12 +22,21 @@ credentials.json
 found-credentials.txt
 service-account.json
 service-account-*.json
+handover-pubsub-key.json
+looker_client_secret.json
+client_secret.json
+*_client_secret.json
+*-key.json
 
 # Ignore all credential files in any directory
 **/credentials.json
 **/service-account.json
 **/jira-bigquery-key.json
+**/handover-pubsub-key.json
+**/looker_client_secret.json
 **/client_secret.json
+**/*_client_secret.json
+**/*-key.json
 **/*_config.json
 
 # Archive folder for cleanup
@@ -37,3 +46,12 @@ Archive/
 .env
 .env.local
 .env.*.local
+
+# Local BigQuerySync overrides
+BigQuerySync/bq-sync.config.local.json
+
+# Local Jira config overrides
+config.local.json
+.config.json
+**/config.local.json
+**/.config.json

@@ -39,7 +39,7 @@ class TokenBucket:
 
 def setup_repo_path(script_file):
     """
-    Add repository root to sys.path and auto-set GOOGLE_APPLICATION_CREDENTIALS.
+    Add repository root to sys.path.
     Returns (script_dir, repo_root).
     """
     import sys
@@ -49,35 +49,47 @@ def setup_repo_path(script_file):
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
     
-    # Auto-set GOOGLE_APPLICATION_CREDENTIALS if not already set
-    if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
-        for cand in ('service-account.json', 'jira-bigquery-key.json', 'credentials.json'):
-            p = repo_root / 'shared' / cand
-            if p.exists():
-                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = str(p)
-                break
-    
     return script_dir, repo_root
 
 
 def load_jira_config(script_dir=None):
     """
-    Load Jira configuration from config.json.
-    Searches multiple locations: script dir, repo root shared/, hourly jira_tickets/.
+    Load Jira configuration.
+    Priority order: env vars, Secret Manager, local config files.
     Returns config dict or None if not found.
     """
+    env_token = os.environ.get('JIRA_API_TOKEN', '')
+    env_user = os.environ.get('JIRA_USER', '')
+    if env_token and env_user:
+        logging.info("Loaded Jira config from environment variables")
+        return {
+            'jira_api_token': env_token,
+            'jira_user': env_user,
+        }
+
+    try:
+        from shared.secrets_manager import load_jira_credentials
+        token, user = load_jira_credentials()
+        if token and user:
+            return {
+                'jira_api_token': token,
+                'jira_user': user,
+            }
+    except Exception as e:
+        logging.debug(f"Could not load Jira config from Secret Manager: {e}")
+
     search_paths = []
     
     if script_dir:
+        search_paths.append(script_dir / 'config.local.json')
         search_paths.append(script_dir / 'config.json')
-        # Also check parent.parent / shared / config.json
-        search_paths.append(script_dir.parent.parent / 'shared' / 'config.json')
+        search_paths.append(script_dir / '.config.json')
     
-    # Also check relative paths
+    # Also check relative local-only paths
     search_paths.extend([
+        pathlib.Path('config.local.json'),
         pathlib.Path('config.json'),
-        pathlib.Path('../shared/config.json'),
-        pathlib.Path('../../shared/config.json'),
+        pathlib.Path('.config.json'),
     ])
     
     for path in search_paths:
@@ -94,7 +106,7 @@ def load_jira_config(script_dir=None):
         except Exception as e:
             logging.debug(f"Could not load config from {path}: {e}")
     
-    logging.error("config.json not found. Please create it with your Jira API token.")
+    logging.error("Jira config not found. Use env vars, Secret Manager, or a local config.json outside git.")
     return None
 
 

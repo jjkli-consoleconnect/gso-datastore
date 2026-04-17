@@ -9,7 +9,7 @@ $PROJECT = "pccw-internal-virtual-agent"
 $REGION = "europe-west2"
 $CONNECTOR = "eu-prod-wanda-vpc-conn"
 $FUNC_NAME = "jira-tickets-nightly"
-$SERVICE_ACCOUNT = "370161436243-compute@developer.gserviceaccount.com"
+$SERVICE_ACCOUNT = "jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com"
 
 if (-not $PSBoundParameters.ContainsKey('AllowUnauthenticated')) {
   $AllowUnauthenticated = $false

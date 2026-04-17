@@ -20,13 +20,42 @@ function BqRun([string]$bqArgs) {
   return $out -join "`n"
 }
 
-$config = (Get-Content $ConfigPath -Raw) | ConvertFrom-Json
-if ($config.credentialsFile -and $config.credentialsFile.Trim()) {
-  $fullCred = if ([IO.Path]::IsPathRooted($config.credentialsFile)) { $config.credentialsFile } else { Join-Path (Split-Path $PSScriptRoot -Parent) $config.credentialsFile }
-  $env:GOOGLE_APPLICATION_CREDENTIALS = $fullCred
-  $env:CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE = $fullCred
-  & cmd /c "gcloud auth activate-service-account --key-file=`"$fullCred`"" | Out-Null
+function Load-BqsConfig([string]$basePath) {
+  $config = (Get-Content $basePath -Raw) | ConvertFrom-Json
+  $configDir = Split-Path $basePath -Parent
+  $localName = (([IO.Path]::GetFileNameWithoutExtension($basePath)) -replace '\.config$', '.config.local') + '.json'
+  $localPath = Join-Path $configDir $localName
+
+  if (Test-Path $localPath) {
+    $localConfig = (Get-Content $localPath -Raw) | ConvertFrom-Json
+    foreach ($prop in $localConfig.PSObject.Properties) {
+      $config | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+    }
+  }
+
+  return $config
 }
+
+function Initialize-GoogleAuth($config) {
+  if ($env:GOOGLE_APPLICATION_CREDENTIALS -or $env:CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE) {
+    Write-Host 'Using credentials from current environment.' -ForegroundColor DarkGray
+    return
+  }
+
+  if ($config.credentialsFile -and $config.credentialsFile.Trim()) {
+    $fullCred = if ([IO.Path]::IsPathRooted($config.credentialsFile)) { $config.credentialsFile } else { Join-Path (Split-Path $PSScriptRoot -Parent) $config.credentialsFile }
+    $env:GOOGLE_APPLICATION_CREDENTIALS = $fullCred
+    $env:CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE = $fullCred
+    & cmd /c "gcloud auth activate-service-account --key-file=`"$fullCred`"" | Out-Null
+    Write-Warning 'Using credentialsFile override. Prefer ADC or an external env var over repo-local key files.'
+    return
+  }
+
+  Write-Host 'Using current gcloud/ADC authentication. Set GOOGLE_APPLICATION_CREDENTIALS or add a local override only if needed.' -ForegroundColor DarkGray
+}
+
+$config = Load-BqsConfig $ConfigPath
+Initialize-GoogleAuth $config
 
 $outputRoot = if ([IO.Path]::IsPathRooted($config.outputDir)) { $config.outputDir } else { Join-Path (Split-Path $PSScriptRoot -Parent) $config.outputDir }
 

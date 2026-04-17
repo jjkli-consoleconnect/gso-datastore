@@ -32,8 +32,42 @@ function BqQueryJson([string]$project, [string]$locFlag, [string]$sql) {
   $json -join "`n" | ConvertFrom-Json
 }
 
+function Load-BqsConfig([string]$basePath) {
+  $config = (Get-Content $basePath -Raw) | ConvertFrom-Json
+  $configDir = Split-Path $basePath -Parent
+  $localName = (([IO.Path]::GetFileNameWithoutExtension($basePath)) -replace '\.config$', '.config.local') + '.json'
+  $localPath = Join-Path $configDir $localName
+
+  if (Test-Path $localPath) {
+    $localConfig = (Get-Content $localPath -Raw) | ConvertFrom-Json
+    foreach ($prop in $localConfig.PSObject.Properties) {
+      $config | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+    }
+  }
+
+  return $config
+}
+
+function Initialize-GoogleAuth($config) {
+  if ($env:GOOGLE_APPLICATION_CREDENTIALS -or $env:CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE) {
+    Write-Host 'Using credentials from current environment.' -ForegroundColor DarkGray
+    return
+  }
+
+  if ($config.credentialsFile -and $config.credentialsFile.Trim()) {
+    $fullCred = if ([IO.Path]::IsPathRooted($config.credentialsFile)) { $config.credentialsFile } else { Join-Path (Split-Path $PSScriptRoot -Parent) $config.credentialsFile }
+    $env:GOOGLE_APPLICATION_CREDENTIALS = $fullCred
+    $env:CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE = $fullCred
+    & cmd /c "gcloud auth activate-service-account --key-file=`"$fullCred`"" | Out-Null
+    Write-Warning 'Using credentialsFile override. Prefer ADC or an external env var over repo-local key files.'
+    return
+  }
+
+  Write-Host 'Using current gcloud/ADC authentication. Set GOOGLE_APPLICATION_CREDENTIALS or add a local override only if needed.' -ForegroundColor DarkGray
+}
+
 # Read config after helpers defined to avoid function order issues
-$config = (Get-Content $ConfigPath -Raw) | ConvertFrom-Json
+$config = Load-BqsConfig $ConfigPath
 
 ${projects} = @()
 if ($config.projects -and $config.projects.Count -gt 0) { ${projects} = $config.projects }
@@ -42,14 +76,7 @@ if (-not ${projects} -or ${projects}.Count -eq 0) { throw "No projects configure
 $location = $null
 if ($config.location -and $config.location.Trim()) { $location = $config.location.Trim() }
 
-# Optionally set credentials
-if ($config.credentialsFile -and $config.credentialsFile.Trim()) {
-  $fullCred = if ([IO.Path]::IsPathRooted($config.credentialsFile)) { $config.credentialsFile } else { Join-Path (Split-Path $PSScriptRoot -Parent) $config.credentialsFile }
-  $env:GOOGLE_APPLICATION_CREDENTIALS = $fullCred
-  $env:CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE = $fullCred
-  # Activate service account for bq/gcloud
-  & cmd /c "gcloud auth activate-service-account --key-file=`"$fullCred`"" | Out-Null
-}
+Initialize-GoogleAuth $config
 
 $outputRoot = if ([IO.Path]::IsPathRooted($config.outputDir)) { $config.outputDir } else { Join-Path (Split-Path $PSScriptRoot -Parent) $config.outputDir }
 New-BqsDirectory $outputRoot
@@ -64,8 +91,9 @@ foreach ($project in ${projects}) {
   $locArg = if ($location) { "--location=$location" } else { "" }
   $datasets = if ($config.datasets -and $config.datasets.Count -gt 0) { 
     $config.datasets 
-  } else { 
-  (BqJson ("ls --project_id={0} {1} -d" -f $project, $locArg) | ForEach-Object { $_.datasetReference.datasetId })
+  }
+  else { 
+    (BqJson ("ls --project_id={0} {1} -d" -f $project, $locArg) | ForEach-Object { $_.datasetReference.datasetId })
   }
 
   $datasetTotal = $datasets.Count
@@ -86,7 +114,8 @@ foreach ($project in ${projects}) {
         Write-Host ("Skipping dataset {0}:{1} in location {2} (wanted {3})" -f $project, $dataset, $dinfo.location, $location)
         continue
       }
-    } catch {
+    }
+    catch {
       Write-Warning ("Failed to read dataset info for {0}:{1}: {2}" -f $project, $dataset, $_)
       continue
     }
@@ -94,12 +123,12 @@ foreach ($project in ${projects}) {
     $viewsDir = Join-Path $base 'views'
     $mviewsDir = Join-Path $base 'materialized_views'
     $routinesDir = Join-Path $base 'routines'
-  if ($config.include.views) { New-BqsDirectory $viewsDir }
-  if ($config.include.materializedViews) { New-BqsDirectory $mviewsDir }
-  if ($config.include.routines) { New-BqsDirectory $routinesDir }
+    if ($config.include.views) { New-BqsDirectory $viewsDir }
+    if ($config.include.materializedViews) { New-BqsDirectory $mviewsDir }
+    if ($config.include.routines) { New-BqsDirectory $routinesDir }
 
-  # Views and Materialized Views
-  if ($config.include.views -or $config.include.materializedViews) {
+    # Views and Materialized Views
+    if ($config.include.views -or $config.include.materializedViews) {
       if ($config.include.views) {
         $views = BqQueryJson $project $locArg ("SELECT table_name, view_definition FROM `{0}.{1}.INFORMATION_SCHEMA.VIEWS` ORDER BY table_name" -f $project, $dataset)
         Write-Host ("    Views: {0}" -f $views.Count) -ForegroundColor DarkGray
@@ -110,7 +139,8 @@ foreach ($project in ${projects}) {
             $path = Join-Path $viewsDir ("$t.sql")
             Write-Text $path "$sql`n"
             Write-Host "      OK $t" -ForegroundColor DarkGray
-          } catch {
+          }
+          catch {
             Write-Warning ("Failed to export view {0} in {1}:{2}: {3}" -f $t, $project, $dataset, $_)
           }
         }
@@ -127,7 +157,8 @@ foreach ($project in ${projects}) {
             $path = Join-Path $mviewsDir ("$t.sql")
             Write-Text $path "$sql`n"
             Write-Host "      OK $t" -ForegroundColor DarkGray
-          } catch {
+          }
+          catch {
             Write-Warning ("Failed to export materialized view {0} in {1}:{2}: {3}" -f $t, $project, $dataset, $_)
           }
         }
@@ -145,16 +176,17 @@ foreach ($project in ${projects}) {
           $info = BqJson ("show {0} --routine {1}" -f $locArg, $fq)
           $body = $info.definitionBody
           $meta = [ordered]@{
-            language     = $info.language
-            routineType  = $info.routineType
-            returnType   = $info.returnType
+            language          = $info.language
+            routineType       = $info.routineType
+            returnType        = $info.returnType
             importedLibraries = $info.importedLibraries
-            arguments    = $info.arguments
+            arguments         = $info.arguments
           }
           Write-Text (Join-Path $routinesDir ("$r.sql")) "$body`n"
           ($meta | ConvertTo-Json -Depth 10) | Out-File -Encoding utf8 (Join-Path $routinesDir ("$r.meta.json"))
           Write-Host "      OK $r" -ForegroundColor DarkGray
-        } catch {
+        }
+        catch {
           Write-Warning ("Failed to inspect routine {0} in {1}:{2}: {3}" -f $r, $project, $dataset, $_)
         }
       }

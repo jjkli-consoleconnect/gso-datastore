@@ -1,1 +1,0 @@
-# placeholder JQL - using embedded defaults now
