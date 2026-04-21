@@ -324,6 +324,7 @@ def fetch_and_sync_jira_comments():
             'project = "QMS Documentation" OR '\
             'project = "Operational Case Reviews" OR '\
             'project = "IT Helpdesk" OR '\
+            'project = "Vendor Verification Team" OR '\
             'project = "GS&O Strategic Initiatives" '
             ')'
         )

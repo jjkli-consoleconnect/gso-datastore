@@ -1,4 +1,4 @@
-WITH vvt_tickets AS (
+yes aWITH vvt_tickets AS (
   SELECT
     t.T AS IssueType,
     t.Project,

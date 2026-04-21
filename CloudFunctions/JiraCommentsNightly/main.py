@@ -28,6 +28,13 @@ MIN_WINDOW_HOURS = 1  # Skip windows smaller than 1 hour
 OVERLAP_MINUTES = 10
 MIN_START = datetime(2024, 7, 1, tzinfo=timezone.utc)
 ENABLE_SOFT_DELETE_RECONCILIATION = os.environ.get('ENABLE_SOFT_DELETE_RECONCILIATION', '').strip().lower() == 'true'
+DEFAULT_BASE_WINDOW_DAYS = int(os.environ.get('BASE_WINDOW_DAYS', '1'))
+BACKFILL_MODE = os.environ.get('BACKFILL_MODE', '').strip().lower() == 'true'
+BACKFILL_BASE_WINDOW_DAYS = int(os.environ.get('BACKFILL_BASE_WINDOW_DAYS', '14'))
+MAX_BASE_WINDOW_DAYS = int(os.environ.get('MAX_BASE_WINDOW_DAYS', '30'))
+
+# Debug logging at module init
+logging.debug(f"ENV CONFIG: BASE_WINDOW_DAYS={DEFAULT_BASE_WINDOW_DAYS}, BACKFILL_MODE={BACKFILL_MODE}, BACKFILL_BASE_WINDOW_DAYS={BACKFILL_BASE_WINDOW_DAYS}, MAX_BASE_WINDOW_DAYS={MAX_BASE_WINDOW_DAYS}")
 
 DEFAULT_PROJECTS = [
     'GS&O Data Analytics',
@@ -48,6 +55,7 @@ DEFAULT_PROJECTS = [
     'QMS Documentation',
     'Operational Case Reviews',
     'IT Helpdesk',
+    'Vendor Verification Team',
     'GS&O Strategic Initiatives'
 ]
 
@@ -83,7 +91,40 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
     ).result()
 
 
-def select_window(client, dataset_id, table_id, project, base_days=1):
+def choose_window_days(now, latest_window_end):
+    """Choose dynamic window size for backfill while keeping daily mode stable."""
+    base_days = max(DEFAULT_BASE_WINDOW_DAYS, 1)
+    max_days = max(MAX_BASE_WINDOW_DAYS, base_days)
+
+    if not BACKFILL_MODE:
+        logging.info(f"BACKFILL_MODE is False, returning base {base_days} days")
+        return min(base_days, max_days)
+
+    if latest_window_end is None:
+        logging.info(f"No prior window, returning BACKFILL_BASE_WINDOW_DAYS {BACKFILL_BASE_WINDOW_DAYS} days")
+        return min(max(BACKFILL_BASE_WINDOW_DAYS, base_days), max_days)
+
+    lag_days = max(int((now - latest_window_end).total_seconds() // 86400), 0)
+    candidate_days = BACKFILL_BASE_WINDOW_DAYS
+    if lag_days >= 365:
+        candidate_days = max(candidate_days, 30)
+        logging.info(f"Lag {lag_days} days >= 365, using 30-day window")
+    elif lag_days >= 90:
+        candidate_days = max(candidate_days, 14)
+        logging.info(f"Lag {lag_days} days >= 90, using 14-day window")
+    elif lag_days >= 30:
+        candidate_days = max(candidate_days, 7)
+        logging.info(f"Lag {lag_days} days >= 30, using 7-day window")
+    else:
+        candidate_days = max(candidate_days, base_days)
+        logging.info(f"Lag {lag_days} days < 30, using base {base_days}-day window")
+
+    result = min(max(candidate_days, base_days), max_days)
+    logging.info(f"choose_window_days: lag_days={lag_days}, candidate={candidate_days}, result={result}")
+    return result
+
+
+def select_window(client, dataset_id, table_id, project):
     now = datetime.now(timezone.utc)
     ws = None
     we = None
@@ -128,7 +169,8 @@ def select_window(client, dataset_id, table_id, project, base_days=1):
     else:
         start = MIN_START
 
-    end = start + timedelta(days=base_days)
+    window_days = choose_window_days(now, latest)
+    end = start + timedelta(days=window_days)
     end = min(end, now)
     try:
         if (end - start).total_seconds() / 3600.0 < MIN_WINDOW_HOURS:
@@ -412,7 +454,7 @@ def fetch_and_sync_jira_comments_nightly():
         for proj in projects:
             logging.info(f"Starting nightly window selection for project {proj}")
             while True:
-                ws, we = select_window(client, dataset_id, progress_table_id, proj, base_days=1)
+                ws, we = select_window(client, dataset_id, progress_table_id, proj)
                 if not ws or not we:
                     logging.info(f"No further window for {proj} (too close to now or complete)")
                     break

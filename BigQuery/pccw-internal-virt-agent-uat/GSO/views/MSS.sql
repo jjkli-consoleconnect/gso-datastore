@@ -21,6 +21,9 @@ WITH t AS (
     Origin,
     SR_Ref,
     SyncTime,
+    RootCause,
+    ResolutionSecurity,
+    Symptoms,
     TimeToFirstResponse_Elapsed,
     TimeToFirstResponse_Goal,
     TimeToFirstResponse_Breached,
@@ -125,6 +128,32 @@ c_first AS (
   FROM c_all c
   JOIN t ON t.Key = c.Issue_Key
 ),
+ai_ticket_classification AS (
+  -- AI fields are served from an incremental cache table to keep the view fast.
+  -- Refresh cache via scheduled MERGE in GSO/routines/MSS_AIClassification_Incremental.sql.
+  SELECT
+    Key,
+    AIRootCause,
+    AIResolutionSecurity,
+    AISymptoms,
+    AIAtFault,
+    AIAtFaultAudit
+  FROM (
+    SELECT
+      a.Key,
+      a.AIRootCause,
+      a.AIResolutionSecurity,
+      a.AISymptoms,
+      a.AIAtFault,
+      a.AIAtFaultAudit,
+      ROW_NUMBER() OVER (
+        PARTITION BY a.Key
+        ORDER BY a.ClassifiedAt DESC
+      ) AS rn
+    FROM `pccw-internal-virt-agent-uat.GSO.MSS_AIClassification` a
+  )
+  WHERE rn = 1
+),
 ch_all AS (
   SELECT
     Issue_Key,
@@ -215,6 +244,14 @@ SELECT
   t.Origin,
   t.SR_Ref,
   t.SyncTime,
+  t.RootCause,
+  t.ResolutionSecurity,
+  t.Symptoms,
+  ai.AIRootCause,
+  ai.AIResolutionSecurity,
+  ai.AISymptoms,
+  ai.AIAtFault,
+  ai.AIAtFaultAudit,
   t.TimeToFirstResponse_Elapsed,
   t.TimeToFirstResponse_Elapsed * 60 AS TimeToFirstResponse_Elapsed_Minutes,
   t.TimeToFirstResponse_Elapsed AS TimeToFirstResponse_Elapsed_Hours,
@@ -341,6 +378,7 @@ SELECT
   ch.Last_Change.SyncTime AS Last_Change_SyncTime,
   ch.Changelog
 FROM t
+LEFT JOIN ai_ticket_classification ai ON ai.Key = t.Key
 LEFT JOIN c_all c ON c.Issue_Key = t.Key
 LEFT JOIN c_first fr ON fr.Issue_Key = t.Key
 LEFT JOIN ch_all ch ON ch.Issue_Key = t.Key
