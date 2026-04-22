@@ -1,0 +1,298 @@
+WANDA PROD ARCHITECTURE CONTEXT (VERIFIED FROM GCP)
+Generated: 2026-03-23
+Source of truth for this document: live gcloud metadata + recent Cloud Logging entries
+Project: pccw-internal-virtual-agent
+
+==================================================
+1) EXECUTIVE SUMMARY
+==================================================
+Wanda in production is implemented as a Slack-integrated chatbot stack on GCP.
+The primary ingress is a Cloud Function (Gen2) named wanda-adk-slack-webhook.
+This webhook validates/processes Slack events and forwards chatbot work to a Cloud Run backend named wanda-adk-service-bot.
+The ADK service appears to run a Google ADK-based Python app (confirmed by log stack traces from google/adk and ADK-style endpoints).
+The ADK backend orchestrates calls to other webhook functions and enterprise systems (Jira, Confluence, BigQuery, DLP, and other internal agent endpoints).
+
+Main call chain (high confidence):
+Slack -> wanda-adk-slack-webhook (Cloud Functions Gen2 / Cloud Run service) -> wanda-adk-service-bot (Cloud Run ADK service) -> tool/function integrations -> response back to Slack.
+
+==================================================
+2) CORE PROD COMPONENTS
+==================================================
+
+2.1 Slack ingress function
+- Name: wanda-adk-slack-webhook
+- Platform: Cloud Functions Gen2
+- Runtime: nodejs22
+- Entry point: slackWebhook
+- Cloud Run URI: https://wanda-adk-slack-webhook-c6zqodieea-nw.a.run.app
+- Cloud Functions URL: https://europe-west2-pccw-internal-virtual-agent.cloudfunctions.net/wanda-adk-slack-webhook
+- Last update: 2026-03-06T10:46:49Z
+
+Observed environment variables (key fields):
+- ADK_API_URL = https://wanda-adk-service-bot-370161436243.europe-west2.run.app
+- BOT_USER_ID = U06K9793ZD5
+- DIALOGFLOW_PROJECT_ID = pccw-internal-virtual-agent
+- DIALOGFLOW_LOCATION = global
+- DIALOGFLOW_AGENT_ID = 58dec047-5fa6-4a99-9c95-4fe678eee6e8
+- REDIS_URL = redis://10.94.10.219:6379
+- TRAINING_DATA_TABLE = pccw-internal-virtual-agent.wanda_ds.TrainingData
+- SLACK_DISCLAIMER = long legal/safety disclaimer text injected by service
+
+Secret env vars:
+- FLUSH_SECRET <- secret FLUSH_SECRET v1
+- SLACK_BOT_TOKEN <- secret slack-bot-token-secret v2
+- SLACK_SIGNING_SECRET <- secret slack-signing-secret v2
+
+Runtime/network posture:
+- Service account: 370161436243-compute@developer.gserviceaccount.com
+- VPC Connector: eu-prod-wanda-vpc-conn
+- VPC egress: ALL_TRAFFIC
+- Min instances: 1
+- Max instances: 100
+- Concurrency per instance: 1
+- Timeout: 300s
+
+2.2 ADK backend service
+- Name: wanda-adk-service-bot
+- Platform: Cloud Run (fully managed)
+- URL: https://wanda-adk-service-bot-c6zqodieea-nw.a.run.app
+- Latest revision: wanda-adk-service-bot-00069-r4b
+- Labels include: seeds_product=wanda-slack, wanda_env=prod, wanda_product=wanda-adk-service-bot
+- Service account: 370161436243-compute@developer.gserviceaccount.com
+- Region context: deployed in europe-west2; env var GOOGLE_CLOUD_LOCATION shows europe-west1 for app logic
+
+Important environment settings (observed):
+- GOOGLE_GENAI_USE_VERTEXAI=TRUE
+- GEMINI_VERSION=gemini-2.5-flash
+- GEMINI_API_KEY from Secret Manager
+- JIRA_API_URL=https://consoleconnect.atlassian.net/rest/api/latest
+- JIRA_AUTH_USERNAME=kms-jira@consoleconnect.com
+- JIRA_AUTH_PASSWORD from Secret Manager
+- CONFLUENCE_API_URL=https://consoleconnect.atlassian.net
+- CONFLUENCE_APIV1=/wiki/rest/api
+- CONFLUENCE_SECRET from Secret Manager
+- CABLE_EVENT_API_URL -> cable-event-agent-for-webhook function
+- REMEDY_TICKET_API_URL -> remedy-api-for-webhook function
+- DOCUMENT_AGENT_API_URL -> document-agent-for-webhook function
+- TICKET_ANALYSIS_API_URL -> ticket-analysis-agent-for-webhook function
+- WANDA_DLP_SERVICE_API_URL -> wanda-dlp-service function
+- BIGQUERY_* vars for cable and ticket analysis datasets/tables
+
+2.3 DLP service
+- Name: wanda-dlp-service
+- Platform: Cloud Functions Gen2
+- Runtime: nodejs22
+- Entry point: wandaDlpService
+- URI: https://wanda-dlp-service-c6zqodieea-nw.a.run.app
+- Function URL: https://europe-west2-pccw-internal-virtual-agent.cloudfunctions.net/wanda-dlp-service
+- Key env: DLP_MAX_CHUNK_SIZE=300000, DLP_MIN_LIKELIHOOD=POSSIBLE
+
+==================================================
+3) RELATED PROD FUNCTIONS FOUND (WANDA TOOLING SURFACE)
+==================================================
+The following functions were discovered and are referenced by ADK or naming/role adjacency:
+- cable-event-agent-for-webhook (entryPoint: cableFaultForWebhook)
+- document-agent-for-webhook (entryPoint: documentAgentForWebhook)
+- document-agent-function (entryPoint: documentAgent)
+- remedy-api-for-webhook (entryPoint: remedyApiForWebhook)
+- ticket-agent-function-prod (entryPoint: ticketAgent)
+- ticket-analysis-agent-for-webhook (entryPoint: ticketAnalysisAgentForWebhook)
+- wanda-adk-slack-webhook (entryPoint: slackWebhook)
+- wanda-dlp-service (entryPoint: wandaDlpService)
+
+Other Slack-adjacent Cloud Run services also exist (possible legacy or parallel integration paths):
+- slack-webhook
+- slack-interactive-webhook
+- slack-integration
+- prod-slack-user
+- prod-slack-interactive-message-service
+- uat-slack-interactive-message-service
+
+Note: these may represent multiple generations of Slack architecture; active path for Wanda ADK appears centered on wanda-adk-slack-webhook + wanda-adk-service-bot.
+
+==================================================
+4) OBSERVED RUNTIME EVIDENCE FROM LOGS
+==================================================
+4.1 Webhook logs (wanda-adk-slack-webhook)
+- Receives Slack event_callback payloads with type=message and metadata (team_id, api_app_id, channel, event_id).
+- Performs user lookup and logs [Auth] User lookup results.
+- Applies filtering/ignore logic (multiple lines: "Ignoring event: type 'message', channel ..., user ...").
+- Indicates some messages are intentionally dropped before full processing.
+
+4.2 ADK service logs (wanda-adk-service-bot)
+- Repeated successful POST /run HTTP/1.1 200
+- POST /apps/wanda_chatbot/users/{user}/sessions/{session_id} HTTP/1.1 200
+- Stack traces include python package paths under google/adk/*, confirming ADK internals.
+- One observed concurrency/session-staleness issue:
+  ValueError about last_update_time earlier than storage update_time (stale session write)
+
+Interpretation:
+- The backend uses ADK session persistence.
+- Session key format includes Slack-specific identifiers (e.g., slack-{user}-{channel}-...).
+- Flow likely does session attach/create + run invocation for each eligible user message.
+
+==================================================
+5) END-TO-END FLOW (PROD, HIGH CONFIDENCE)
+==================================================
+1. User posts a message in Slack workspace/channel where Wanda app is installed/subscribed.
+2. Slack sends event payload to Wanda ingress endpoint (wanda-adk-slack-webhook).
+3. Webhook verifies Slack signature/token and parses event body.
+4. Webhook performs auth/user enrichment and event filtering.
+5. For eligible events, webhook forwards payload/context to ADK_API_URL (wanda-adk-service-bot).
+6. ADK service maps message into app/session context under /apps/wanda_chatbot/users/.../sessions/...
+7. ADK service executes /run and may invoke tool endpoints:
+   - cable-event-agent-for-webhook
+   - remedy-api-for-webhook
+   - document-agent-for-webhook
+   - ticket-analysis-agent-for-webhook
+   - wanda-dlp-service
+   - Jira/Confluence APIs
+   - BigQuery read/write tables for ticket/cable analytics and training context
+8. ADK returns generated answer/tool outputs to caller.
+9. Webhook posts or updates response in Slack (directly or via Slack Web API calls using SLACK_BOT_TOKEN).
+
+==================================================
+6) SECURITY / OPERATIONS POSTURE (WHAT IS CONFIRMED)
+==================================================
+- Secrets handled through Secret Manager references (not plaintext for critical credentials).
+- Network egress of webhook through VPC connector with ALL_TRAFFIC route.
+- Redis appears private (RFC1918 address 10.x), likely for rate limiting/cache/session locks/idempotency.
+- Min instance count 1 on core services suggests warm-start optimization for latency.
+- Logging is active and rich enough for trace-based architecture validation.
+
+==================================================
+7) KNOWN GAPS / UNKNOWNS
+==================================================
+These cannot be fully confirmed from current metadata alone:
+- Exact source code logic of webhook filtering and response posting behavior.
+- Exact ADK graph/agent definitions, prompts, and tool routing rules.
+- Slack App admin configuration details:
+  - Event Subscriptions URL
+  - Interactivity/Shortcuts URL
+  - Slash commands
+  - OAuth scopes and bot permissions
+- Which similarly named Slack services are active, deprecated, or fallback.
+- Exact BigQuery table schemas and whether writes are synchronous vs async.
+
+==================================================
+8) DIAGRAM RECOMMENDATION (COMPONENTS + DATA FLOWS)
+==================================================
+Include these component groups in a single production diagram:
+- Client layer: Slack users, Slack workspace, Slack Events API, Slack Web API
+- Ingress layer: wanda-adk-slack-webhook (CF Gen2)
+- App/Orchestration layer: wanda-adk-service-bot (Cloud Run + ADK runtime)
+- Tooling layer (HTTP function tools):
+  - wanda-dlp-service
+  - remedy-api-for-webhook
+  - document-agent-for-webhook
+  - cable-event-agent-for-webhook
+  - ticket-analysis-agent-for-webhook
+- Data/external systems:
+  - Redis (private IP)
+  - BigQuery (wanda_ds + SubCableEvents tables)
+  - Jira API
+  - Confluence API
+  - Vertex AI / Gemini
+  - Secret Manager
+- Platform controls:
+  - Service Accounts
+  - VPC connector + egress
+  - Cloud Logging / monitoring
+
+Use directional arrows and annotate each flow with protocol/purpose:
+- Slack Events API -> webhook (HTTPS signed requests)
+- webhook -> ADK service (HTTPS internal/public call)
+- ADK service -> tools (HTTPS)
+- ADK service -> Jira/Confluence/BigQuery/Vertex/Secrets
+- webhook/ADK -> Slack Web API (message posting)
+
+==================================================
+9) COPY-PASTE PROMPT FOR NANO BANANA (HIGH DETAIL)
+==================================================
+Prompt title: Wanda Production Architecture Diagram (GCP + Slack + ADK)
+
+Create a production-grade architecture diagram for a Slack-integrated enterprise chatbot named Wanda.
+Style requirements:
+- Clean, professional, cloud architecture style
+- White background, high contrast labels, no clutter
+- Grouped zones with clear boundaries: External, GCP Ingress, GCP App Orchestration, Tooling/Functions, Data & AI, Security/Ops
+- Show primary flow with bold arrows, secondary/supporting flows with thinner arrows
+- Add a small legend (primary request path, tool invocation path, data access path, security/secret path)
+
+System details to model exactly:
+1) External / Client zone:
+- Slack Users
+- Slack Workspace
+- Slack Events API (incoming events)
+- Slack Web API (outbound bot replies)
+
+2) GCP Ingress zone (region: europe-west2):
+- Cloud Function Gen2: wanda-adk-slack-webhook
+  - runtime: nodejs22
+  - entry point: slackWebhook
+  - min instances: 1, max: 100, concurrency: 1, timeout: 300s
+  - uses VPC connector: eu-prod-wanda-vpc-conn, egress: ALL_TRAFFIC
+  - env highlights: ADK_API_URL, REDIS_URL, TRAINING_DATA_TABLE
+  - secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, FLUSH_SECRET
+  - responsibilities: verify Slack signature, parse event, user/auth lookup, event filtering, call ADK backend, respond to Slack
+
+3) GCP App Orchestration zone:
+- Cloud Run service: wanda-adk-service-bot
+  - labels: wanda_env=prod, seeds_product=wanda-slack
+  - runtime behavior: ADK-based session chatbot service
+  - observed endpoints: POST /apps/wanda_chatbot/users/{user}/sessions/{session}, POST /run
+  - AI model config: gemini-2.5-flash, Vertex AI enabled
+  - responsibilities: session management, orchestration, tool calling, response synthesis
+
+4) Tooling/Functions zone (HTTP callable):
+- wanda-dlp-service (CF Gen2) for DLP checks/redaction
+- remedy-api-for-webhook (CF Gen2)
+- document-agent-for-webhook (CF Gen2)
+- cable-event-agent-for-webhook (CF Gen2)
+- ticket-analysis-agent-for-webhook (CF Gen2)
+
+5) Data & External Enterprise Systems zone:
+- Redis instance at private 10.x IP (cache/session/idempotency support)
+- BigQuery datasets/tables:
+  - wanda_ds.TrainingData
+  - wanda_ds.RemedyJiraWorkLogView
+  - SubCableEvents.cable_fault_replica
+- Jira Cloud API (Atlassian)
+- Confluence API (Atlassian)
+- Vertex AI / Gemini model endpoint
+
+6) Security & Ops zone:
+- Secret Manager (GEMINI_API_KEY, JIRA_AUTH_PASSWORD, CONFLUENCE_SECRET, SLACK secrets)
+- Service Accounts for function and run services
+- Cloud Logging traces for webhook + ADK services
+
+Flow requirements:
+- Primary path (number and label each step):
+  1. Slack user message
+  2. Slack Events API -> wanda-adk-slack-webhook
+  3. Webhook validation/filtering/user lookup
+  4. Webhook -> wanda-adk-service-bot
+  5. ADK session attach/create + /run execution
+  6. ADK invokes tools/data/AI services as needed
+  7. ADK response returned to webhook
+  8. Webhook -> Slack Web API reply to user/channel
+- Show optional branch for ignored events (filtered out at webhook)
+- Show DLP as a guardrail call in orchestration path
+- Show secret retrieval path from services to Secret Manager
+
+Output expectations:
+- 16:9 layout
+- Distinct icons for Slack, Cloud Functions, Cloud Run, BigQuery, Redis, Secret Manager, Vertex AI, Jira, Confluence
+- Clear title: "Wanda Chatbot - Production Architecture (pccw-internal-virtual-agent)"
+- Subtitle with region and date
+- Include a note box: "Some tool services may be legacy/parallel; highlighted path is the active ADK production path."
+
+==================================================
+10) OPTIONAL VALIDATION CHECKLIST (FOR NEXT ITERATION)
+==================================================
+To further improve accuracy before final publication:
+- Confirm Slack app Event Subscription URL and Interactivity URL.
+- Confirm OAuth scopes used by bot token.
+- Confirm exact Redis role (cache vs lock vs session).
+- Confirm which Slack-adjacent services are deprecated.
+- Validate diagram against last 7 days of traces and request volume patterns.

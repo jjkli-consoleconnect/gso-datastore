@@ -1,0 +1,340 @@
+Issue Type,Issue key,Issue id,Summary,Assignee,Assignee Id,Priority,Status,Updated,Created,Resolved,Custom field (Root cause),Custom field (Resolution (Security)),Custom field (Symptoms)
+Problem,MSS-5275,3134255,Performance degradation on events pipeline,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,In Progress,"Apr 17, 2026 08:10","Apr 17, 2026 07:41",,,,Performance degration on logs pipeline is causing some events to bypass rulechecks.
+Problem,MSS-5213,3130353,IT Monitoring - VPN Event_Notification,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Waiting customer,"Apr 09, 2026 10:00","Apr 08, 2026 07:59",,internet line outage,n/a,disconnection from VPN
+Problem,MSS-5171,3129400,Url blocked for users,Christos Katsamakas,637dc532f6c85b343c087fd1,Medium,Archived,"Apr 08, 2026 16:40","Apr 03, 2026 09:30","Apr 03, 2026 09:55",User is unable to open the URL.,Added exception to Web filter.,
+Problem,MSS-5139,3128198,Issue opening link ,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Waiting customer,"Apr 15, 2026 06:45","Apr 01, 2026 10:30",,,, cannot open https://maritec-naias.com/ 
+Problem,MSS-5124,3126541,Blocked webpages,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Mar 30, 2026 08:53","Mar 30, 2026 07:57","Mar 30, 2026 08:52",DNS not recheable,enabled “Allow websites when a rating error occurs“,web pages blocked
+Problem,MSS-5043,3121286,"Firewall traffic investigation - SR227758, SR227759 - HK",Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Mar 18, 2026 08:49","Mar 18, 2026 02:12","Mar 18, 2026 08:49",NAT not enabled,enable NAT on 368 root vdom,received 0 bytes on return traffic
+Problem,MSS-4992,3119916,Possible issue with Windows updates,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Apr 01, 2026 13:50","Mar 13, 2026 08:19","Apr 01, 2026 13:49",their firewall,separate file type policy for windows update that will remain for flexibility,blocking file type
+Problem,MSS-4968,3119512,Έλεγχος πρόσβασης σελίδας location metamorfosi ,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Mar 12, 2026 14:18","Mar 12, 2026 08:21","Mar 12, 2026 14:18",wrong categorisation,request recatigorization,blocked page
+Problem,MSS-4966,3119505,New laptop setup cannot communicate with ODB,Christos Katsamakas,637dc532f6c85b343c087fd1,Medium,Archived,"Mar 17, 2026 16:39","Mar 12, 2026 08:07","Mar 12, 2026 10:13",no policy,added user to existing policy ,cannot ping 
+Problem,MSS-4947,3118913,Ζήτημα upload αρχείων στο Outlook Web μέσω ethernet και internal wifi,Christos Katsamakas,637dc532f6c85b343c087fd1,Medium,Archived,"Mar 23, 2026 16:39","Mar 10, 2026 15:05","Mar 18, 2026 09:09",sslPolicy Profile not allows file transfer through Outlook Web,New policy created with all Security Profiles enabled and ssl cert inspection,
+Problem,MSS-4828,3116756,Open access to an application,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Mar 03, 2026 13:49","Mar 03, 2026 13:25","Mar 03, 2026 13:48",blocked connection,added *.xe.com to ssl exceptions,a currency fetcher application that is being blocked on the IP  192.168.0.123 
+Problem,MSS-4665,3110794,Whitelisting - grant access ,Christos Katsamakas,637dc532f6c85b343c087fd1,Medium,Waiting customer,"Apr 16, 2026 07:31","Feb 17, 2026 10:24",,,,"Issues accessing the websites https://naias.monitoringfleet.com and https://www.technava.gr/ 
+Issues while accessing some elements inside the website https://shipmoney.com/  "
+Problem,MSS-4540,3106983,Unable to access https://bluenet.lbbw.sko.de/en/ on local browser while on VPN,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Feb 11, 2026 07:04","Feb 09, 2026 03:18","Feb 11, 2026 07:04",DNS issues,N/A,"unable to access https://bluenet.lbbw.sko.de/en/on a local browser, both on and off VPN"
+Problem,MSS-4488,3104278,CPU Event_Notification (high system alert Hrakleio CPU usage statistics for CPU is high Hrakleio(VOLTN-GR-HRKL-01-FGT)),Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Feb 07, 2026 16:38","Feb 02, 2026 10:28","Feb 02, 2026 11:48",Momentary CPU peak,No issue detected,High CPU Usage reported by the monitoring system
+Problem,MSS-4455,3103485,CPU Event_Notification (CPU is high Hrakleio),Christos Katsamakas,637dc532f6c85b343c087fd1,Medium,Waiting customer,"Mar 07, 2026 18:23","Jan 30, 2026 10:47",,,,High CPU >90%
+Problem,MSS-4433,3102969,Unable to download files from external website - Blocked by policy,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Feb 04, 2026 00:54","Jan 29, 2026 07:58","Feb 03, 2026 14:15",,,"user is unable to download files from external websites such as:
+•	https://www.singaporeair.com
+•	https://www.ezy2ship.net
+"
+Problem,MSS-4359,3101352,Cannot connect (timeout) to server at Aigina site,Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,High,Archived,"Jan 31, 2026 16:37","Jan 26, 2026 08:24","Jan 26, 2026 08:30","After the upgrade to 7.4.10 the option ""allow-traffic-redirect"" was set to disabled which is the default value for this version","Enable the option to redirect traffic
+> config global settings
+> set ""allow-traffic-redirect"" enable",No connections could be performed (timeout) to hosts in Aigina site
+Problem,MSS-4339,3101079,MPLS hosts cannot connect to local hosts,Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,High,Archived,"Jan 31, 2026 16:37","Jan 24, 2026 17:53","Jan 26, 2026 08:18","After the upgrade to 7.4.10 the option ""allow-traffic-redirect"" was set to disabled which is the default value for this version","Enable the option to redirect traffic
+> config global settings
+> set ""allow-traffic-redirect"" enable",Hosts from MPLS couldn't connect (timeout) to hosts locally on Aigina site 
+Problem,MSS-4287,3100293,Workable access Metamorfosi,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Jan 22, 2026 13:45","Jan 22, 2026 08:06","Jan 22, 2026 13:45",fw is not responsible,,Cannot upload a csv file to the portal
+Problem,MSS-4253,3099799,Synology NAS cannot access Internet,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,High,Archived,"Jan 26, 2026 16:37","Jan 21, 2026 06:46","Jan 21, 2026 09:10",Unknown,Move policy of NAS (ID 40) above policy (37) which is the main for Internet traffic.,"NAS are unable to access the internet correctly. 
+As a result: 
+*DSM updates cannot be downloaded
+*Synology QuickConnect / external access is no longer working "
+Incident,MSS-4228,3099431,Darktrace Model Breached for Source Device Fired,Panagiotis Galiotos,712020:b309a3a4-07e5-48e5-a785-a7cedd21c048,Medium,Archived,"Mar 12, 2026 16:39","Jan 20, 2026 10:51","Mar 07, 2026 16:48",Darktrace detected an Anomalous File (type Zip or Gzip) from a Rare External Location,,
+Problem,MSS-4216,3099358,Automatic ticket creation issue,Ritz Kenneth Eledia,712020:678dbc9c-1242-4c3a-896b-d8e994cce29d,High,Archived,"Mar 12, 2026 16:39","Jan 20, 2026 08:22","Mar 07, 2026 18:07",The token in qradar@consoleconnect account has expired,Create a new token and updated the script accordingly,QRadar couldn't create Jira work items (by using the python script) and a HTTP Error 401 was returned
+Problem,MSS-4212,3098829,Henex Connection issue,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Feb 08, 2026 16:38","Jan 19, 2026 08:04","Feb 03, 2026 09:27",Application Profiles through the SSL Inspection.,"Added the address objects 193.242.254.(200,204,206) to PolicyID: 654",No connection to Henex services through custom java app
+Problem,MSS-4205,3095776,FortiOS and FortiSwitchManager Vulnerability Let Remote Attackers Execute Arbitrary Code,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Feb 08, 2026 16:38","Jan 14, 2026 09:55","Feb 03, 2026 09:32",Security Vulnerability on FortiGate devices to all sites.,Disable Fabric Connector on Interfaces,Vulnerability on Fabric
+Problem,MSS-4196,3092672,Azure portal is not reachable through ZScaler,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jan 25, 2026 16:37","Jan 08, 2026 07:18","Jan 20, 2026 13:36",No issue identified,No issue identified,Destinations not reachable through the zscaller
+Problem,MSS-4137,3089992,Conserve Mode due to the NodeJS,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Critical,Archived,"Jan 18, 2026 16:37","Dec 25, 2025 07:51","Jan 13, 2026 12:37",Schedule configured by the Vendor in order to collect Data,Restart Nodejs and disable scheduled reports,Conserve Mode
+Problem,MSS-4126,3089883,Users cannot connect to the SSL VPN w/o getting an error,Christos Katsamakas,637dc532f6c85b343c087fd1,Medium,Archived,"Jan 03, 2026 16:37","Dec 24, 2025 08:03","Dec 29, 2025 08:14",Conserve mode,Refer to MSS-4137,Users cannot connect to the SSLVPN
+Problem,MSS-4115,3089293,DialUp IPsec trusted hosts configuration,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Feb 10, 2026 16:38","Dec 22, 2025 15:28","Feb 05, 2026 12:03",No Issue identified,No Issue identified,Users from UK can not login to VPN
+Problem,MSS-4114,3089291,"Specific properties from  SYSMON_CREATE_PROCESS log, are missing after parsing",Panagiotis Galiotos,712020:b309a3a4-07e5-48e5-a785-a7cedd21c048,Medium,Waiting customer,"Mar 07, 2026 16:47","Dec 22, 2025 14:57",,Part of the payload is missing,,Missing fields after a SYSMON_CREATE_PROCESS log has been parsed
+Problem,MSS-3934,3083107,Αδυναμία RDP : VPN IPSEC -> hrklLocalNet,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Dec 04, 2025 07:49","Dec 03, 2025 10:38","Dec 04, 2025 07:48",,turned rdp over tcp only on computer,Αδυναμία RDP : VPN IPSEC -> hrklLocalNet
+Problem,MSS-3908,3081905,SMART TANKERS IPsec VPN SAML Configuration,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Dec 27, 2025 16:37","Dec 01, 2025 08:23",,,,IPSec connection is looping every five minutes
+Problem,MSS-3883,3081315,Signatures are outdated,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Dec 08, 2025 16:36","Nov 28, 2025 09:47","Dec 03, 2025 16:36",,,signatures are outdated
+Problem,MSS-3856,3080349,Packet loss on accessing to Google Meet,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Dec 04, 2025 07:56","Nov 26, 2025 07:31","Dec 04, 2025 07:55",delays at other network equipment,none,huge packet loss routing to Google Meet destination
+Problem,MSS-3848,3079915,IPsec with LDAP Users is causing VPN frequent disconnections,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Feb 04, 2026 16:38","Nov 25, 2025 10:47","Jan 30, 2026 11:24",NPU on Phase 1 and Keep Alive on Phase 2,For the LDAP User Groups only: Disabled NPU on Phase 1 and Keep Alive on Phase 2,IPSec connection is looping every five minutes
+Problem,MSS-3799,3077737,Adding new Azure group to policy breaks down VPN connection,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Jan 28, 2026 08:00","Nov 19, 2025 17:28","Jan 28, 2026 08:00",architectural design of fortios,"will be provided through MSS-3674
+Update to 7.4.10",adding an azure group to policy and the connection to ipsec vpn is not possible
+Problem,MSS-3792,3077175,Cannot send files/images through Viber,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Jan 26, 2026 11:36","Nov 18, 2025 12:43","Nov 24, 2025 12:50",Traffic denied by policies,New policy (645) with Destination *viber.com,cannot send attachments from Metamorfosi site to others using viber
+Problem,MSS-3782,3075524,FortiClient IKEv2 is not available to Android and IOS ports,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Nov 24, 2025 16:35","Nov 14, 2025 10:48","Nov 19, 2025 16:35",,,No IKEv2 option for the Android and IOS Forticlients
+Problem,MSS-3781,3075516,Conserve Mode due to the Nodejs process,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Nov 24, 2025 16:35","Nov 14, 2025 10:23","Nov 19, 2025 13:43","Detected System RAM high load average due to the Node process which is relating to info (Fabric) collecting scripts by the vendor. 
+Known prior 7.4.9 system bug. Vendor reported that found on device debug logs that the SSLVPN Service switched to conserve mode","Kill the node process immediately. fnsysctl killall node
+Update configuration in order to disable the security-rating-run-on-schedule temporary
+Applied Script to periodically restart by killing the Node service",The direct drawback The SSLVPN Clients could not connect due to Conserve mode situation
+Problem,MSS-3728,3071525,SMART TANKERS SSLVPN PROBLEM,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Nov 17, 2025 16:35","Nov 04, 2025 09:34","Nov 12, 2025 16:35",,,Disconnections to SSLVPN users after the upgrade.
+Problem,MSS-3720,3071489,Unable to access https://translation.lbbw.de/editor/instanttranslate,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Nov 04, 2025 08:37","Nov 04, 2025 08:14","Nov 04, 2025 08:37",,,No access to specific lbbw https destination
+Problem,MSS-3719,3071487,Unable to access https://translation.lbbw.de/editor/instanttranslate,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Nov 17, 2025 07:57","Nov 04, 2025 08:12","Nov 07, 2025 08:55",N/A,N/A,Users in Korea are unable to access https://translation.lbbw.de/editor/instanttranslate
+Problem,MSS-3707,3071021,Frequent disconnection internet based website,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Dec 10, 2025 07:33","Nov 03, 2025 06:50","Dec 10, 2025 07:33",,,"experiencing frequent RTO when using internet-based website/application. This has been occurring throughout the day. Initial investigation we observe that traffic initiating from our workstation goes to Hong Kong first, and then connect back to Singapore Zscaler. Please find the attached screenshot from zscaler website. "
+Problem,MSS-3679,3070114,A trading application(360t ) is experiencing frequent disconnection,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Jan 19, 2026 13:53","Oct 30, 2025 07:22","Nov 03, 2025 07:08",Ν/Α,Ν/Α, multiple users on the trading floor are experiencing intermittent disconnections when using the 360T and FXT applications
+Problem,MSS-3676,3069867,Έλεγχος επικοινωνίας με upd ports - michalakopoulou,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Nov 09, 2025 16:35","Oct 29, 2025 12:53","Nov 04, 2025 12:38","Not identified, cannot simulate it, it is appearing to specific STUN Application",No issue identified according the connections reported by the Customer and time of the event is not known. Requested by the customer to inform us when the issue re-appear with the specific timestamp.,Randomly connection issues to STUN
+Problem,MSS-3665,3069040,Αδυναμία πρόσβασης over VPN σε 192.168.1.10,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Nov 01, 2025 16:35","Oct 27, 2025 10:00","Oct 27, 2025 11:54","Resolved from the customer side.
+From our side we suspected that the user was not matching to PolicyID: 577 due to the User Group.",Resolved From the customer. Uknown,SAML User can not connect to 192.168.1.10 NAS
+Problem,MSS-3659,3068595,Issues with Primary FWs in Bornheim/Bonn,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Critical,Archived,"Nov 18, 2025 16:35","Oct 24, 2025 10:47","Nov 13, 2025 10:18",No issue identified,WAN connection restored from the gateway device,WAN connection dropped
+Problem,MSS-3646,3067647,traffic shaping policy and ASIC Processor Issue,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Apr 08, 2026 06:34","Oct 22, 2025 12:12","Apr 08, 2026 06:34",ASIC processor,Disable ASIC on the related policies,Connectivity issues by applying traffic policy for the internal users.
+Problem,MSS-3643,3067485,Cannot retrieve Crowdstrike detection logs,Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,Medium,Archived,"Nov 25, 2025 16:35","Oct 22, 2025 06:46","Nov 20, 2025 10:49",Known issue from Crowdstrike concerning Crowdstrike App v. 1.0.6,"Upgraded the app to 1.0.7
+Added ""EppDetectionSummaryEvent"" to the Event Types at the configuration menu of the Crowdstrike app.",No logs received from one of the Crowdstrike log sources (the one related with detections).
+Problem,MSS-3607,3063880,Packet loss Issue,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jan 17, 2026 16:37","Oct 13, 2025 09:00","Jan 12, 2026 12:09","Not related to the FGT Side.
+Customer will try to test with the FortiGate disconnected.
+Probably the issue is relating to HKT Equipment or a third party.",No info shared,Packet loss
+Problem,MSS-3593,3062388,Check LDAP configuration,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Oct 19, 2025 16:34","Oct 08, 2025 05:52","Oct 14, 2025 16:34",Forgotten SSLVPN service was listening to the internet without SSLVPN Portals enabled. The login requests were forwarding to the AD through the SSLVPNconfigured to use the customer LDAP for the SSLVPN User authentication.,"Disable the SSLVPN
+Add trusted hosts to the kenli user.","Failed LDAP Authentication Attempts from the FortiGate Internal IP to the LDAP Server.
+
+"
+Problem,MSS-3567,3061095,Internet Performance Issues,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Oct 18, 2025 16:35","Oct 02, 2025 09:22","Oct 13, 2025 16:33",,,Connection Performance Issues.
+Problem,MSS-3551,3060362,VPN connection issue,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jan 17, 2026 16:37","Sep 30, 2025 09:54","Jan 12, 2026 12:13",No Info Case escalated and investigated upon FortiNet CaseID: 10782957 and SecEng,No Info Available,SAML VPN Connection issues from FortiClient.
+Problem,MSS-3527,3059305,Issues accessing the whatsapp web,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Oct 07, 2025 16:33","Sep 26, 2025 07:23","Oct 02, 2025 09:25",Meta corporation web services were blocked.,Edited PolicyID: 69 by adding the Meta-Web and Other as destination targets.,No access to whatsapp web.
+Problem,MSS-3520,1981644,Packet loss,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Oct 13, 2025 09:00","Sep 25, 2025 05:57","Oct 01, 2025 12:20","Not related to the FGT Side
+Customer will try to test with the FortiGate disconnected.
+Probably the issue is relating to HKT Equipment.",N/A,Packet loss
+Problem,MSS-3508,1979500,SugarSSLVPN - SugarIPSECVPN,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 29, 2025 16:33","Sep 22, 2025 12:52","Sep 24, 2025 13:30",Connections from the SAML IPSec to the requested destinations were not route through the tunnel.,Added requested destination to the Volton_ipsec_all_nets.,No Connection from the SAML IPSec to the destinations of the PolicyID:590.
+Problem,MSS-3499,1977920,WAN connection is experiencing bandwidth issues,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 29, 2025 16:33","Sep 18, 2025 07:20","Sep 24, 2025 06:46",No issue identified,No issue identified,Upload Bandwidth has low Performance
+Problem,MSS-3490,1976832,MS Sharepoint Service is not available for the internal restricted users,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 22, 2025 16:33","Sep 16, 2025 10:22","Sep 17, 2025 12:34",Microsoft web sites were blocking for the Restricted Users.,Added PolicyID: 40,365 MSOffice Links are not accessible.
+Problem,MSS-3487,1976813,IPSec VPN : RDP -> hrklLocalNet,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 22, 2025 16:33","Sep 16, 2025 09:41","Sep 17, 2025 09:28",Static route for the SAML network was missing from the HRKL site.,Add a static route for the 10.100.100.0/24.,RDP is not operational from the SAML MTMR to RDP Hosts HRKL
+Problem,MSS-3484,1976337,MGMT Routing loop,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 29, 2025 16:33","Sep 15, 2025 14:07","Sep 24, 2025 12:56",FortiOS IPSec routing,"Configure with static IP the Virtual IPSec interface.
+Resolution is not applied as the issue is not critical and is not affect the operation.",MGMT Interface is appearing as hop to a traceroute through IPSec tunnel.
+Problem,MSS-3480,1976124,RE: [Updated] Malicious external IP 35.233.7.110 doing port scanning on multiple internal IPs | MSS-3131,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 20, 2025 16:33","Sep 15, 2025 07:43","Sep 15, 2025 08:08",Jira opened new Cases upon customer updates.,Closed Primary Case and informed through internal commend the responsible engineer.,Customer is receiving Jira Notifications for a Case that have been requested to close.
+Problem,MSS-3460,1973571,RE: [Updated] Malicious external IP 35.233.7.110 doing port scanning on multiple internal IPs | MSS-3131,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 15, 2025 16:33","Sep 10, 2025 06:56","Sep 10, 2025 09:06",Duplicate CaseID,"No apply, this operation was normal",Customer received a ticket close notification for a duplicate CaseID.
+Problem,MSS-3451,1973258,FortiPortal cannot sync the new configuration to the physical FortiGate,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 15, 2025 16:33","Sep 09, 2025 12:04","Sep 10, 2025 09:30",Unsynced Data from the FortiManager to FortiGate.,Sync Policy Package manually through the FortiManager.,Customer cannot push new configuration from the fortiportal to FortiGate.
+Problem,MSS-3450,1973242,Implicit Deny - DGSoft_Azure_ipsec,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 15, 2025 16:33","Sep 09, 2025 10:16","Sep 10, 2025 10:07","g.evangelopoulos@volton.gr user is not included to the Local LDAP Server and the Group specified to the PolicyID: 624
+The user was related to the VoltonAzure SSO and not the VoltonAzureIPSec allowed from the Policy.",Customer proceeded to assign the user to the correct User Group.,"PolicyID: 624 is not operational.
+Related traffic is not matching to this PolicyID and Drop through the Explicit Policy."
+Problem,MSS-3405,1970163,Viber Connection Issue,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 15, 2025 16:33","Sep 03, 2025 10:38","Sep 10, 2025 10:17",Blocking Viber CDN Service IPs and unknown Protocol.,Set unknown Protocols from Block to Inspect on Proxy Profile Settings,Viber is not accessible from the Internal Network.
+Problem,MSS-3379,1968175,Generic test if device functioning properly,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 08, 2025 16:32","Aug 28, 2025 08:18","Sep 03, 2025 09:24",N/A,N/A,N/A
+Problem,MSS-3377,1968142,Firewall Θεσσαλονίκης - High memory usage,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Sep 04, 2025 10:27","Aug 28, 2025 07:33","Sep 04, 2025 10:27",,"config system automation-action
+edit ""RestartIPSandNodeJS""
+set action-type cli-script
+set minimum-interval 5
+set script ""config global
+diag test app ipsmonitor 99
+diagnose nodejs process restart""
+set accprofile ""super_admin""
+next
+end
+config system automation-trigger
+edit ""Daily_at_3AM""
+set trigger-type scheduled
+set trigger-hour 3
+next
+end
+config system automation-stitch
+edit ""Restart processes""
+set trigger ""Daily_at_3AM""
+config actions
+edit 1
+set action ""RestartIPSandNodeJS""
+set required enable
+next
+end
+next
+end",
+Problem,MSS-3329,1964963,Unable to upload PDF Documents to google drive.,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Aug 25, 2025 16:31","Aug 20, 2025 09:36","Aug 20, 2025 12:06",Google updated the refereed google drive domains.,Created PolicyID: 90 in order to allow the google Cloud and Web Fortinet Categories (Dynamically updated) to pass without SSL Inspection.,Connection time out when upload PDF Documents to Google Drive.
+Problem,MSS-3233,1961137,MS Defender connection issue,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Oct 24, 2025 16:34","Aug 07, 2025 09:02","Oct 19, 2025 16:34","DNS was invalid
+Connection to Microsoft repository block",Updated the DNS servers of the Event Collector OS with new provided by the Customer,Log Source for MSDefender is not accessible
+Problem,MSS-3106,1957696,VPN tunnel urgent,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Aug 24, 2025 16:31","Jul 28, 2025 11:41","Aug 19, 2025 10:35",No Problem Identified,No Problem Identified,No Problem Identified
+Problem,MSS-3055,1956571,Unable to connect to Questnet.sg,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Aug 18, 2025 16:31","Jul 24, 2025 02:35","Aug 13, 2025 08:57","Refereed subdomains of .secure.experian.com found blocked.
+Issues from the web server side by accessing the page without www. subdomain.",Added exception for the *.secure.experian.com,No access to the Questnet.sg
+Problem,MSS-2985,1953159,Error: Installation to real device failed,Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,Medium,Archived,"Jul 24, 2025 07:41","Jul 14, 2025 15:03","Jul 18, 2025 13:56",Customer edited policy 596 used for IPsec SAML and added a group which belongs to SSL SAML application,,FortiPortal doesn't allow perform Installation and stays in pending notification [Modified]
+Problem,MSS-2886,685778,Re: Altice Dom - SNMP polling,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jul 15, 2025 20:25","Jul 02, 2025 10:10","Jul 09, 2025 12:51",Uknown,From Customer Side,SNMP Connectivity Issues
+Problem,MSS-2720,679532,TMS-DC04 server has stopped sending logs,Vasileios Kolias,712020:25e785f6-2c09-4c7f-ac9b-7df65b8091ad,Medium,Archived,"Jun 18, 2025 06:07","Jun 17, 2025 11:30","Jun 17, 2025 12:40",,,Error in Log Sources app for log source TMS-DC04.DC.Server
+Problem,MSS-2713,679112,Log sources stopped sending logs,Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,High,Archived,"Jul 31, 2025 06:38","Jun 16, 2025 11:30","Jul 31, 2025 06:38",,,Many log sources stopped at 14th of June
+Problem,MSS-2688,676762,VPN is not working,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jun 16, 2025 16:27","Jun 10, 2025 12:30","Jun 11, 2025 14:07",Etisalad Router .225 has enabled the DHCP Server,DHCP Server disabled by Etisalad site.,Uknown DHCP Server is sharing IPs already used by static nodes by causing IP Conflict issues
+Problem,MSS-2678,675674,Several sites are unreachable,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,High,Archived,"Jun 17, 2025 12:42","Jun 05, 2025 09:34","Jun 17, 2025 06:43",licenses expired,"1. Behavior when FortiGuard is unreachable -> Allow
+2. Renew licenses",blocked web pages
+Problem,MSS-2676,675262,No logs for cloud-dckr-03,Mansur Abubakar,712020:ffca0f55-a59b-4dc0-9f42-4ca2b52b79af,Medium,Archived,"Jun 09, 2025 16:27","Jun 04, 2025 13:13","Jun 04, 2025 14:23",,,No QRadar events are present from this logs source (last one was on 26 May 2025 10:17)
+Problem,MSS-2675,675149,Issue with the local Event Collector,Panagiotis Galiotos,712020:b309a3a4-07e5-48e5-a785-a7cedd21c048,Critical,Archived,"Jun 11, 2025 16:27","Jun 04, 2025 10:16","Jun 06, 2025 13:56","EC at customer premises in not able to SSH our EP, due to misconfiguration of the newly installed firewall.","The team properly configured the newly installed firewall, changed the VLAN number and the problem was solved.",No logs from ALL log sources of the customer
+Problem,MSS-2670,674597,Seoul internet issue INC000010762406,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Jul 16, 2025 06:13","Jun 03, 2025 09:23","Jun 04, 2025 06:43",changes to file policy made by customer(block js files),,websites do not load unexpectedly
+Problem,MSS-2667,674590,Re: Many Websites have been blocked suddenly for Shanghai branch || INC000010762864,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Jul 16, 2025 06:14","Jun 03, 2025 09:20",,changes to file policy made by customer(block js files),,websites do not load unexpectedly
+Problem,MSS-2664,674491,GR-MOA-PWORK-1.gr.ccg.local has stopped sending logs,Christos Katsamakas,637dc532f6c85b343c087fd1,Medium,Archived,"Jul 15, 2025 20:20","Jun 03, 2025 06:28","Jun 03, 2025 07:32",The server was decommissioned by customer ,,No events have been sent to QRadar from 26 May 2025
+Problem,MSS-2654,673452,"Log outage at EMCVCenter @ cloud-dckr-01, EMCVCenter @ cloud-dckr-02",Ritz Kenneth Eledia,712020:678dbc9c-1242-4c3a-896b-d8e994cce29d,Medium,Archived,"Jun 02, 2025 06:54","May 29, 2025 12:34","Jun 02, 2025 06:36",Decommissioned Log Source,,QRadar events have stopped.
+Problem,MSS-2627,671844,Logging outage at gr-moa-esx-19.Hyper,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,High,Archived,"May 26, 2025 07:35","May 24, 2025 11:29","May 26, 2025 07:24",This log source has been de-commissioned by customer,,QRadar has not detected events from the log source for some time
+Problem,MSS-2616,669367,Issues with opening QRadar Console,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jul 23, 2025 16:29","May 16, 2025 12:33","Jul 18, 2025 12:21",Uknown,From the Customer,Certain apps are not loading and a white page is displayed.
+Problem,MSS-2557,184148,Issues with Viber Application through the Firewall,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Nov 18, 2025 13:29","Apr 23, 2025 08:16","May 22, 2025 06:43",Blocking Viber CDN Service IPs,Set unknown Protocols from Block to Inspect on Proxy Profile Settings,"Can not send attachments through the Viber Instant Messenger.
+
+"
+Problem,MSS-2471,184111,Πρόσβαση : vx.scipher.io / Site : Metamorfosi,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Apr 20, 2025 17:17","Apr 09, 2025 08:56","Apr 15, 2025 07:20","URL blocked as Unrated category
+api.vx-prod.scipher.io IPs not resolved by the Web Filter.","Added separated policy for the api.vx-prod.scipher.io as Destination.
+",No Access to vx.scipher.com after login
+Problem,MSS-2458,184143,Excessive number of logs on gr-moa-vc-02,Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,Low,Archived,"May 13, 2025 16:23","Apr 08, 2025 06:43","May 08, 2025 15:26","Bug on vcenter GUI as per the following document.
+
+https://knowledge.broadcom.com/external/article/378091/excessive-warning-logs-from-apigwlog-bei.html
+",Customer mentioned that it restarted vsphere-ui,Excessive number of logs from vcenter server. There were around 1 million logs in 5 minutes.
+Problem,MSS-2421,184099,Security Incident on Event Name Device Stopped Emitting Events - 262180,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Apr 08, 2025 17:15","Apr 02, 2025 12:52","Apr 03, 2025 11:19",,,Microsoft ATA outage
+Problem,MSS-2392,184091,Failed to remote access Equinix HK1 equipment,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Apr 13, 2025 17:16","Mar 28, 2025 04:16","Apr 08, 2025 07:35",N/A,Issue resolved upon to the CaseID: INC000010532643,Connectivity issues
+Problem,MSS-2367,189434,Connectivity Issues through VPN to MS-SQL from user: d.kotsonis@volton.gr,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Apr 08, 2025 17:16","Mar 24, 2025 10:02","Apr 03, 2025 08:03","Issue from the Client Side
+
+",N/A,"d.kotsonis could not connect through SSLVPN to the MS-SQL Server
+
+"
+Problem,MSS-2332,184736,Anydesk connections are terminated unexpectedly ,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"May 16, 2025 09:07","Mar 18, 2025 08:29","May 16, 2025 09:07",,,"- AnyDesk connections are terminated unexpectedly
+- Lagging"
+Problem,MSS-2230,187116,Malware detection with no Notification,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Mar 18, 2025 17:11","Mar 02, 2025 16:39","Mar 13, 2025 08:36","Old Offenses kept open by collecting the new security events and missing the notifications including to the new offense creation process.
+
+","Fixed the process
+
+","No Notifications for the new security Events
+
+"
+Problem,MSS-2181,189487,Part of critical sources are not sending logs,Divine Wantoh,712020:77948393-15ff-4a78-b4c2-bb894362aedf,Medium,Archived,"Oct 04, 2025 16:33","Feb 21, 2025 11:31","Sep 29, 2025 16:33",Ν/Α,Restart Wincollect,"Certain windows log sources appear with an error in QRadar
+"
+Problem,MSS-2173,184637,Web Filter Categories,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Mar 04, 2025 17:10","Feb 20, 2025 14:18","Feb 27, 2025 10:50","Categories were not assigned correctly upon to the upgrade.
+","Whitelisted Social Media and Streaming categories and the IP requested.
+Migrated Categories options from the 5.2 to 7.2
+Customer configure the proxy profile to force the FTP through TLS.
+
+","Certificate issues during access to Youtube site
+No access to FTP destinations without forcing TLS connection
+
+"
+Problem,MSS-2159,184035,Youtube Certificate Issue,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Feb 25, 2025 17:08","Feb 19, 2025 10:53","Feb 20, 2025 14:54","Categories were not assigned correctly upon to the upgrade.
+","Whitelisted Social Media and Streaming categories and the IP requested.
+
+","Certificate issues during access to Youtube site
+
+
+"
+Problem,MSS-2158,187099,Security Alert - 4698 - Uknown scheduled task was created,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Feb 24, 2025 17:08","Feb 19, 2025 09:37","Feb 19, 2025 10:39","System sending duplicate alerts to real events by omitting the schedule task value to the second alert message.
+
+",Added N/A value to the related reference set.,"Customer receive alerts for creation of unknown scheduled tasks.
+"
+Problem,MSS-2150,184032,Lan1 Interface Speed,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Feb 24, 2025 17:08","Feb 18, 2025 08:38","Feb 19, 2025 10:51","Media Interface Speed On ISP Cisco Side
+
+","We set the FortiGate speed to auto and requested from customer to switch the Cisco Media Speed to 1000mbs Full Duplex.
+","Performance issues on the 200mbs leased line.
+
+"
+Problem,MSS-2133,187093,Security Alert - 4697 - Uknown service was installed in the system,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Feb 24, 2025 17:08","Feb 17, 2025 06:36","Feb 19, 2025 10:33","System sending duplicate alerts to real events by omitting the service value to the second alert message.
+
+","Added N/A value to the related reference set.
+","Customer receive alerts for creation of unknown services.
+
+"
+Problem,MSS-2112,187087,New ISSUE With CEO Workstation,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Mar 23, 2025 17:12","Feb 13, 2025 14:03","Mar 18, 2025 12:18",No Issue identified,"Resolved from the Customer side by whitelisting the whatsapp application for all users.
+",No Access to Internet Websites and services
+Problem,MSS-2058,184016,VPN users cannot reach some internal servers,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Apr 29, 2025 17:18","Feb 06, 2025 17:27","Apr 24, 2025 12:24",The 10.31.2.2,N/A,"No receive packets from the 10.31.2.2 GateWay
+
+"
+Problem,MSS-2056,184599,Docker.io issue,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Mar 04, 2025 15:59","Feb 06, 2025 12:25","Feb 11, 2025 14:39",,,"A user (10.230.152.101) tries to get docker hub containers but get the following error: 
+
+Get ""https://registry-1.docker.io/v2/"": net/http: request canceled while waiting for connection (Client.Timeout exceeded while awaiting headers)"
+Problem,MSS-1999,187209,No logs from Web proxies (Baraccuda),Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,High,Archived,"Aug 11, 2025 16:31","Jan 29, 2025 15:05","Aug 06, 2025 09:44",,,No logs in QRadar since 27 Jan 2025 8:15am local time.
+Problem,MSS-1994,189335,Performance Issues for Talent LMS,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Apr 07, 2025 17:15","Jan 29, 2025 11:33","Apr 02, 2025 11:27",The Destination Service,"Not Confirmed, as last step we configured the requested Users to pass from PolicyID: 501.
+
+","Bad Performance to specific website (3.217.205.239 34.236.22.110)
+"
+Problem,MSS-1951,183995,CWE-288 affecting Zhongshan,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jul 15, 2025 20:27","Jan 23, 2025 07:48","Mar 05, 2025 11:20",FortiOS Vulnerable Version,Upgrade FortiGate to 7.2.10,N/A
+Problem,MSS-1940,184570,Client Issues,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Feb 11, 2025 07:36","Jan 21, 2025 08:45","Feb 11, 2025 07:36",,,"Log off from the client does not require password.
+Sign off from the client does not require password.
+Network Type – When connected to LAN, ZCC is still detecting our network as Off-Trusted Network"
+Problem,MSS-1908,184564,Microsoft Azure (Entra) Risky Sign in,Christos Katsamakas,637dc532f6c85b343c087fd1,Medium,Archived,"Jan 16, 2025 09:38","Jan 14, 2025 13:01","Jan 16, 2025 09:32",,,Customer didn't receive a ticket for risky activity.
+Problem,MSS-1889,189306,Internet Connection Issues,Christos Katsamakas,637dc532f6c85b343c087fd1,Medium,Archived,"Jul 15, 2025 20:26","Jan 10, 2025 12:03","Jan 17, 2025 08:54",,,"IPS is blocking web pages
+"
+Problem,MSS-1876,187034,Issues accessing SQL Services from user d.kotsonis to 10.1.0.2 and 10.1.0.13,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Feb 03, 2025 17:05","Jan 08, 2025 09:53","Jan 29, 2025 10:02",,,Connection Time out
+Problem,MSS-1868,189302,FW: Security Alert - 4697 - A service was installed in the system,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jan 12, 2025 17:00","Jan 07, 2025 06:36","Jan 07, 2025 08:32",Missing entry from the Reference Sets,"Whitelisted also the csagent.sys file through the Reference Sets: Installed Services 4697
+","Customer received Alert for a Crowdstrike sensor installation already whitelisted.
+"
+Problem,MSS-1865,187029,Interface status changed,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jul 15, 2025 20:29","Jan 03, 2025 13:23","Jan 08, 2025 11:39","Unidentified, probably a cable reconnection or a reset interface from the other side",Rectified automatically be the Link Monitor Process,"Link Monitor reported a single interface media change.
+"
+Problem,MSS-1853,187203,Uknown Log Sources Detected by The Qradar,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jun 24, 2025 16:27","Dec 23, 2024 11:13","Jun 19, 2025 08:29",,,Log Sources cannot identified by QRadar
+Problem,MSS-1840,184549,SSLVPN User d.kotsonis cannot connect to 10.1.0.2,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Feb 03, 2025 17:05","Dec 20, 2024 08:55","Jan 29, 2025 10:02",,,"User d.kotsonis cannot connect to 10.1.0.2
+"
+Problem,MSS-1806,189287,SSLVPN User d.kotsonis cannot connect to 10.1.0.2,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Dec 20, 2024 08:55","Dec 13, 2024 10:53","Dec 18, 2024 10:55",,,"User d.kotsonis cannot connect to 10.1.0.2
+"
+Problem,MSS-1789,184537,Internal WiFI Devices expriencing Certificate error when accessing public destinations,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jan 13, 2025 17:00","Dec 11, 2024 10:21","Jan 08, 2025 11:28",,,"Certificate errors when accessing Internet.
+
+"
+Problem,MSS-1782,184535,No Access to 10.1.0.6 through SSLVPN,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Dec 16, 2024 16:55","Dec 10, 2024 13:19",,"Source Address of PolicyID: 494
+",Set as Source Address the SSLVPN Range,"No Access to host 10.1.0.6 through SSLVPN
+
+"
+Problem,MSS-1770,183949,SSLVPN DNS Settings for FSSO Users,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jan 13, 2025 17:00","Dec 09, 2024 13:41","Jan 08, 2025 11:47", Users were not matched to the related LDAP Group,Suggested the Customer to review DC Users configuration and confirm that the LDAP users were added to the related LDAP Group,"SSLVPN is not force DNS Servers with the appropriate priority.
+"
+Problem,MSS-1728,189274,Firewall - Troubleshooting,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Dec 07, 2024 16:53","Nov 29, 2024 11:50","Dec 02, 2024 11:24",No Issue Identified,No Issue Identified,Internet Connectivity Issues from Source
+Problem,MSS-1720,183936,Undefined Service Alert,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Dec 08, 2024 16:54","Nov 29, 2024 06:46","Dec 03, 2024 09:15",Not detected,"Issue not repeated
+","One Alert with TaskName Value Blank
+"
+Problem,MSS-1708,183934,PDF file cannot be downloaded,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Dec 17, 2024 12:50","Nov 28, 2024 13:10","Dec 09, 2024 08:10",Acrobat Reader's security plugin should download a file from the cloud. Zscaler blocked that traffic because it couldn't identify the file type and was presented as unknown. ,"Toggle switch Unscannable File to on at File policy ""allow-list""",Acrobat reader cannot open a PDF file.
+Problem,MSS-1706,183933,Denied Access Website https://www.lartigiano.gr/ from the sources 192.168.1.42 and 192.168.1.43,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Dec 04, 2024 16:52","Nov 28, 2024 12:14","Nov 29, 2024 12:53",SSL Inspection,Added subjected domain to ssl exemption list,No access by time out error to specific URL Paths
+Problem,MSS-1705,184516,site unreachable,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Dec 02, 2024 07:52","Nov 28, 2024 12:08","Nov 29, 2024 12:57",As per Noted to the link CaseID,As per Noted to the link CaseID,As per Noted to the link CaseID
+Problem,MSS-1702,186984,Not receiving logs from 10.1.0.40,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Dec 15, 2024 16:55","Nov 28, 2024 11:12","Dec 10, 2024 13:02",Configuration of syslog.conf,"replaced the double at with a single at on the syslog qradar configuration line
+",No Events from the danaos device
+Problem,MSS-1632,183920,Outage of Internet Connection Through the firewall,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Dec 03, 2024 16:52","Nov 21, 2024 10:18","Nov 28, 2024 11:50",ISP Side issue,N/A,Full Internet Outage
+Problem,MSS-1621,183914,Check VPN Access VPN 192.168.1.16 (port 5432) ,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Dec 15, 2024 16:55","Nov 20, 2024 08:13","Dec 10, 2024 13:52",,,"User i.katsantonis unable to access 192.168.1.16 through the SSLVPN.
+"
+Problem,MSS-1557,189243,crmsa.gr:2083 not accessible,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Nov 23, 2024 16:50","Nov 08, 2024 09:47","Nov 18, 2024 11:24","Issue was related to Customer or 3rd Party side.
+",,
+Problem,MSS-1551,189241,Daily Conserve Mode,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Nov 23, 2024 16:50","Nov 07, 2024 16:51","Nov 18, 2024 11:34","Process /bin/csfd reported along with HTTP and the SSLVPN that was overloaded caused by a Bruteforce operation 
+IPSEngine found also using lot of RAM.
+","Enable trusted hosts by deleting user admin.
+Restarted processes /bin/csfd and IPSEngine
+fnsysctl killall csfd
+fnsysctl killall httpd
+fnsysctl killall ipsengine","Customer received notification message according the Conserve switching.
+No malfunctions to production reported"
+Problem,MSS-1509,186937,Conserve mode/ Service disruption,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,High,Archived,"Nov 11, 2024 07:20","Oct 30, 2024 11:36","Nov 11, 2024 07:20",,"config global
+config system global
+set security-rating-result-submission disable
+set security-rating-run-on-schedule disable
+end
+config sys global
+set internet-service-database on-demand
+end
+execute update-ffdb-on-demand
+config system session-ttl
+set default 300
+config system dns
+set dns-cache-limit 600 <--- The default value is 5000.
+end
+config system global
+set miglogd-children 1
+set sslvpn-max-worker-count 1
+set wad-worker-count 1
+end
+config ips global
+set engine-count 2
+set cp-accel-mode none
+set exclude-signatures none
+config firewall profile-protocol-options
+edit prxPolicy
+config http
+set over size-limit 5
+end",
+Problem,MSS-1502,189227,Fortigate syslog messages contain multiple logs,Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,Medium,Archived,"Feb 18, 2025 17:07","Oct 29, 2024 13:04","Feb 13, 2025 06:37",Fortigates use the RFC6578 standard for syslog. That standard uses octet-counted framing which is not supported by QRadar.,Fortigates must send logs by using UDP protocol.,The payload of the QRadar's event includes more than one Fortigate logs
+Problem,MSS-1421,186915,Issue with logs on 10.240.3.70,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Oct 29, 2024 10:56","Oct 25, 2024 10:21","Oct 29, 2024 10:56",,,Log source in Error status in the Log Source Management
+Problem,MSS-1420,183875,User's are not able to run custom scans,Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,Medium,Archived,"Feb 16, 2025 17:06","Oct 25, 2024 10:08",,,,No icon exists in task tray in order a user to start a scan on the local system
+Problem,MSS-1418,183600,Access Forbidden Error from crm.bss.cellmobile.gr,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Nov 01, 2024 09:38","Oct 25, 2024 08:22","Nov 01, 2024 09:38","Unknown
+Comments
+Destination side use a firewall.
+",Resolved from the other side.,No incoming data on communication with the subject.
+Problem,MSS-1290,184146,https://negotiation.barrynalebuff.com - This site can't be reached,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"May 16, 2025 09:09","Oct 09, 2024 13:06",,,,"User receives an error message as ""This site can""t be reached"
+Problem,MSS-1145,183544,Log events error,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Oct 02, 2024 16:38","Sep 27, 2024 06:54","Sep 27, 2024 17:56",staled queue service,"From EC Side:
+rm -rf /store/persistent_queue/*
+systemctl stop hostcontext
+systemctl start hostcontext
+systemctl stop ecs-ec-ingress
+systemctl start ecs-ec-ingress","Unavailable Log Sources, No Logging Events"
+Problem,MSS-877,184306,Users are requested to re-authencticate,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 11, 2024 16:34","Aug 23, 2024 08:08","Sep 06, 2024 08:52",,,Proxy asks users to re-authenticate. An authentication windows is displayed.
+Problem,MSS-707,182743,Web Proxy 02 Found Offline,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jul 25, 2024 07:20","Jul 24, 2024 07:20","Jul 25, 2024 07:04",,,Error on tunneling web session through proxy
+Problem,MSS-705,184268,Slow connection between firewalls,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Sep 24, 2024 12:38","Jul 23, 2024 12:13","Sep 24, 2024 12:38",,,Slow connection between the FGT and the Unisystem's firewall
+Problem,MSS-702,183440,The negotiation.barrynalebuff.com is not reachable due to ERR_TUNNEL_CONNECTION_FAILED,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Aug 21, 2024 10:43","Jul 23, 2024 08:41","Aug 21, 2024 10:43",,,Error on tunneling web session through proxy
+Problem,MSS-672,184264,Users on subnet 209.0 do not have internet,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Jul 17, 2024 07:19","Jul 15, 2024 07:52","Jul 17, 2024 07:18","Time difference between SMA, WSA and AD
+",fix time skew on SMA(Wrong in general) and WSA(From NTP to Manual),"users not on authcache list
+error_connection_refused on users' browsers"
+Problem,MSS-662,183424,Issue with LDAP group on PolicyID: 245,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Sep 11, 2024 16:34","Jul 11, 2024 11:33","Sep 06, 2024 08:48",,,Internet Access Issue
+Problem,MSS-635,182727,"Receiving emails of ""Failure Audit: An account failed to log on""",Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,Medium,Archived,"Jul 10, 2024 16:23","Jul 05, 2024 07:21","Jul 05, 2024 07:52",Systemic accounts generated false positives,"In rule >
+Multiple Login Failures for Single Username from Different Remote Source IPs
+added the test >
+and NOT when the event username matches the following HealthMailbox.*","Customer is receiving emails for the event ""Failure Audit: An account failed to log on"" even if users are administrators"
+Problem,MSS-630,184252,Proxy requires username/password in short intervals,Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,Medium,Archived,"Jul 31, 2024 12:14","Jul 04, 2024 11:53","Jul 31, 2024 12:12",One of the proxies has the wrong time.,Configured NTP for proxy2,Proxy request authentications details after some time even if customer has already provide them
+Problem,MSS-588,183410,Cannot Access port 925 through SSLVPN to 192.168.10.249,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jul 01, 2024 12:01","Jun 28, 2024 12:25","Jul 01, 2024 12:01",Policy Configuration,Set the correct policy objects,Now connection from SBCMgmt to clients
+Problem,MSS-577,182710,Low download speed observed,Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,Medium,Archived,"Nov 24, 2024 16:50","Jun 22, 2024 15:31","Jun 22, 2024 15:31",,,Download speed is lower than if proxy is bypassed. 
+Problem,MSS-499,183378,Crowdstrike events not available in the platform,Christos Katsamakas,637dc532f6c85b343c087fd1,Medium,Archived,"Jun 05, 2024 10:49","May 28, 2024 13:12","May 31, 2024 10:17","The setting ""Collector IP"" in the QRadar Crowdstrike Falcon Endpoint Configuration was unset. ","The setting ""Collector IP"" in the QRadar Crowdstrike Falcon Endpoint Configuration was set to 172.25.253.5",No events from Crowdstrike log sources. Last event received on 4 May 2024 for CrowdStrike Detection and CrowdStrike Audit log sources. 
+Problem,MSS-488,183376,PROXY ISSUE,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Jul 10, 2024 12:34","May 22, 2024 12:22","Jul 10, 2024 12:32",DLP servers were off and the policy was not disabled,"- Created a policy to bypass checks for certain URL that had to do with saml and authentication
+- Disabled DLP checks and relevant config","Sites with authentication that used SAML or single signon were not able to be accessed. 
+GAEWAY_ERROR 504"
+Problem,MSS-477,184229,No Events from TMS Log Sources,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"May 31, 2024 08:39","May 17, 2024 08:08","May 25, 2024 09:42",,,No Event Logs
+Problem,MSS-466,184228,GATEWAY_TIMEOUT error received from the proxy,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Jul 16, 2024 06:26","May 14, 2024 06:31","Jun 03, 2024 09:45",SAML authentication changed some of its functions,"Policy 
+Decryption passthrough
+Access allow",GATEWAY_TIMEOUT Error
+Problem,MSS-453,184222,No connectivity for WiFi users,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,High,Archived,"May 10, 2024 10:45","Apr 29, 2024 07:39","May 05, 2024 09:40",,,All web pages that WiFi users try to visit time out. 
+Problem,MSS-425,184216,Putty throws an error when connecting to 192.168.10.250,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Low,Archived,"Apr 29, 2024 06:43","Apr 15, 2024 11:45","Apr 29, 2024 06:43",sw,change tcp keepalive on putty,
+Problem,MSS-398,184208,SIN IPsec tunnel is flapping,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Apr 25, 2024 11:32","Apr 03, 2024 09:45","Apr 25, 2024 11:31",disconections on network,N/A,
+Problem,MSS-387,183618,"""Time is out of sync"" error in the UI of the Fortigate",Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,Medium,Archived,"Apr 30, 2024 09:47","Mar 28, 2024 12:45","Apr 30, 2024 09:40",Fortigate has time set up manually and after sometime it looses a few minutes,Configure the Fortigate with an NTP,Error message in the GUI
+Problem,MSS-307,183608,Trellix HX Inaccesible,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jun 13, 2024 10:57","Feb 29, 2024 10:17","Jun 13, 2024 10:57",Licenses have been expired,Renew licenses,No access to GUI
+Problem,MSS-207,183312,No Events from TMS Log Sources,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"May 17, 2024 08:08","Feb 12, 2024 11:38","May 01, 2024 09:40",,,No Event Logs
+Problem,MSS-170,184164,Email to evangelos.kavvalos@cepal.gr has not been received,Christos Katsamakas,637dc532f6c85b343c087fd1,High,Archived,"Feb 14, 2024 10:34","Feb 07, 2024 07:13","Feb 09, 2024 12:31",Custom rules quarantined the email,Email released from quarantine,Email was not received by the intended user
+Problem,MSS-158,182564,Email to antonios.kannas@cepal.gr has not been received,Konstantinos Gianniris,70121:71fae6e2-d416-48a4-8647-dae16e33e3e0,High,Archived,"Feb 14, 2024 10:34","Feb 06, 2024 06:57","Feb 09, 2024 11:08",Custom rules quarantined the email,Email released from quarantine,Email was not received by the intended user
+Problem,MSS-151,182561,FW delay loading pages,Christos Katsamakas,637dc532f6c85b343c087fd1,Medium,Archived,"Sep 17, 2024 16:36","Jan 31, 2024 11:15","Sep 12, 2024 06:46",DNS servers that used from client are the cause of the delay.,,Web pages load with a major delay.
+Problem,MSS-146,182559,Extreme delay (at 40%) when a user connects to SSL VPN with FortiClient,Spyridon Chiotis,5ab3b7b4fff1d42a5df17bc7,Medium,Archived,"Jul 14, 2024 16:25","Jan 29, 2024 11:40","May 21, 2024 06:23",,,"SSLVPN Client stalled at forty per cent for unusual period of time and it is connecting with success.
+"
+Problem,MSS-88,182598,Checkpoint syslog messages are splitted in multiple packets,Konstantinos Asimakopoulos,637dc4cb9960988ef6bdbfe3,Medium,Archived,"Feb 13, 2024 10:35","Jan 23, 2024 14:00","Feb 06, 2024 13:01",we received logs that were unparsed due to the fact that the protocol was syslog,we changed the syslog to leef,syslog packets were split and could not be recognized

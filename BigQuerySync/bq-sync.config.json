@@ -1,0 +1,13 @@
+{
+  "projects": [
+    "pccw-internal-virt-agent-uat"
+  ],
+  "datasets": [],
+  "outputDir": "BigQuery",
+  "location": "",
+  "include": {
+    "views": true,
+    "materializedViews": true,
+    "routines": true
+  }
+}
