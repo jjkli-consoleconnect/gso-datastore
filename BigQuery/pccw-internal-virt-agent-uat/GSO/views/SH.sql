@@ -28,6 +28,7 @@ SELECT
   twk.Created AS Ticket_Created,
   twk.Updated AS Ticket_Updated,
   twk.Resolved AS Ticket_Resolved,
+  twk.Labels,
   twk.linkedkeys,
   twk.AppSupEscalation,
   twk.Resolution,

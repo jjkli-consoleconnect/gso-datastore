@@ -152,11 +152,18 @@ def ensure_ticket_columns(client, dataset_id, table_id):
     table_ref = f"{client.project}.{dataset_id}.{table_id}"
     try:
         table = client.get_table(table_ref)
-        existing_field_types = {field.name: field.field_type.upper() for field in table.schema}
-        existing_columns = set(existing_field_types.keys())
+        existing_fields = {
+            field.name: {
+                'type': field.field_type.upper(),
+                'mode': (field.mode or 'NULLABLE').upper(),
+            }
+            for field in table.schema
+        }
     except Exception:
-        existing_field_types = {}
+        existing_fields = {}
         existing_columns = set()
+
+    existing_columns = set(existing_fields.keys())
 
     client.query(
         f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS AssociatedTeam STRING"
@@ -185,16 +192,43 @@ def ensure_ticket_columns(client, dataset_id, table_id):
     client.query(
         f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Description STRING"
     ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Labels STRING"
-    ).result()
 
-    attachment_type = existing_field_types.get('Attachment')
-    if attachment_type is None:
+    labels_field = existing_fields.get('Labels')
+    if labels_field is None:
+        client.query(
+            f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Labels ARRAY<STRING>"
+        ).result()
+    elif labels_field['type'] == 'STRING' and labels_field['mode'] != 'REPEATED':
+        client.query(
+            f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Labels_array ARRAY<STRING>"
+        ).result()
+        client.query(
+            f"""
+            UPDATE `{dataset_id}.{table_id}`
+            SET Labels_array = COALESCE(
+                Labels_array,
+                ARRAY(
+                    SELECT TRIM(label)
+                    FROM UNNEST(SPLIT(Labels, ',')) AS label
+                    WHERE TRIM(label) != ''
+                )
+            )
+            WHERE Labels IS NOT NULL
+            """
+        ).result()
+        client.query(
+            f"ALTER TABLE `{dataset_id}.{table_id}` DROP COLUMN Labels"
+        ).result()
+        client.query(
+            f"ALTER TABLE `{dataset_id}.{table_id}` RENAME COLUMN Labels_array TO Labels"
+        ).result()
+
+    attachment_field = existing_fields.get('Attachment')
+    if attachment_field is None:
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Attachment JSON"
         ).result()
-    elif attachment_type == 'STRING':
+    elif attachment_field['type'] == 'STRING' and attachment_field['mode'] != 'REPEATED':
         # One-time in-place migration from STRING to JSON while preserving non-JSON raw payloads.
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Attachment_json JSON"
@@ -453,7 +487,7 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Description", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("Labels", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("Labels", "STRING", mode="REPEATED"),
             bigquery.SchemaField("Attachment", "JSON", mode="NULLABLE"),
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
@@ -609,6 +643,8 @@ def fetch_and_sync_jira_data():
                 ]).strip(' |')
                 remedy_numbers = extract_incident_numbers(remedy_source)
 
+                labels = [label.strip() for label in fields.get('labels', []) if str(label).strip()]
+
                 row = {
                     "T": issue_type,
                     "Project": fields.get('project', {}).get('name'),
@@ -624,7 +660,6 @@ def fetch_and_sync_jira_data():
                     "RemedyTicketNumber": ', '.join(remedy_numbers) if remedy_numbers else None,
                     "Links": extract_issue_links(fields.get('issuelinks')),
                     "Description": extract_adf_text(fields.get('description')),
-                    "Labels": ', '.join(fields.get('labels', [])) if fields.get('labels') else None,
                     "Attachment": json.dumps(fields.get('attachment')) if fields.get('attachment') else None,
                     SR_REF_BQ_NAME: get_field_value(fields.get(SR_REF_JIRA_ID)),
                     "Priority": get_field_value(fields.get('priority')),
@@ -684,6 +719,8 @@ def fetch_and_sync_jira_data():
                     "ITHD_ISMSIncidentResolution_Cycles": sla_metrics['ITHD_ISMSIncidentResolution_Cycles'],
                     "ITHD_Resolution": get_field_value(fields.get('customfield_13448')),
                 }
+                if labels:
+                    row["Labels"] = labels
                 return row
             except Exception as e:
                 logging.warning(f"Could not fetch full details for issue {issue_key}: {e}")

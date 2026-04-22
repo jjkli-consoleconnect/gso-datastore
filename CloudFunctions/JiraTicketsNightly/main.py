@@ -93,11 +93,18 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
     table_ref = f"{client.project}.{dataset_id}.{table_id}"
     try:
         table = client.get_table(table_ref)
-        existing_field_types = {field.name: field.field_type.upper() for field in table.schema}
-        existing_columns = set(existing_field_types.keys())
+        existing_fields = {
+            field.name: {
+                'type': field.field_type.upper(),
+                'mode': (field.mode or 'NULLABLE').upper(),
+            }
+            for field in table.schema
+        }
     except Exception:
-        existing_field_types = {}
+        existing_fields = {}
         existing_columns = set()
+
+    existing_columns = set(existing_fields.keys())
 
     client.query(
         f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IsDeleted BOOL"
@@ -132,16 +139,43 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
     client.query(
         f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Description STRING"
     ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Labels STRING"
-    ).result()
 
-    attachment_type = existing_field_types.get('Attachment')
-    if attachment_type is None:
+    labels_field = existing_fields.get('Labels')
+    if labels_field is None:
+        client.query(
+            f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Labels ARRAY<STRING>"
+        ).result()
+    elif labels_field['type'] == 'STRING' and labels_field['mode'] != 'REPEATED':
+        client.query(
+            f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Labels_array ARRAY<STRING>"
+        ).result()
+        client.query(
+            f"""
+            UPDATE `{dataset_id}.{table_id}`
+            SET Labels_array = COALESCE(
+                Labels_array,
+                ARRAY(
+                    SELECT TRIM(label)
+                    FROM UNNEST(SPLIT(Labels, ',')) AS label
+                    WHERE TRIM(label) != ''
+                )
+            )
+            WHERE Labels IS NOT NULL
+            """
+        ).result()
+        client.query(
+            f"ALTER TABLE `{dataset_id}.{table_id}` DROP COLUMN Labels"
+        ).result()
+        client.query(
+            f"ALTER TABLE `{dataset_id}.{table_id}` RENAME COLUMN Labels_array TO Labels"
+        ).result()
+
+    attachment_field = existing_fields.get('Attachment')
+    if attachment_field is None:
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Attachment JSON"
         ).result()
-    elif attachment_type == 'STRING':
+    elif attachment_field['type'] == 'STRING' and attachment_field['mode'] != 'REPEATED':
         # One-time in-place migration from STRING to JSON while preserving non-JSON raw payloads.
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Attachment_json JSON"
@@ -426,7 +460,9 @@ def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name):
     if not key or not str(key).strip():
         return None
     fields = issue.get('fields', {})
-    return {
+    labels = [label.strip() for label in fields.get('labels', []) if str(label).strip()]
+
+    row = {
         "T": fields.get('issuetype', {}).get('name'),
         "Project": fields.get('project', {}).get('name'),
         "Key": key,
@@ -440,7 +476,6 @@ def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name):
         "Component": ', '.join([get_field_value(component) for component in fields.get('components', [])]) if fields.get('components') else None,
         "Links": extract_issue_links(fields.get('issuelinks')),
         "Description": extract_adf_text(fields.get('description')),
-        "Labels": ', '.join(fields.get('labels', [])) if fields.get('labels') else None,
         "Attachment": json.dumps(fields.get('attachment')) if fields.get('attachment') else None,
         sr_ref_bq_name: get_field_value(fields.get(sr_ref_jira_id)),
         "AssociatedTeam": get_field_value(fields.get('customfield_11134')),
@@ -455,6 +490,11 @@ def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name):
         "Resolution": get_field_value(fields.get('resolution')),
         "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
     }
+
+    if labels:
+        row["Labels"] = labels
+
+    return row
 
 
 def fetch_and_sync_jira_tickets_nightly():
@@ -522,7 +562,7 @@ def fetch_and_sync_jira_tickets_nightly():
             bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Description", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("Labels", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("Labels", "STRING", mode="REPEATED"),
             bigquery.SchemaField("Attachment", "JSON", mode="NULLABLE"),
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField("AssociatedTeam", "STRING", mode="NULLABLE"),

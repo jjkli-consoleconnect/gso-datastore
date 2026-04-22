@@ -213,7 +213,16 @@ def convert_timestamp(timestamp_str):
 def create_or_replace_temp_table(client, dataset_id, table_id, schema):
     """Create or replace a temporary BigQuery table."""
     try:
-        cols = ', '.join(f'`{f.name}` {f.field_type}' for f in schema)
+        def field_sql(field):
+            field_type = field.field_type
+            if (field.mode or 'NULLABLE').upper() == 'REPEATED':
+                field_type = f'ARRAY<{field_type}>'
+            sql = f'`{field.name}` {field_type}'
+            if (field.mode or 'NULLABLE').upper() == 'REQUIRED':
+                sql += ' NOT NULL'
+            return sql
+
+        cols = ', '.join(field_sql(f) for f in schema)
         query = f"CREATE OR REPLACE TABLE `{client.project}.{dataset_id}.{table_id}` ({cols})"
         client.query(query).result()
         logging.info(f"Temporary table '{dataset_id}.{table_id}' created/replaced")
