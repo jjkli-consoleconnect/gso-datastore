@@ -1,4 +1,4 @@
-yes aWITH vvt_tickets AS (
+WITH vvt_tickets AS (
   SELECT
     t.T AS IssueType,
     t.Project,
@@ -372,3 +372,4 @@ LEFT JOIN comments_agg c
 LEFT JOIN changelog_agg ch
   ON ch.Issue_Key = v.Ticket_Key
 ORDER BY v.Created DESC
+

@@ -1,7 +1,3 @@
--- MSS Jira combined snapshot optimized for Looker Studio and ticket-centric analytics.
--- Grain: 1 row per ticket (no fan-out). Comments and Changelog are pre-aggregated 1:1 per ticket
--- and provided as: (a) convenient summary columns (counts, latest) and (b) full arrays of structs.
-
 WITH t AS (
   SELECT
     T,
@@ -24,6 +20,7 @@ WITH t AS (
     RootCause,
     ResolutionSecurity,
     Symptoms,
+    ATTCK,
     Description,
     TimeToFirstResponse_Elapsed,
     TimeToFirstResponse_Goal,
@@ -249,6 +246,7 @@ SELECT
   t.ResolutionSecurity,
   t.Symptoms,
   t.Description,
+  t.ATTCK,
   ai.AIRootCause,
   ai.AIResolutionSecurity,
   ai.AISymptoms,
