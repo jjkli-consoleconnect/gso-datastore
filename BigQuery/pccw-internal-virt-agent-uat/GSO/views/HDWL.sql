@@ -79,7 +79,12 @@ SELECT
   
   -- Analytics
   COUNT(w.WorkLog_ID) OVER (PARTITION BY h.Incident_Number) as WorkLog_Count,
-  ROW_NUMBER() OVER (PARTITION BY h.Incident_Number ORDER BY w.WorkLog_Submit_Date) as WorkLog_Sequence
+  ROW_NUMBER() OVER (PARTITION BY h.Incident_Number ORDER BY w.WorkLog_Submit_Date) as WorkLog_Sequence,
+
+  -- AI Infused Fields
+  ai.AIFirstResponse,
+  ai.AIFirstResponseTimestamp,
+  ai.AIFirstResponse_Audit
   
 FROM
   `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
@@ -87,6 +92,21 @@ FROM
 LEFT JOIN
   `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` w
   ON h.Incident_Number = w.Incident_Number
+
+LEFT JOIN (
+  SELECT
+    Incident_Number,
+    AIFirstResponse,
+    AIFirstResponseTimestamp,
+    AIFirstResponse_Audit,
+    ROW_NUMBER() OVER (
+      PARTITION BY Incident_Number
+      ORDER BY ClassifiedAt DESC
+    ) AS rn
+  FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
+) ai
+  ON ai.Incident_Number = h.Incident_Number
+  AND ai.rn = 1
   
 ORDER BY
   h.Incident_Number,
