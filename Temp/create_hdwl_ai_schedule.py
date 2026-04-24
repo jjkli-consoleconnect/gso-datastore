@@ -5,8 +5,6 @@ Location: EU
 Project: pccw-internal-virt-agent-uat
 """
 
-import os
-import sys
 from pathlib import Path
 
 from google.cloud import bigquery_datatransfer_v1
@@ -14,7 +12,6 @@ from google.protobuf import struct_pb2
 
 PROJECT_ID = "pccw-internal-virt-agent-uat"
 LOCATION = "eu"
-DATASET = "GSO"
 DISPLAY_NAME = "HDWL AIInfused Daily Refresh"
 # 19:00 UTC = 03:00 HKT (UTC+8)
 SCHEDULE = "every day 19:00"
@@ -43,11 +40,15 @@ def main():
     if existing:
         print(f"Found existing config: {existing.name}")
         print("Updating...")
-        existing.params.CopyFrom(params)
-        existing.schedule = SCHEDULE
-        update_mask = {"paths": ["params", "schedule"]}
+        updated_config = bigquery_datatransfer_v1.TransferConfig(
+            name=existing.name,
+            params=params,
+            schedule=SCHEDULE,
+            destination_dataset_id="",
+        )
+        update_mask = {"paths": ["params", "schedule", "destination_dataset_id"]}
         result = client.update_transfer_config(
-            transfer_config=existing,
+            transfer_config=updated_config,
             update_mask=update_mask,
         )
         print(f"Updated: {result.name}")
@@ -58,7 +59,7 @@ def main():
             data_source_id="scheduled_query",
             params=params,
             schedule=SCHEDULE,
-            destination_dataset_id=DATASET,
+            destination_dataset_id="",
         )
         result = client.create_transfer_config(
             parent=parent,

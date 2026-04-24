@@ -33,14 +33,48 @@ USING (
       SELECT h.Incident_Number
       FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
       WHERE h.Incident_Number IS NOT NULL
-        AND h.LastModifiedDate >= TIMESTAMP_SUB(watermark_ts, INTERVAL 6 HOUR)
+        AND h.Assigned_Group IN (
+          'Bel NOC',
+          'Console Connect',
+          'FMC',
+          'GSOC',
+          'ICX',
+          'PHSOC',
+          'Planned Event Mgt',
+          'Soft Switch Management',
+          'USNOC',
+          'VAS NOC'
+        )
+        AND (
+          h.LastModifiedDate >= TIMESTAMP_SUB(watermark_ts, INTERVAL 6 HOUR)
+          OR h.Submit_Date >= TIMESTAMP_SUB(run_ts, INTERVAL 30 DAY)
+          OR h.ReportedDate >= TIMESTAMP_SUB(run_ts, INTERVAL 30 DAY)
+        )
 
       UNION DISTINCT
 
       SELECT w.Incident_Number
       FROM `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` w
+      JOIN `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
+        ON h.Incident_Number = w.Incident_Number
       WHERE w.Incident_Number IS NOT NULL
-        AND w.Last_Modified_Date >= TIMESTAMP_SUB(watermark_ts, INTERVAL 6 HOUR)
+        AND h.Assigned_Group IN (
+          'Bel NOC',
+          'Console Connect',
+          'FMC',
+          'GSOC',
+          'ICX',
+          'PHSOC',
+          'Planned Event Mgt',
+          'Soft Switch Management',
+          'USNOC',
+          'VAS NOC'
+        )
+        AND w.WorkLog_Type IN ('Email-Progress Update', 'Internal Work Log (Email)')
+        AND (
+          w.Last_Modified_Date >= TIMESTAMP_SUB(watermark_ts, INTERVAL 6 HOUR)
+          OR w.WorkLog_Submit_Date >= TIMESTAMP_SUB(run_ts, INTERVAL 30 DAY)
+        )
     )
     WHERE Incident_Number IS NOT NULL
   ),
@@ -52,13 +86,26 @@ USING (
         CONCAT(
           '[', FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S', w.WorkLog_Submit_Date), '] ',
           COALESCE(w.WorkLog_Submitter, 'Unknown'), ' (', COALESCE(w.WorkLog_Type, ''), '):\n',
-          SUBSTR(COALESCE(w.ExtractedDescription, ''), 1, 600), '\n'
+          SUBSTR(COALESCE(w.ExtractedDescription, ''), 1, 900),
+          CASE
+            WHEN STRPOS(COALESCE(w.ExtractedDescription, ''), 'Ticket Progress Update') > 0 THEN CONCAT(
+              '\n[Progress Section]\n',
+              SUBSTR(
+                COALESCE(w.ExtractedDescription, ''),
+                GREATEST(1, STRPOS(COALESCE(w.ExtractedDescription, ''), 'Ticket Progress Update') - 120),
+                1400
+              )
+            )
+            ELSE ''
+          END,
+          '\n'
         ),
         '---\n'
         ORDER BY w.WorkLog_Submit_Date
       ) AS WorkLogs_Formatted
     FROM `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` w
     JOIN candidate_keys ck ON ck.Incident_Number = w.Incident_Number
+    WHERE w.WorkLog_Type IN ('Email-Progress Update', 'Internal Work Log (Email)')
     GROUP BY w.Incident_Number
   ),
   latest_cache AS (
@@ -77,28 +124,50 @@ USING (
       ck.Incident_Number,
       TO_HEX(SHA256(CONCAT(
         CAST(COALESCE(w.WorkLog_Count, 0) AS STRING), '|',
-        COALESCE(w.WorkLogs_Formatted, '')
+        COALESCE(w.WorkLogs_Formatted, ''), '|',
+        COALESCE(h.Customer_Name, ''), '|',
+        'hdwl-firstresponse-v6'
       ))) AS PayloadHash,
       CONCAT(
         'You are analyzing a helpdesk ticket worklog to identify the FIRST MEANINGFUL response to the customer.\n\n',
+        'Ticket customer name: ', COALESCE(h.Customer_Name, 'Unknown'), '\n\n',
+        'Only evaluate these customer-facing worklog types:\n',
+        '- Email-Progress Update\n',
+        '- Internal Work Log (Email)\n',
+        'Ignore all other worklog types.\n\n',
+        'Determine whether a worklog is truly customer-facing by checking recipient/salutation/body context against the customer.\n',
+        'Use the customer name above as a primary anchor, but also allow named customer contacts or generic customer salutations like "Dear Customer".\n',
+        'If the message is addressed to a vendor, provider, peering partner, carrier, internal operations team, escalation mailbox, or asks those parties to investigate/review/advice, then it is NOT customer communication and must be ignored.\n',
+        'Examples of non-customer messages include vendor escalations like "Hello Tata", "Dear USNOC", or emails to provider/partner mailboxes asking them to check/review logs.\n\n',
         'A MEANINGFUL response is one that:\n',
         '- Provides a substantive update, investigation finding, or action taken\n',
         '- Gives the customer real information about what is happening with their issue\n\n',
+        'Also treat as meaningful:\n',
+        '- Agent asks targeted troubleshooting questions to the customer (e.g. current situation, ping test result, traceroute, specific validation checks), because this is active customer communication and troubleshooting in progress.\n\n',
         'A NON-MEANINGFUL response is one that ONLY:\n',
         '- Acknowledges receipt (e.g. "We have received your ticket", "Ticket acknowledged")\n',
         '- States the team is looking into it with no further detail\n',
-        '- Is a generic auto-response or templated acknowledgement\n\n',
+        '- Is a generic auto-response or templated acknowledgement\n',
+        '- Simply shares a ticket/incident number with the customer (e.g. "Your incident has been created, reference INC0012345"), with no further context or update\n\n',
+        'Hard exclusion rule:\n',
+        '- If WorkLog_Type = "Testing Result Information", treat it as internal-only and NEVER consider it a customer update, even if content appears detailed.\n\n',
         'From the worklogs below, identify the FIRST worklog entry that qualifies as a meaningful response.\n',
         'Return the following:\n',
         '- AIFirstResponse: the exact text of that worklog entry (truncated to 500 chars if needed)\n',
         '- AIFirstResponseTimestamp: the timestamp in ISO 8601 format (e.g. 2025-04-01T09:30:00Z)\n',
         '- AIFirstResponse_Audit: one sentence (max 200 chars) explaining why this entry was chosen as the first meaningful response.\n',
         '  If no meaningful response exists in the worklogs, set AIFirstResponse and AIFirstResponseTimestamp to null,\n',
-        '  and set AIFirstResponse_Audit to explain why (e.g. "All worklogs are acknowledgements only").\n\n',
+        '  and set AIFirstResponse_Audit to explain why using one of these true reasons:\n',
+        '  - "All customer-facing worklogs are acknowledgements only"\n',
+        '  - "No customer communication found in this ticket"\n',
+        '  IMPORTANT: if the message only shares incident/ticket number creation/reference with no substantive update,\n',
+        '  this is NON-MEANINGFUL and you MUST return AIFirstResponse = null and AIFirstResponseTimestamp = null.\n\n',
         'Worklogs (chronological order):\n',
         COALESCE(w.WorkLogs_Formatted, 'No worklogs for this ticket')
       ) AS PromptText
     FROM candidate_keys ck
+    LEFT JOIN `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
+      ON h.Incident_Number = ck.Incident_Number
     LEFT JOIN w_all w ON w.Incident_Number = ck.Incident_Number
   ),
   delta AS (
@@ -112,12 +181,34 @@ USING (
   SELECT
     d.Incident_Number,
     d.PayloadHash,
-    ai.AIFirstResponse,
-    SAFE.PARSE_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', ai.AIFirstResponseTimestamp) AS AIFirstResponseTimestamp,
+    CASE
+      WHEN REGEXP_CONTAINS(
+        LOWER(COALESCE(ai.AIFirstResponse_Audit, '')),
+        r'acknowledg|no customer communication|incident has been created|ticket has been created|reference inc'
+      )
+      OR REGEXP_CONTAINS(
+        LOWER(COALESCE(ai.AIFirstResponse, '')),
+        r'please refer to ticket|incident has been created|ticket has been created|reference inc'
+      )
+      THEN NULL
+      ELSE ai.AIFirstResponse
+    END AS AIFirstResponse,
+    CASE
+      WHEN REGEXP_CONTAINS(
+        LOWER(COALESCE(ai.AIFirstResponse_Audit, '')),
+        r'acknowledg|no customer communication|incident has been created|ticket has been created|reference inc'
+      )
+      OR REGEXP_CONTAINS(
+        LOWER(COALESCE(ai.AIFirstResponse, '')),
+        r'please refer to ticket|incident has been created|ticket has been created|reference inc'
+      )
+      THEN NULL
+      ELSE SAFE.PARSE_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', ai.AIFirstResponseTimestamp)
+    END AS AIFirstResponseTimestamp,
     ai.AIFirstResponse_Audit,
     run_ts AS ClassifiedAt,
     'gemini-2.5-flash-via-AI.GENERATE' AS ModelName,
-    'hdwl-firstresponse-v1' AS PromptVersion
+    'hdwl-firstresponse-v6' AS PromptVersion
   FROM (
     SELECT
       d.Incident_Number,

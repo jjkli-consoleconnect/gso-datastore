@@ -232,6 +232,10 @@ SELECT
   t.Updated,
   t.Resolved,
   t.Reporter,
+  CASE
+    WHEN REGEXP_CONTAINS(COALESCE(t.Reporter, ''), r'^[^@\s]+@[^@\s]+$') THEN LOWER(REGEXP_EXTRACT(t.Reporter, r'@([^@\s]+)$'))
+    ELSE t.Reporter
+  END AS ReporterCleaned,
   t.Assignee,
   t.Component,
   ARRAY_TO_STRING(t.Component, ', ') AS Component_Joined,
