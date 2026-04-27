@@ -1,6 +1,7 @@
 {
   "projects": [
-    "pccw-internal-virt-agent-uat"
+    "pccw-internal-virt-agent-uat",
+    "pccw-internal-virtual-agent"
   ],
   "datasets": [],
   "outputDir": "BigQuery",
