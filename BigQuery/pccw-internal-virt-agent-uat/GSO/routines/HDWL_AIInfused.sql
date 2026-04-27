@@ -126,7 +126,7 @@ USING (
         CAST(COALESCE(w.WorkLog_Count, 0) AS STRING), '|',
         COALESCE(w.WorkLogs_Formatted, ''), '|',
         COALESCE(h.Customer_Name, ''), '|',
-        'hdwl-firstresponse-v6'
+        'hdwl-firstresponse-v9'
       ))) AS PayloadHash,
       CONCAT(
         'You are analyzing a helpdesk ticket worklog to identify the FIRST MEANINGFUL response to the customer.\n\n',
@@ -148,7 +148,8 @@ USING (
         '- Acknowledges receipt (e.g. "We have received your ticket", "Ticket acknowledged")\n',
         '- States the team is looking into it with no further detail\n',
         '- Is a generic auto-response or templated acknowledgement\n',
-        '- Simply shares a ticket/incident number with the customer (e.g. "Your incident has been created, reference INC0012345"), with no further context or update\n\n',
+        '- Simply shares a ticket/incident number with the customer (e.g. "Your incident has been created, reference INC0012345"), with no further context or update\n',
+        '- Confirms that a new ticket has been created and a support engineer assigned, even if addressed to the customer and including a ticket reference (e.g. "PCCW Global has created a ticket for you. New Ticket. Reference INC0012345. A support engineer has been assigned.") — this is a ticket creation notification only, and is NON-MEANINGFUL.\n\n',
         'Hard exclusion rule:\n',
         '- If WorkLog_Type = "Testing Result Information", treat it as internal-only and NEVER consider it a customer update, even if content appears detailed.\n\n',
         'From the worklogs below, identify the FIRST worklog entry that qualifies as a meaningful response.\n',
@@ -184,11 +185,11 @@ USING (
     CASE
       WHEN REGEXP_CONTAINS(
         LOWER(COALESCE(ai.AIFirstResponse_Audit, '')),
-        r'acknowledg|no customer communication|incident has been created|ticket has been created|reference inc'
+        r'all customer.facing worklogs are acknowledgements only|no customer communication found|no customer-facing email worklogs found|no meaningful response'
       )
       OR REGEXP_CONTAINS(
         LOWER(COALESCE(ai.AIFirstResponse, '')),
-        r'please refer to ticket|incident has been created|ticket has been created|reference inc'
+        r'please refer to ticket|please refer to inc|incident has been created|ticket has been created|reference inc|has created a ticket for|new ticket'
       )
       THEN NULL
       ELSE ai.AIFirstResponse
@@ -196,11 +197,11 @@ USING (
     CASE
       WHEN REGEXP_CONTAINS(
         LOWER(COALESCE(ai.AIFirstResponse_Audit, '')),
-        r'acknowledg|no customer communication|incident has been created|ticket has been created|reference inc'
+        r'all customer.facing worklogs are acknowledgements only|no customer communication found|no customer-facing email worklogs found|no meaningful response'
       )
       OR REGEXP_CONTAINS(
         LOWER(COALESCE(ai.AIFirstResponse, '')),
-        r'please refer to ticket|incident has been created|ticket has been created|reference inc'
+        r'please refer to ticket|please refer to inc|incident has been created|ticket has been created|reference inc|has created a ticket for|new ticket'
       )
       THEN NULL
       ELSE SAFE.PARSE_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', ai.AIFirstResponseTimestamp)
@@ -208,7 +209,7 @@ USING (
     ai.AIFirstResponse_Audit,
     run_ts AS ClassifiedAt,
     'gemini-2.5-flash-via-AI.GENERATE' AS ModelName,
-    'hdwl-firstresponse-v6' AS PromptVersion
+    'hdwl-firstresponse-v9' AS PromptVersion
   FROM (
     SELECT
       d.Incident_Number,
