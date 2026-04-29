@@ -346,10 +346,10 @@ def fetch_and_sync_jira_comments():
             )
             return
 
-        # Optimized single-pass approach: capture ANY activity in last 1 hour
+        # Optimized single-pass approach: capture ANY activity in last 30 minutes
         # Includes: field updates, resolutions, and new comments
-        jql_any_activity = build_jql(base_jql, "(updated >= -1h OR resolutiondate >= -1h OR comment.updated >= -1h)", joiner='AND')
-        logging.info(f"JQL (any activity in last 1h): {jql_any_activity}")
+        jql_any_activity = build_jql(base_jql, "(updated >= -30m OR resolutiondate >= -30m OR comment.updated >= -30m)", joiner='AND')
+        logging.info(f"JQL (any activity in last 30m): {jql_any_activity}")
 
         # BigQuery schema
         bq_schema = [
@@ -483,7 +483,7 @@ def fetch_and_sync_jira_comments():
         if not issue_keys_total:
             logging.info("No issues found with recent comments")
             delete_temp_table(client, dataset_id, temp_table_id)
-            window_start_dt = run_started - timedelta(hours=1)
+            window_start_dt = run_started - timedelta(minutes=30)
             window_end_dt = run_started
             run_ended = datetime.now(timezone.utc)
             duration_seconds = (run_ended - run_started).total_seconds()
@@ -548,7 +548,7 @@ def fetch_and_sync_jira_comments():
         delete_temp_table(client, dataset_id, temp_table_id)
 
         # Log pipeline end
-        window_start_dt = run_started - timedelta(hours=1)
+        window_start_dt = run_started - timedelta(minutes=30)
         window_end_dt = run_started
         run_ended = datetime.now(timezone.utc)
         duration_seconds = (run_ended - run_started).total_seconds()

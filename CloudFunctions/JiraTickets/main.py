@@ -461,12 +461,12 @@ def fetch_and_sync_jira_data():
             )
             return
 
-        # Optimized single-pass approach: capture ANY activity in last 1 hour
+        # Optimized single-pass approach: capture ANY activity in last 30 minutes
         # Includes: field updates, resolutions, and new comments
-        jql_any_activity = build_jql(base_jql, "(updated >= -1h OR resolutiondate >= -1h OR comment.updated >= -1h)", joiner='AND')
-        logging.info(f"JQL (any activity in last 1h): {jql_any_activity}")
+        jql_any_activity = build_jql(base_jql, "(updated >= -30m OR resolutiondate >= -30m OR comment.updated >= -30m)", joiner='AND')
+        logging.info(f"JQL (any activity in last 30m): {jql_any_activity}")
 
-        jql_window_start = run_started - timedelta(hours=1)
+        jql_window_start = run_started - timedelta(minutes=30)
         jql_window_end = run_started
 
         # BigQuery schema (all fields exactly as in original)
