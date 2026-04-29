@@ -18,12 +18,16 @@ CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` (
   AIFirstResponse STRING,
   AIFirstResponseTimestamp TIMESTAMP,
   AIFirstResponse_Audit STRING,
+  AIAtFault STRING,
   ClassifiedAt TIMESTAMP NOT NULL,
   ModelName STRING,
   PromptVersion STRING
 )
 PARTITION BY DATE(ClassifiedAt)
 CLUSTER BY Incident_Number;
+
+ALTER TABLE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
+ADD COLUMN IF NOT EXISTS AIAtFault STRING;
 
 MERGE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` AS target
 USING (
@@ -33,6 +37,7 @@ USING (
       SELECT h.Incident_Number
       FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
       WHERE h.Incident_Number IS NOT NULL
+        AND h.Fault_Cause IS NOT NULL
         AND h.Assigned_Group IN (
           'Bel NOC',
           'Console Connect',
@@ -58,6 +63,7 @@ USING (
       JOIN `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
         ON h.Incident_Number = w.Incident_Number
       WHERE w.Incident_Number IS NOT NULL
+        AND h.Fault_Cause IS NOT NULL
         AND h.Assigned_Group IN (
           'Bel NOC',
           'Console Connect',
@@ -112,6 +118,7 @@ USING (
     SELECT
       Incident_Number,
       PayloadHash,
+      AIAtFault,
       ROW_NUMBER() OVER (
         PARTITION BY Incident_Number
         ORDER BY ClassifiedAt DESC
@@ -126,11 +133,15 @@ USING (
         CAST(COALESCE(w.WorkLog_Count, 0) AS STRING), '|',
         COALESCE(w.WorkLogs_Formatted, ''), '|',
         COALESCE(h.Customer_Name, ''), '|',
-        'hdwl-firstresponse-v9'
+        COALESCE(h.Fault_Cause, ''), '|',
+        COALESCE(h.FaultCauseDetail, ''), '|',
+        'hdwl-firstresponse-v10-atfault'
       ))) AS PayloadHash,
       CONCAT(
         'You are analyzing a helpdesk ticket worklog to identify the FIRST MEANINGFUL response to the customer.\n\n',
         'Ticket customer name: ', COALESCE(h.Customer_Name, 'Unknown'), '\n\n',
+        'Fault_Cause: ', COALESCE(h.Fault_Cause, 'Unknown'), '\n',
+        'Fault_Cause_Detail: ', COALESCE(h.FaultCauseDetail, 'Unknown'), '\n\n',
         'Only evaluate these customer-facing worklog types:\n',
         '- Email-Progress Update\n',
         '- Internal Work Log (Email)\n',
@@ -163,6 +174,19 @@ USING (
         '  - "No customer communication found in this ticket"\n',
         '  IMPORTANT: if the message only shares incident/ticket number creation/reference with no substantive update,\n',
         '  this is NON-MEANINGFUL and you MUST return AIFirstResponse = null and AIFirstResponseTimestamp = null.\n\n',
+        'Also determine AIAtFault using ONLY one label from this fixed set:\n',
+        '- Customer\n',
+        '- Carrier/Vendor\n',
+        '- PCCW\n',
+        '- Nobody\n\n',
+        'AIAtFault decision rules:\n',
+        '- Use Fault_Cause and Fault_Cause_Detail as primary technical evidence.\n',
+        '- Use worklog content as supporting context, including interactions with customer, vendor, carrier, and PCCW teams.\n',
+        '- Choose Customer when root cause points to customer equipment, customer configuration, customer internal IT, or customer action/inaction.\n',
+        '- Choose Carrier/Vendor when root cause points to partner network, far-end fault, peering partner, provider/carrier issue, third-party infrastructure, or vendor platform.\n',
+        '- Choose PCCW when root cause points to PCCW network/platform/provisioning/process/configuration/operations mistakes or internal infrastructure faults.\n',
+        '- Choose Nobody when evidence indicates no fault found, right-when-tested, force majeure, uncontrollable events, planned maintenance with no clear accountable party, or insufficient evidence to assign blame confidently.\n',
+        '- Output must be exactly one of: Customer, Carrier/Vendor, PCCW, Nobody.\n\n',
         'Worklogs (chronological order):\n',
         COALESCE(w.WorkLogs_Formatted, 'No worklogs for this ticket')
       ) AS PromptText
@@ -177,7 +201,7 @@ USING (
     LEFT JOIN latest_cache lc
       ON lc.Incident_Number = b.Incident_Number
      AND lc.rn = 1
-    WHERE lc.Incident_Number IS NULL OR lc.PayloadHash != b.PayloadHash
+    WHERE lc.Incident_Number IS NULL OR lc.PayloadHash != b.PayloadHash OR lc.AIAtFault IS NULL
   )
   SELECT
     d.Incident_Number,
@@ -207,9 +231,16 @@ USING (
       ELSE SAFE.PARSE_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', ai.AIFirstResponseTimestamp)
     END AS AIFirstResponseTimestamp,
     ai.AIFirstResponse_Audit,
+    CASE
+      WHEN LOWER(TRIM(COALESCE(ai.AIAtFault, ''))) IN ('customer') THEN 'Customer'
+      WHEN LOWER(TRIM(COALESCE(ai.AIAtFault, ''))) IN ('carrier/vendor', 'carrier', 'vendor', 'carrier vendor') THEN 'Carrier/Vendor'
+      WHEN LOWER(TRIM(COALESCE(ai.AIAtFault, ''))) IN ('pccw') THEN 'PCCW'
+      WHEN LOWER(TRIM(COALESCE(ai.AIAtFault, ''))) IN ('nobody', 'none', 'no one', 'noone', 'not attributable') THEN 'Nobody'
+      ELSE 'Nobody'
+    END AS AIAtFault,
     run_ts AS ClassifiedAt,
     'gemini-2.5-flash-via-AI.GENERATE' AS ModelName,
-    'hdwl-firstresponse-v9' AS PromptVersion
+    'hdwl-firstresponse-v10-atfault' AS PromptVersion
   FROM (
     SELECT
       d.Incident_Number,
@@ -219,7 +250,8 @@ USING (
         output_schema => '''
           AIFirstResponse STRING OPTIONS(description="Exact text of first meaningful worklog response, or null"),
           AIFirstResponseTimestamp STRING OPTIONS(description="ISO 8601 timestamp of that worklog, or null"),
-          AIFirstResponse_Audit STRING OPTIONS(description="One sentence max 200 chars explaining derivation")
+          AIFirstResponse_Audit STRING OPTIONS(description="One sentence max 200 chars explaining derivation"),
+          AIAtFault STRING OPTIONS(description="One value only: Customer, Carrier/Vendor, PCCW, or Nobody")
         ''',
         model_params => JSON '{"generation_config":{"thinking_config": {"thinking_budget": 0}}}'
       ) AS ai
@@ -232,6 +264,7 @@ WHEN MATCHED THEN UPDATE SET
   target.AIFirstResponse = src.AIFirstResponse,
   target.AIFirstResponseTimestamp = src.AIFirstResponseTimestamp,
   target.AIFirstResponse_Audit = src.AIFirstResponse_Audit,
+  target.AIAtFault = src.AIAtFault,
   target.ClassifiedAt = src.ClassifiedAt,
   target.ModelName = src.ModelName,
   target.PromptVersion = src.PromptVersion
@@ -241,6 +274,7 @@ WHEN NOT MATCHED THEN INSERT (
   AIFirstResponse,
   AIFirstResponseTimestamp,
   AIFirstResponse_Audit,
+  AIAtFault,
   ClassifiedAt,
   ModelName,
   PromptVersion
@@ -250,6 +284,7 @@ WHEN NOT MATCHED THEN INSERT (
   src.AIFirstResponse,
   src.AIFirstResponseTimestamp,
   src.AIFirstResponse_Audit,
+  src.AIAtFault,
   src.ClassifiedAt,
   src.ModelName,
   src.PromptVersion

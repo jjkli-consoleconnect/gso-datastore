@@ -1,0 +1,362 @@
+Fault_Cause_Canonical	Fault_Cause_Raw
+Access Network / Local Loop	Backhaul
+Access Network / Local Loop	iDirect line card issue
+Access Network / Local Loop	IPVPN Backhaul
+Access Network / Local Loop	IPVPN Local ITMC Local Territorial Link
+Access Network / Local Loop	IPVPN Local Loop
+Access Network / Local Loop	Local ITMC Local Territorial Link
+Access Network / Local Loop	Local loop
+Access Network / Local Loop	Local Loop
+Access Network / Local Loop	Local Loop Comms issue
+Access Network / Local Loop	Site Access
+Commercial / Billing	(Console) Account Issue
+Commercial / Billing	(Console) Billing start date Issue
+Commercial / Billing	(Console) Invoice issue
+Commercial / Billing	Commercial issue
+Commercial / Billing	DCP Billing or invoicing error
+Commercial / Billing	DCP Commercial issue
+Commercial / Billing	IoT - Billing or invoicing error
+Commercial / Billing	Mobility - Billing and Invoice
+Commercial / Billing	Mobility - Commercial issue
+Commercial / Billing	Payment Gateway
+Core Network / IP Backbone	(Console) Core network issue
+Core Network / IP Backbone	Anything internal network related
+Core Network / IP Backbone	Backbone issue
+Core Network / IP Backbone	Connectivity outage
+Core Network / IP Backbone	Core / Network / Hardware Issue
+Core Network / IP Backbone	DCP DCP/ HKT-CSL network problem
+Core Network / IP Backbone	DCP Enterprise network problem
+Core Network / IP Backbone	Internet connectivity down
+Core Network / IP Backbone	IoT - Network connectivity problem
+Core Network / IP Backbone	Mobility - Network issue
+Core Network / IP Backbone	Network
+Core Network / IP Backbone	Network connectivity problem
+Core Network / IP Backbone	Network Issue
+Customer Side (CPE / Internal)	Colo - Customer Equipment Issues
+Customer Side (CPE / Internal)	Cusjavascript:tomer Equipment
+Customer Side (CPE / Internal)	Customer device failure
+Customer Side (CPE / Internal)	Customer DNS Setup issue
+Customer Side (CPE / Internal)	Customer equipment
+Customer Side (CPE / Internal)	Customer Equipment
+Customer Side (CPE / Internal)	Customer equipmentprofile traffic
+Customer Side (CPE / Internal)	Customer Fault Issues
+Customer Side (CPE / Internal)	Customer internal IT issue
+Customer Side (CPE / Internal)	Customer issue
+Customer Side (CPE / Internal)	Customer Problem
+Customer Side (CPE / Internal)	Customer's Equipment
+Customer Side (CPE / Internal)	DCP Customer device issue
+Customer Side (CPE / Internal)	Device or phone issue
+Customer Side (CPE / Internal)	Equipment switch off
+Customer Side (CPE / Internal)	Incident - Customer Error
+Customer Side (CPE / Internal)	IoT - Device or phone issue
+Customer Side (CPE / Internal)	IPVPN Customer Equipment
+Customer Side (CPE / Internal)	Mobility - Customer equipment issue
+Customer Side (CPE / Internal)	Non-Customer equipment failure
+Customer Side (CPE / Internal)	Non-Customer Fault Issues
+Customer Side (CPE / Internal)	Office Equipment
+Customer Side (CPE / Internal)	VAS - Customer Fault Issues
+Force Majeure / External Event	Bad Weather
+Force Majeure / External Event	Force Majeure/Uncontrollable
+Force Majeure / External Event	IPVPN Bad Weather
+Force Majeure / External Event	IPVPN Force Majeure/Uncontrollable
+International Transport	International
+International Transport	International Link /Trunk or Submarine Cable
+International Transport	International Link/Trunk or Submarine c
+International Transport	International Link/Trunk or Submarine cable
+International Transport	International portion fault between two cable stations/countries
+International Transport	IPVPN International Link/Trunk or Submarine cable
+No Fault Found / Untraced	False Positive
+No Fault Found / Untraced	Fault cannot replicate
+No Fault Found / Untraced	INC - No Fault Found
+No Fault Found / Untraced	Incident - No Fault found
+No Fault Found / Untraced	Incident - No Fault Found
+No Fault Found / Untraced	Incident - No Fault Found-Netcool cust cancelled connection in Console resulting in Infovista seeing the interface down
+No Fault Found / Untraced	IPVPN No Fault Found
+No Fault Found / Untraced	IPVPN Right When Test
+No Fault Found / Untraced	IPVPN Untraced Fault
+No Fault Found / Untraced	Issue Cleared when tested
+No Fault Found / Untraced	Njavascript:o Fault Found
+No Fault Found / Untraced	no fault
+No Fault Found / Untraced	No Fault
+No Fault Found / Untraced	No fault Found
+No Fault Found / Untraced	No fault found
+No Fault Found / Untraced	No Fault found
+No Fault Found / Untraced	No Fault Found
+No Fault Found / Untraced	No Fault FoundNo Fault Found
+No Fault Found / Untraced	NTF
+No Fault Found / Untraced	nTwine Conferencing No fault found
+No Fault Found / Untraced	RFO pending
+No Fault Found / Untraced	Right When Test
+No Fault Found / Untraced	Unidentified
+No Fault Found / Untraced	Untraced Fault
+No Fault Found / Untraced	untraced fault
+No Fault Found / Untraced	Waiting for RFO
+Partner / Carrier / Far-End	Best route
+Partner / Carrier / Far-End	Called number rejected call
+Partner / Carrier / Far-End	Far Enad Fault
+Partner / Carrier / Far-End	Far End Faault
+Partner / Carrier / Far-End	Far End Fault
+Partner / Carrier / Far-End	Far end fault
+Partner / Carrier / Far-End	Far End Issue
+Partner / Carrier / Far-End	Frontier Station
+Partner / Carrier / Far-End	Partner Network
+Partner / Carrier / Far-End	Peering Partner
+Partner / Carrier / Far-End	peering partner congestion
+Partner / Carrier / Far-End	Voice re-route
+Performance / Quality Degradation	Incident - Congestion (eg oversubscription of core links jitter latency)
+Performance / Quality Degradation	Incident - Inadequate bandwidth capacity
+Performance / Quality Degradation	Incident - Unstable connection
+Performance / Quality Degradation	Internatiojavascript:nal Network Service Degradation
+Performance / Quality Degradation	International Network Service Degradation
+Performance / Quality Degradation	IPVPN Latency/Packet Loss/Error
+Performance / Quality Degradation	Latency/Packet Loss/Error
+Performance / Quality Degradation	Local Loop packet loss
+Performance / Quality Degradation	Local Network Service Degradation
+Performance / Quality Degradation	Packet Loss
+Performance / Quality Degradation	Performance
+Physical Infrastructure / Hardware	card fault
+Physical Infrastructure / Hardware	Colo
+Physical Infrastructure / Hardware	Colo - Remote Hand Service
+Physical Infrastructure / Hardware	Colo - Service/Power
+Physical Infrastructure / Hardware	Colo - Service/Power Fault
+Physical Infrastructure / Hardware	Colo - Shipment
+Physical Infrastructure / Hardware	Colo - Site/Rack Access
+Physical Infrastructure / Hardware	Colo - Smart Hand Service
+Physical Infrastructure / Hardware	Damage
+Physical Infrastructure / Hardware	Due to scintillation effect
+Physical Infrastructure / Hardware	fault card
+Physical Infrastructure / Hardware	Faulty BUC & Replaced
+Physical Infrastructure / Hardware	Faulty SFP module in CR06.TOK13 Hu0/0/0/8
+Physical Infrastructure / Hardware	Fiber cut
+Physical Infrastructure / Hardware	fiber cut near railroad tracks impacting a buried 48 count ca
+Physical Infrastructure / Hardware	Hardware & Storage
+Physical Infrastructure / Hardware	Hardware Failure
+Physical Infrastructure / Hardware	Hardware fault
+Physical Infrastructure / Hardware	Hardware Issue
+Physical Infrastructure / Hardware	Incident - Dirty Fibre
+Physical Infrastructure / Hardware	Incident - Interface was unplugged
+Physical Infrastructure / Hardware	Incident - Light levels low not within spec
+Physical Infrastructure / Hardware	Power failure
+Physical Infrastructure / Hardware	Power issue
+Physical Infrastructure / Hardware	Power outage
+Physical Infrastructure / Hardware	Satellite Interference
+Physical Infrastructure / Hardware	Specific Data Center / PoP outage
+Physical Infrastructure / Hardware	Sun Outage
+Physical Infrastructure / Hardware	sun outage
+Physical Infrastructure / Hardware	Sun outage
+Physical Infrastructure / Hardware	Suspect Hub modem hanged
+Physical Infrastructure / Hardware	Suspect power issue at local site
+Planned Maintenance / Change	Colo - Planned Events
+Planned Maintenance / Change	Emergency Maintenance
+Planned Maintenance / Change	IoT - Routine maintenance
+Planned Maintenance / Change	IPVPN Planned Outage
+Planned Maintenance / Change	Maintenance
+Planned Maintenance / Change	Maintenance Activity
+Planned Maintenance / Change	Maintenance Notification Error - Internal
+Planned Maintenance / Change	Maintenance Notification Error - Partner
+Planned Maintenance / Change	Maintenance Related
+Planned Maintenance / Change	Mobility - Maintenance issue
+Planned Maintenance / Change	Planned Maintenance
+Planned Maintenance / Change	planned maintenance
+Planned Maintenance / Change	Planned Outage
+Planned Maintenance / Change	Preventive maintenance work
+Planned Maintenance / Change	Preventive mainterence
+Planned Maintenance / Change	Prolonged Maintenance
+Planned Maintenance / Change	Routine maintenance
+Planned Maintenance / Change	scheduled maintenance
+Planned Maintenance / Change	Scheduled maintenance not communicated
+Planned Maintenance / Change	Unplanned maintenance
+Planned Maintenance / Change	Unscheduled maintenance
+Planned Maintenance / Change	VAS - Planned Events
+Platform / API / Portal	(Console) API Issue
+Platform / API / Portal	(Console) Incorrect display/details on UI
+Platform / API / Portal	(Console) Platform code issue
+Platform / API / Portal	(Console) Service Layer Issue
+Platform / API / Portal	(Console) Workfow Issue
+Platform / API / Portal	API Failed Request
+Platform / API / Portal	API issue
+Platform / API / Portal	Code bug in Console Service Layer
+Platform / API / Portal	Code error in Console Workflow
+Platform / API / Portal	Console Connect platform issue
+Platform / API / Portal	Core Platform/Network
+Platform / API / Portal	DCP DCP Enterprise portal configuration
+Platform / API / Portal	DCP DCP Operator portal configuration
+Platform / API / Portal	Incident - API issue
+Platform / API / Portal	Incident - Console feature deficiency
+Platform / API / Portal	Incident - Platform Issue (code error functionality deficiency)
+Platform / API / Portal	Incident - Web page not reachable
+Platform / API / Portal	IoT - API Issue
+Platform / API / Portal	IoT - Console Connect portal issue
+Platform / API / Portal	IoT - SIM Management Portal issue
+Platform / API / Portal	IoT - SIM or eSIM platform issue
+Platform / API / Portal	IoT - SMS platform
+Platform / API / Portal	IPVPN Core Platform/Network
+Platform / API / Portal	SIM Management Portal issue
+Provisioning / Configuration	Colo - Provisioning Service
+Provisioning / Configuration	Config Issue Related
+Provisioning / Configuration	Configuration problem
+Provisioning / Configuration	Customer configuration problem
+Provisioning / Configuration	Customer CPE configuration issue
+Provisioning / Configuration	Customer Route announcement issue
+Provisioning / Configuration	DCP Enterprise configuration problem
+Provisioning / Configuration	Incident - Config. mismatch due to inflight change
+Provisioning / Configuration	incompatible media converter
+Provisioning / Configuration	IoT - Customer configuration problem
+Provisioning / Configuration	IoT - Network or APN configuration problem
+Provisioning / Configuration	IoT - Provisioning
+Provisioning / Configuration	IoT - SIM provisioning or configuration
+Provisioning / Configuration	IP Prefix list route announcement
+Provisioning / Configuration	IPVPN Provisioning/Installation issue
+Provisioning / Configuration	Misconfiguration by Customer
+Provisioning / Configuration	Mobility - Change Request
+Provisioning / Configuration	Mobility - Configuration problem
+Provisioning / Configuration	Mobility - Provisioning issue
+Provisioning / Configuration	Network or APN configuration problem
+Provisioning / Configuration	Provisioning
+Provisioning / Configuration	Provisioning - Change Requests (Upgrade & Downgrade) - Config change (eg. MTU size VLANâ€™s Bandwidth)
+Provisioning / Configuration	Provisioning - Change Requests (Upgrade & Downgrade) - New Plans or Plan Changes
+Provisioning / Configuration	Provisioning - Others
+Provisioning / Configuration	Provisioning Connection - Customer config not aligned to CSP requirements
+Provisioning / Configuration	Provisioning Connection - Incorrect Config (eg VLAN mismatch IP address/routing error)
+Provisioning / Configuration	Provisioning Issue
+Provisioning / Configuration	Provisioning status today/Closed
+Provisioning / Configuration	Provisioning x-connect - Config. mismatch â€œnon-negotiateâ€
+Provisioning / Configuration	Provisioning x-connect - Incompatible equipment (eg. media converter SFP)
+Provisioning / Configuration	Provisioning x-connect - Incorrectly patched faulty cabling
+Provisioning / Configuration	Provisioning/Installation
+Provisioning / Configuration	Provisioning/Installation issue
+Provisioning / Configuration	SIM provisioning or configuration
+Provisioning / Configuration	Speed config (â€œno negotiateâ€) not aligned between Console and Cust router
+Provisioning / Configuration	x-connect faulty cabling
+Provisioning / Configuration	X-connect Faulty Related
+Security / Policy Block	(Console) Security attack
+Security / Policy Block	Called number blocked by Carrier/Local
+Security / Policy Block	Calling number blocked by called
+Security / Policy Block	Calling number blocked by Carrier/Local
+Security / Policy Block	FILTER TRAFFIC - CARRIER END
+Security / Policy Block	FILTER TRAFFIC - CARRIER FAR END
+Security / Policy Block	Filter traffic - carrier far end
+Security / Policy Block	Incident - IP Address/s GEO Blocked
+Security / Policy Block	Incident - Security Attack
+Security / Policy Block	IT Security - Human Failure
+Security / Policy Block	Route blocked
+Security / Policy Block	unblocked the number
+Security / Policy Block	Whitelist request
+Service Request / Operations	Assist customer to do implementation
+Service Request / Operations	CDR or file transfer issue
+Service Request / Operations	Console Connect connectivity issue
+Service Request / Operations	Coverage or mobile network problem in Hong Kong
+Service Request / Operations	Coverage or mobile network problem in roaming country
+Service Request / Operations	Customer Enquiry
+Service Request / Operations	DCP Coverage or mobile network problem in Hong Kong
+Service Request / Operations	DCP Coverage or mobile network problem in roaming country
+Service Request / Operations	DCP DCP technical fault
+Service Request / Operations	DCP General Service Support or Enquiry
+Service Request / Operations	DCP technical fault
+Service Request / Operations	Enhancement Request
+Service Request / Operations	Enquiry Completed
+Service Request / Operations	General Service Enquiry
+Service Request / Operations	INC - PCCW Global Network Infrastruture
+Service Request / Operations	INC Customer related Issue
+Service Request / Operations	Incident - Faulty equipment (eg port)
+Service Request / Operations	IoT - Assist customer to do implementation
+Service Request / Operations	IoT - Commerical issue
+Service Request / Operations	IoT - Console Connect connectivity issue
+Service Request / Operations	IoT - Coverage or mobile network problem in roaming country
+Service Request / Operations	IoT - Customer backend connectivity problem
+Service Request / Operations	IoT - General Service Enquiry
+Service Request / Operations	IoT - SIM or IMSI issue
+Service Request / Operations	IPVPN Operation Ticket
+Service Request / Operations	ITO - Operation Ticket
+Service Request / Operations	ITO - Server Outage
+Service Request / Operations	Maint - Activity Completed
+Service Request / Operations	Maint - Activity Failed
+Service Request / Operations	Mobility - Equipment fault
+Service Request / Operations	Mobility - General Inquiry
+Service Request / Operations	Network connectivity down
+Service Request / Operations	nTwine Conferencing Question Answered
+Service Request / Operations	nTwine Conferencing Request Completed
+Service Request / Operations	nTwine Orchestration Request Completed
+Service Request / Operations	Operation or Service Request
+Service Request / Operations	Operation Request
+Service Request / Operations	Operation Requests
+Service Request / Operations	Operation ticket
+Service Request / Operations	Operation Ticket
+Service Request / Operations	Operation ticket.
+Service Request / Operations	PCCW equipment
+Service Request / Operations	REQ - Service / Feature Enquiry Addressed
+Service Request / Operations	REQ - Service Request Cancelled
+Service Request / Operations	REQ - Service Request Completed
+Service Request / Operations	Request
+Service Request / Operations	REQUEST
+Service Request / Operations	Support Service Outage
+Service Request / Operations	VAS - Non-PCCW Fault Issues
+Service Request / Operations	VAS - Operation or Service Request
+Service Request / Operations	VAS - PCCW Fault Issues
+Unclassified	(Console) Other
+Unclassified	..
+Unclassified	aaa
+Unclassified	B1FD
+Unclassified	cancel the ticket INC000010486812
+Unclassified	Circuit Test
+Unclassified	Close ticket
+Unclassified	DCP Others
+Unclassified	DCP SIM problem
+Unclassified	Decommissioned.
+Unclassified	Duplicate
+Unclassified	Duplicate of INC000010922324
+Unclassified	Duplicate of INC000010962929
+Unclassified	duplicate ticket
+Unclassified	Duplicate ticket
+Unclassified	Duplicate Ticket
+Unclassified	duplicate TICKET
+Unclassified	Epsilon
+Unclassified	Error
+Unclassified	fault ticket
+Unclassified	Fault ticket ignore
+Unclassified	INC - Misc
+Unclassified	INC000010965010
+Unclassified	Incident - Others
+Unclassified	Invalid test number
+Unclassified	IoT - Others
+Unclassified	IPVPN Circuit Test
+Unclassified	ITO - Others
+Unclassified	Mobility - Duplicated Ticket
+Unclassified	Mobility - Others
+Unclassified	n/a
+Unclassified	N/A
+Unclassified	NA
+Unclassified	Non-Customer Application
+Unclassified	open in error
+Unclassified	Operation
+Unclassified	Operation Ticket - Duplicate Ticket
+Unclassified	OPMD
+Unclassified	opmd
+Unclassified	Other
+Unclassified	Others
+Unclassified	Others - Duplicate
+Unclassified	Others - Duplicate Ticket
+Unclassified	Others - Incorrect Case Type
+Unclassified	Others - Incorrect Circuit / SR Reference
+Unclassified	Others - Internal Human Error
+Unclassified	Others â€“ Incorrect Case Type
+Unclassified	Others â€“ Incorrect Circuit / SR Reference
+Unclassified	Others â€“ Internal / Human Error
+Unclassified	Please close all related tt you opened for AfDB as operation tt.
+Unclassified	Pls ignore this case.
+Unclassified	problem
+Unclassified	refer to INC000010534627.closed.
+Unclassified	refer to INC000010542154
+Unclassified	Refer to INC000010641258
+Unclassified	refer to RFO
+Unclassified	sh bgp all sum | in 62.115.72.38
+Unclassified	SIM or IMSI problem
+Unclassified	SR189995 DAI(HKT) GI007264 INC000010498443
+Unclassified	Suspect there's local interference as no alarm observe at our end
+Unclassified	Switch Data
+Unclassified	test
+Unclassified	Test
+Unclassified	ticket open in error
+Unclassified	Wrong Ticket
+Unclassified	wrong ticket
+Unclassified	x
