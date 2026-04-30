@@ -397,7 +397,8 @@ SELECT
   ai.AIFirstResponse,
   ai.AIFirstResponseTimestamp,
   ai.AIFirstResponse_Audit,
-  ai.AIAtFault
+  ai.AIAtFault,
+  ai.AIAtFault_Audit
   
 FROM
   `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
@@ -413,6 +414,7 @@ LEFT JOIN (
     AIFirstResponseTimestamp,
     AIFirstResponse_Audit,
     AIAtFault,
+    AIAtFault_Audit,
     ROW_NUMBER() OVER (
       PARTITION BY Incident_Number
       ORDER BY ClassifiedAt DESC

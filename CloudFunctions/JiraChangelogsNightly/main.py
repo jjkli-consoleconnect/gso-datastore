@@ -28,6 +28,13 @@ MIN_WINDOW_HOURS = 1  # Skip windows smaller than 1 hour
 OVERLAP_MINUTES = 10
 MIN_START = datetime(2024, 7, 1, tzinfo=timezone.utc)
 ENABLE_SOFT_DELETE_RECONCILIATION = os.environ.get('ENABLE_SOFT_DELETE_RECONCILIATION', '').strip().lower() == 'true'
+BASE_WINDOW_DAYS = int(os.environ.get('BASE_WINDOW_DAYS', '1'))
+BASE_WINDOW_HOURS = float(os.environ.get('BASE_WINDOW_HOURS', str(BASE_WINDOW_DAYS * 24)))
+MIN_ADAPTIVE_WINDOW_HOURS = float(os.environ.get('MIN_ADAPTIVE_WINDOW_HOURS', '2'))
+MAX_ADAPTIVE_WINDOW_HOURS = float(os.environ.get('MAX_ADAPTIVE_WINDOW_HOURS', '720'))
+ADAPTIVE_TARGET_ROWS = int(os.environ.get('ADAPTIVE_TARGET_ROWS', '1500'))
+ADAPTIVE_LOW_WATERMARK_ROWS = int(os.environ.get('ADAPTIVE_LOW_WATERMARK_ROWS', '300'))
+ADAPTIVE_HIGH_WATERMARK_ROWS = int(os.environ.get('ADAPTIVE_HIGH_WATERMARK_ROWS', '5000'))
 
 DEFAULT_PROJECTS = [
     'GS&O Data Analytics',
@@ -49,6 +56,7 @@ DEFAULT_PROJECTS = [
     'Operational Case Reviews',
     'IT Helpdesk',
     'Vendor Verification Team',
+    'IPECR',
     'GS&O Strategic Initiatives'
 ]
 
@@ -90,7 +98,81 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
         client.query(ddl).result()
 
 
-def select_window(client, dataset_id, table_id, project, base_days=1):
+def get_recent_window_metrics(client, dataset_id, table_id, project, sample_size=5):
+    """Return recent complete windows for adaptive sizing."""
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('p', 'STRING', project),
+            bigquery.ScalarQueryParameter('n', 'INT64', int(sample_size)),
+        ]
+    )
+    rows = client.query(
+        f"""
+        SELECT
+          RowCount,
+          TIMESTAMP_DIFF(WindowEnd, WindowStart, SECOND) AS WindowSeconds
+        FROM `{dataset_id}.{table_id}`
+        WHERE Project=@p
+          AND Status='complete'
+          AND RowCount IS NOT NULL
+          AND WindowEnd > WindowStart
+        ORDER BY LastRun DESC
+        LIMIT @n
+        """,
+        job_config=job_config,
+    ).result()
+
+    metrics = []
+    for r in rows:
+        try:
+            rc = int(r.RowCount)
+            sec = int(r.WindowSeconds)
+            if sec > 0:
+                metrics.append((rc, sec))
+        except Exception:
+            continue
+    return metrics
+
+
+def choose_window_hours(client, dataset_id, table_id, project):
+    """Choose next window size using recent rows-per-hour density."""
+    min_hours = max(MIN_ADAPTIVE_WINDOW_HOURS, 1.0)
+    max_hours = max(MAX_ADAPTIVE_WINDOW_HOURS, min_hours)
+    base_hours = min(max(BASE_WINDOW_HOURS, min_hours), max_hours)
+
+    metrics = get_recent_window_metrics(client, dataset_id, table_id, project)
+    if not metrics:
+        logging.info(f"Adaptive window bootstrap (default): {base_hours:.2f}h")
+        return base_hours
+
+    total_rows = sum(rc for rc, _ in metrics)
+    total_hours = sum(sec for _, sec in metrics) / 3600.0
+    rows_per_hour = (total_rows / total_hours) if total_hours > 0 else 0.0
+    last_rows = metrics[0][0]
+
+    if rows_per_hour <= 0:
+        adaptive_hours = max_hours
+    else:
+        adaptive_hours = ADAPTIVE_TARGET_ROWS / rows_per_hour
+
+    if last_rows >= ADAPTIVE_HIGH_WATERMARK_ROWS:
+        adaptive_hours *= 0.5
+    elif last_rows <= ADAPTIVE_LOW_WATERMARK_ROWS:
+        adaptive_hours *= 1.5
+
+    adaptive_hours = min(max(adaptive_hours, min_hours), max_hours)
+    logging.info(
+        "Adaptive window chosen for %s: %.2fh (rows_per_hour=%.2f, last_rows=%s, sample=%s)",
+        project,
+        adaptive_hours,
+        rows_per_hour,
+        last_rows,
+        len(metrics),
+    )
+    return adaptive_hours
+
+
+def select_window(client, dataset_id, table_id, project):
     now = datetime.now(timezone.utc)
     ws = None
     we = None
@@ -135,7 +217,8 @@ def select_window(client, dataset_id, table_id, project, base_days=1):
     else:
         start = MIN_START
 
-    end = start + timedelta(days=base_days)
+    window_hours = choose_window_hours(client, dataset_id, table_id, project)
+    end = start + timedelta(hours=window_hours)
     end = min(end, now)
     try:
         if (end - start).total_seconds() / 3600.0 < MIN_WINDOW_HOURS:
@@ -389,6 +472,18 @@ def fetch_and_sync_jira_changelogs_nightly():
                                 "DeletedAt": None,
                             }
 
+        # Clean up orphaned temp tables from previous crashed runs (older than 2h)
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+            for tbl in client.list_tables(f"{client.project}.{dataset_id}"):
+                if tbl.table_id.startswith(temp_table_id + '_') and tbl.table_id != temp_table_id_run:
+                    tbl_ref = client.get_table(f"{dataset_id}.{tbl.table_id}")
+                    if tbl_ref.created.replace(tzinfo=timezone.utc) < cutoff:
+                        client.delete_table(tbl_ref, not_found_ok=True)
+                        logging.info(f"Cleaned up orphaned temp table: {tbl.table_id}")
+        except Exception as _cleanup_ex:
+            logging.warning(f"Orphan temp table cleanup failed (non-fatal): {_cleanup_ex}")
+
         if not create_or_replace_temp_table(client, dataset_id, temp_table_id_run, bq_schema):
             logging.error("Setup failed: Could not create run-scoped temp table.")
             log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Temp table create failed", status="ERROR")
@@ -400,7 +495,7 @@ def fetch_and_sync_jira_changelogs_nightly():
         for proj in projects:
             logging.info(f"Starting nightly window selection for project {proj}")
             while True:
-                ws, we = select_window(client, dataset_id, progress_table_id, proj, base_days=1)
+                ws, we = select_window(client, dataset_id, progress_table_id, proj)
                 if not ws or not we:
                     logging.info(f"No further window for {proj} (too close to now or complete)")
                     break

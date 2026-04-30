@@ -192,6 +192,27 @@ def ensure_ticket_columns(client, dataset_id, table_id):
     client.query(
         f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Description STRING"
     ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IssueId STRING"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS ReporterId STRING"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS AssigneeId STRING"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS DueDate DATE"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS FeatureTeam STRING"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS MaintenanceWindowStart TIMESTAMP"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS MaintenanceWindowEnd TIMESTAMP"
+    ).result()
 
     labels_field = existing_fields.get('Labels')
     if labels_field is None:
@@ -398,6 +419,10 @@ def fetch_and_sync_jira_data():
     SYMPTOMS_BQ_NAME = 'Symptoms'
     ATTACK_JIRA_ID = 'customfield_15295'
     ATTACK_BQ_NAME = 'ATTCK'
+    FEATURE_TEAM_JIRA_ID = 'customfield_10780'
+    REMEDY_TICKET_MIGRATED_JIRA_ID = 'customfield_10647'
+    MAINTENANCE_WINDOW_START_JIRA_ID = 'customfield_10514'
+    MAINTENANCE_WINDOW_END_JIRA_ID = 'customfield_10515'
 
     table_id = 'JiraTickets'
     temp_table_id = 'JiraTickets_temp'
@@ -440,6 +465,7 @@ def fetch_and_sync_jira_data():
             'project = "Operational Case Reviews" OR '\
             'project = "IT Helpdesk" OR '\
             'project = "Vendor Verification Team" OR '\
+            'project = IPECR OR '\
             'project = "GS&O Strategic Initiatives" '
             ')'
         )
@@ -474,6 +500,7 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("T", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Project", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Key", "STRING", mode="REQUIRED"),
+            bigquery.SchemaField("IssueId", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Summary", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Status", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Priority", "STRING", mode="NULLABLE"),
@@ -481,9 +508,15 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("Created", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("Updated", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("Resolved", "TIMESTAMP", mode="NULLABLE"),
+            bigquery.SchemaField("DueDate", "DATE", mode="NULLABLE"),
             bigquery.SchemaField("Reporter", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("ReporterId", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Assignee", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("AssigneeId", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Component", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("FeatureTeam", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("MaintenanceWindowStart", "TIMESTAMP", mode="NULLABLE"),
+            bigquery.SchemaField("MaintenanceWindowEnd", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Description", "STRING", mode="NULLABLE"),
@@ -635,7 +668,7 @@ def fetch_and_sync_jira_data():
                     sla_metrics[f'{k}_Cycles'] = cycles
 
                 issue_type = fields.get('issuetype', {}).get('name')
-                cf_val = fields.get('customfield_10088')  # Remedy ticket field
+                cf_val = get_field_value(fields.get(REMEDY_TICKET_MIGRATED_JIRA_ID)) or fields.get('customfield_10088')
                 remedy_source = ' | '.join([
                     str(cf_val) if cf_val else '',
                     str(fields.get('summary') or ''),
@@ -649,14 +682,21 @@ def fetch_and_sync_jira_data():
                     "T": issue_type,
                     "Project": fields.get('project', {}).get('name'),
                     "Key": issue_key,
+                    "IssueId": full_issue.get('id'),
                     "Summary": fields.get('summary'),
                     "Status": fields.get('status', {}).get('name'),
                     "Created": convert_timestamp(fields.get('created')),
                     "Updated": convert_timestamp(fields.get('updated')),
                     "Resolved": convert_timestamp(fields.get('resolutiondate')),
+                    "DueDate": fields.get('duedate'),
                     "Reporter": get_field_value(fields.get('reporter')),
+                    "ReporterId": (fields.get('reporter') or {}).get('accountId') if isinstance(fields.get('reporter'), dict) else None,
                     "Assignee": get_field_value(fields.get('assignee')),
+                    "AssigneeId": (fields.get('assignee') or {}).get('accountId') if isinstance(fields.get('assignee'), dict) else None,
                     "Component": ', '.join([get_field_value(c) for c in fields.get('components', [])]) if fields.get('components') else None,
+                    "FeatureTeam": get_field_value(fields.get(FEATURE_TEAM_JIRA_ID)),
+                    "MaintenanceWindowStart": convert_timestamp(fields.get(MAINTENANCE_WINDOW_START_JIRA_ID)),
+                    "MaintenanceWindowEnd": convert_timestamp(fields.get(MAINTENANCE_WINDOW_END_JIRA_ID)),
                     "RemedyTicketNumber": ', '.join(remedy_numbers) if remedy_numbers else None,
                     "Links": extract_issue_links(fields.get('issuelinks')),
                     "Description": extract_adf_text(fields.get('description')),
@@ -846,6 +886,7 @@ def fetch_and_sync_jira_data():
                 WHEN MATCHED THEN UPDATE SET
                     T.T = S.T,
                     T.Project = S.Project,
+                    T.IssueId = S.IssueId,
                     T.Summary = S.Summary,
                     T.Status = S.Status,
                     T.Priority = S.Priority,
@@ -853,9 +894,15 @@ def fetch_and_sync_jira_data():
                     T.Created = S.Created,
                     T.Updated = S.Updated,
                     T.Resolved = S.Resolved,
+                    T.DueDate = S.DueDate,
                     T.Reporter = S.Reporter,
+                    T.ReporterId = S.ReporterId,
                     T.Assignee = S.Assignee,
+                    T.AssigneeId = S.AssigneeId,
                     T.Component = IF(S.Component IS NULL, NULL, [S.Component]),
+                    T.FeatureTeam = S.FeatureTeam,
+                    T.MaintenanceWindowStart = S.MaintenanceWindowStart,
+                    T.MaintenanceWindowEnd = S.MaintenanceWindowEnd,
                     T.RemedyTicketNumber = IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]),
                     T.Links = S.Links,
                     T.Description = S.Description,
@@ -913,7 +960,7 @@ def fetch_and_sync_jira_data():
                     T.ITHD_ISMSIncidentResolution_Breached = S.ITHD_ISMSIncidentResolution_Breached,
                     T.ITHD_ISMSIncidentResolution_Cycles = S.ITHD_ISMSIncidentResolution_Cycles,
                     T.ITHD_Resolution = S.ITHD_Resolution
-                WHEN NOT MATCHED THEN INSERT (T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, SyncTime, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, AppSupEscalation, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, StoryPoints, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution) VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.SyncTime, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.AppSupEscalation, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.StoryPoints, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution)
+                WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, SyncTime, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, AppSupEscalation, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, StoryPoints, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution) VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.SyncTime, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.AppSupEscalation, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.StoryPoints, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution)
             '''
             client.query(merge_query).result()
             logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")

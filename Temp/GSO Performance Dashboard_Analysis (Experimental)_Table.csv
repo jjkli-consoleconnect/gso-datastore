@@ -1,0 +1,908 @@
+﻿TicketURL,Fault Cause,AIFaultCause,AIAtFault,AIAtFault_Audit
+INC000011044119,No Fault Found,No Fault Found / Untraced,null,null
+INC000011086227,Backhaul,Access Network / Local Loop,null,null
+INC000011150199,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011150321,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011151325,Calling number blocked by Carrier/Local,Security / Policy Block,null,null
+INC000011151810,Fault cannot replicate,No Fault Found / Untraced,null,null
+INC000011147054,No Fault Found,No Fault Found / Untraced,null,null
+INC000011150866,No Fault Found,No Fault Found / Untraced,null,null
+INC000011152465,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011145385,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011137569,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011086210,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011086860,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011088076,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011088334,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011151838,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011153309,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011153328,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011153809,Operation Ticket,Service Request / Operations,null,null
+INC000011154753,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011154793,Invalid test number,Unclassified,null,null
+INC000011159334,Backhaul,Access Network / Local Loop,null,null
+INC000011161356,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011157719,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011127905,Local Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011159309,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011159305,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011157659,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011188217,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011188192,Maintenance Notification Error - Partner,Planned Maintenance / Change,null,null
+INC000011176017,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011172911,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011189301,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011189289,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011189305,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011188169,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011110523,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011195922,No Fault Found,No Fault Found / Untraced,null,null
+INC000011206080,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011194713,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011196482,Prolonged Maintenance,Planned Maintenance / Change,null,null
+INC000011192082,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011135448,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011146409,No Fault Found,No Fault Found / Untraced,null,null
+INC000011146441,Mobility - Others,Unclassified,null,null
+INC000011147236,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011149415,IoT - Others,Unclassified,null,null
+INC000011168933,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011169865,Planned Outage,Planned Maintenance / Change,null,null
+INC000011155181,No Fault Found,No Fault Found / Untraced,null,null
+INC000011200902,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011203355,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011144409,Enquiry Completed,Service Request / Operations,null,null
+INC000011207950,No Fault Found,No Fault Found / Untraced,null,null
+INC000011210513,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011145404,Mobility - Network issue,Core Network / IP Backbone,null,null
+INC000011207964,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011207987,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011210761,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011218020,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011140514,Local Loop,Access Network / Local Loop,null,null
+INC000011068963,Local Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011089885,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086201,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011146348,Operation Ticket,Service Request / Operations,null,null
+INC000011121182,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011150313,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011148328,Planned Outage,Planned Maintenance / Change,null,null
+INC000011151267,Local Loop,Access Network / Local Loop,null,null
+INC000011086855,Non-Customer Fault Issues,Customer Side (CPE / Internal),null,null
+INC000011087254,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011088070,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011119996,No Fault Found,No Fault Found / Untraced,null,null
+INC000011152545,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011154797,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011154843,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011154836,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011178518,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011180363,Core Platform/Network,Platform / API / Portal,null,null
+INC000011180133,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011175990,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011186870,Planned Outage,Planned Maintenance / Change,null,null
+INC000011187988,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011123422,No Fault Found,No Fault Found / Untraced,null,null
+INC000011114423,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011198275,No Fault Found,No Fault Found / Untraced,null,null
+INC000011194698,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011192981,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011198278,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011199883,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011194254,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011192118,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011128704,Local Loop,Access Network / Local Loop,null,null
+INC000011132864,No Fault Found,No Fault Found / Untraced,null,null
+INC000011147177,Mobility - Others,Unclassified,null,null
+INC000011149392,Voice re-route,Partner / Carrier / Far-End,null,null
+INC000011162715,Core Platform/Network,Platform / API / Portal,null,null
+INC000011172172,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011170373,No Fault Found,No Fault Found / Untraced,null,null
+INC000011168935,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011170695,Backhaul,Access Network / Local Loop,null,null
+INC000011146435,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011145956,Voice re-route,Partner / Carrier / Far-End,null,null
+INC000011111660,Non-Customer Fault Issues,Customer Side (CPE / Internal),null,null
+INC000011193002,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011200895,Bad Weather,Force Majeure / External Event,null,null
+INC000011200909,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011145035,No Fault Found,No Fault Found / Untraced,null,null
+INC000011214360,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011218630,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011208296,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011143387,No Fault Found,No Fault Found / Untraced,null,null
+INC000011142024,Untraced Fault,No Fault Found / Untraced,null,null
+INC000010992271,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011095368,No Fault Found,No Fault Found / Untraced,null,null
+INC000011095196,IoT - Others,Unclassified,null,null
+INC000011095173,Operation Ticket,Service Request / Operations,null,null
+INC000011088279,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011075563,Operation Ticket,Service Request / Operations,null,null
+INC000010989813,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011150244,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011145028,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011136816,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011151330,Invalid test number,Unclassified,null,null
+INC000011147128,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011151813,Commercial issue,Commercial / Billing,null,null
+INC000011151791,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011152469,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011149324,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011153306,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011154765,Calling number blocked by Carrier/Local,Security / Policy Block,null,null
+INC000011156213,Backhaul,Access Network / Local Loop,null,null
+INC000011159670,Backhaul,Access Network / Local Loop,null,null
+INC000011153268,Operation Ticket,Service Request / Operations,null,null
+INC000011126257,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011162209,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011137232,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011183082,No Fault Found,No Fault Found / Untraced,null,null
+INC000011184897,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011186692,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011183145,Operation Ticket,Service Request / Operations,null,null
+INC000011186198,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011187983,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011186911,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011176844,Planned Outage,Planned Maintenance / Change,null,null
+INC000011119137,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011200200,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011135473,No Fault Found,No Fault Found / Untraced,null,null
+INC000011135789,No Fault Found,No Fault Found / Untraced,null,null
+INC000011147140,Commercial issue,Commercial / Billing,null,null
+INC000011147234,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011148330,No Fault Found,No Fault Found / Untraced,null,null
+INC000011167683,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011170711,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011147129,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011150167,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011170733,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011172193,Planned Outage,Planned Maintenance / Change,null,null
+INC000011164452,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011168198,Core Platform/Network,Platform / API / Portal,null,null
+INC000011168903,Planned Outage,Planned Maintenance / Change,null,null
+INC000011188173,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011208008,Planned Outage,Planned Maintenance / Change,null,null
+INC000011104216,No Fault Found,No Fault Found / Untraced,null,null
+INC000011190546,No Fault Found,No Fault Found / Untraced,null,null
+INC000011203352,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011210490,Backhaul,Access Network / Local Loop,null,null
+INC000011210800,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011208009,Core Platform/Network,Platform / API / Portal,null,null
+INC000011218634,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011208346,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011143386,No Fault Found,No Fault Found / Untraced,null,null
+INC000011144361,No Fault Found,No Fault Found / Untraced,null,null
+INC000010957774,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086890,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086850,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011150337,Fault cannot replicate,No Fault Found / Untraced,null,null
+INC000011151770,Mobility - Others,Unclassified,null,null
+INC000011152458,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011152493,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011151336,Operation Ticket,Service Request / Operations,null,null
+INC000011153252,Core Platform/Network,Platform / API / Portal,null,null
+INC000011149416,Mobility - Network issue,Core Network / IP Backbone,null,null
+INC000011156185,Operation Ticket,Service Request / Operations,null,null
+INC000011158577,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011161379,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011153826,Incident - Customer Error,Customer Side (CPE / Internal),null,null
+INC000011142151,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011140464,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011155172,No Fault Found,No Fault Found / Untraced,null,null
+INC000011148274,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011159255,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011145022,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011152520,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011136832,Core / Network / Hardware Issue,Core Network / IP Backbone,null,null
+INC000011177349,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011176846,Backhaul,Access Network / Local Loop,null,null
+INC000011177990,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011182510,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011185661,Core Platform/Network,Platform / API / Portal,null,null
+INC000011188165,Core Platform/Network,Platform / API / Portal,null,null
+INC000011189296,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011195923,No Fault Found,No Fault Found / Untraced,null,null
+INC000011196529,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011198340,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011134742,Core Platform/Network,Platform / API / Portal,null,null
+INC000011136508,Local Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011135800,No Fault Found,No Fault Found / Untraced,null,null
+INC000011149336,Planned Outage,Planned Maintenance / Change,null,null
+INC000011164495,Bad Weather,Force Majeure / External Event,null,null
+INC000011149422,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011145964,Non-Customer Fault Issues,Customer Side (CPE / Internal),null,null
+INC000011150268,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011186168,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011114661,No Fault Found,No Fault Found / Untraced,null,null
+INC000011205031,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011205810,Backhaul,Access Network / Local Loop,null,null
+INC000011191025,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011209307,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011209543,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011145003,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011208272,No Fault Found,No Fault Found / Untraced,null,null
+INC000011209449,Planned Outage,Planned Maintenance / Change,null,null
+INC000011210787,Backhaul,Access Network / Local Loop,null,null
+INC000011212451,Prolonged Maintenance,Planned Maintenance / Change,null,null
+INC000011139550,No Fault Found,No Fault Found / Untraced,null,null
+INC000011143293,Operation Ticket,Service Request / Operations,null,null
+INC000011140527,No Fault Found,No Fault Found / Untraced,null,null
+INC000011140541,Local Loop,Access Network / Local Loop,null,null
+INC000010988612,IoT - Others,Unclassified,null,null
+INC000011086858,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011085543,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011086882,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011082386,Local Loop,Access Network / Local Loop,null,null
+INC000011089931,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011088326,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011044708,IoT - Others,Unclassified,null,null
+INC000011097378,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011150305,IoT - Others,Unclassified,null,null
+INC000011150897,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011147125,No Fault Found,No Fault Found / Untraced,null,null
+INC000011151804,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011148337,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011068754,IoT - Others,Unclassified,null,null
+INC000011153253,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011153266,Local Loop,Access Network / Local Loop,null,null
+INC000011153270,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011157568,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011157571,Backhaul,Access Network / Local Loop,null,null
+INC000011132726,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011155518,Core Platform/Network,Platform / API / Portal,null,null
+INC000011161370,Local Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011159306,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011114966,Local Loop,Access Network / Local Loop,null,null
+INC000011176776,Planned Outage,Planned Maintenance / Change,null,null
+INC000011176755,Planned Outage,Planned Maintenance / Change,null,null
+INC000011178450,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011178465,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011184873,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011186681,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011173073,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011119044,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011189274,Planned Outage,Planned Maintenance / Change,null,null
+INC000010957778,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011111101,Non-Customer Fault Issues,Customer Side (CPE / Internal),null,null
+INC000011119952,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011108157,Local Loop,Access Network / Local Loop,null,null
+INC000011198255,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011207384,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011191430,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011194268,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011163248,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011126136,Planned Outage,Planned Maintenance / Change,null,null
+INC000011135505,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011082265,Provisioning/Installation issue,Provisioning / Configuration,null,null
+INC000011147940,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011162729,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011174577,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011203741,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011203428,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011204772,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011190502,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011204768,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011145014,No Fault Found,No Fault Found / Untraced,null,null
+INC000011218021,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011210775,Core Platform/Network,Platform / API / Portal,null,null
+INC000011218641,Right When Test,No Fault Found / Untraced,null,null
+INC000011208040,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011210753,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011141980,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011085540,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011087311,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011088250,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011096418,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011086241,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011151257,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011151265,Local Loop,Access Network / Local Loop,null,null
+INC000011086243,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011088989,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086884,Local Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011088068,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011141999,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011153261,Planned Outage,Planned Maintenance / Change,null,null
+INC000011154803,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011150237,No Fault Found,No Fault Found / Untraced,null,null
+INC000011157672,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011160383,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011159699,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011155232,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011153747,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011186887,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011188194,No Fault Found,No Fault Found / Untraced,null,null
+INC000011183876,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011127840,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011176008,Planned Outage,Planned Maintenance / Change,null,null
+INC000011173098,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011178503,Backhaul,Access Network / Local Loop,null,null
+INC000011172918,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011183137,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011189300,Core Platform/Network,Platform / API / Portal,null,null
+INC000011149348,Mobility - Network issue,Core Network / IP Backbone,null,null
+INC000011114431,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011107010,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011162233,No Fault Found,No Fault Found / Untraced,null,null
+INC000011194669,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011194321,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011162690,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011126278,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011135468,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011146023,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011149339,No Fault Found,No Fault Found / Untraced,null,null
+INC000011147928,Core Platform/Network,Platform / API / Portal,null,null
+INC000011150181,Mobility - Others,Unclassified,null,null
+INC000011147848,No Fault Found,No Fault Found / Untraced,null,null
+INC000011138259,No Fault Found,No Fault Found / Untraced,null,null
+INC000011146371,Non-Customer Fault Issues,Customer Side (CPE / Internal),null,null
+INC000011167731,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011150869,Operation Ticket,Service Request / Operations,null,null
+INC000011174268,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011199914,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011200894,No Fault Found,No Fault Found / Untraced,null,null
+INC000011202439,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011193567,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011193015,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011210453,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011214363,Bad Weather,Force Majeure / External Event,null,null
+INC000011219671,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011209311,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011209346,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011086221,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086223,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011095226,Mobility - Customer equipment issue,Customer Side (CPE / Internal),null,null
+INC000011057825,IoT - Others,Unclassified,null,null
+INC000011151775,No Fault Found,No Fault Found / Untraced,null,null
+INC000011152466,Local Loop,Access Network / Local Loop,null,null
+INC000011152459,Maintenance Notification Error - Partner,Planned Maintenance / Change,null,null
+INC000011131597,Core Platform/Network,Platform / API / Portal,null,null
+INC000011150898,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011147067,IoT - Coverage or mobile network problem in Hong Kong,Unclassified,null,null
+INC000011147154,Mobility - Equipment fault,Service Request / Operations,null,null
+INC000011073247,Operation Ticket,Service Request / Operations,null,null
+INC000011086222,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011087338,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000010915754,Operation Ticket,Service Request / Operations,null,null
+INC000011153277,No Fault Found,No Fault Found / Untraced,null,null
+INC000011153804,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011156182,No Fault Found,No Fault Found / Untraced,null,null
+INC000011156890,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011157649,Local ITMC Local Territorial Link,Access Network / Local Loop,null,null
+INC000011158598,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011159299,Core Platform/Network,Platform / API / Portal,null,null
+INC000011153284,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011144398,No Fault Found,No Fault Found / Untraced,null,null
+INC000011155477,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011159315,Backhaul,Access Network / Local Loop,null,null
+INC000011135772,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011173124,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011178474,Planned Outage,Planned Maintenance / Change,null,null
+INC000011182523,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011186705,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011186721,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011188036,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011189272,Backhaul,Access Network / Local Loop,null,null
+INC000011189298,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011107846,Colo - Remote Hand Service,Physical Infrastructure / Hardware,null,null
+INC000011180444,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011175963,Backhaul,Access Network / Local Loop,null,null
+INC000011180098,Planned Outage,Planned Maintenance / Change,null,null
+INC000011193640,Local ITMC Local Territorial Link,Access Network / Local Loop,null,null
+INC000011194703,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011196498,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011194328,Core Platform/Network,Platform / API / Portal,null,null
+INC000011203666,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011131616,Operation Ticket,Service Request / Operations,null,null
+INC000011147148,Local Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011147222,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011147165,Mobility - Others,Unclassified,null,null
+INC000011172227,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011061321,Local Loop,Access Network / Local Loop,null,null
+INC000011200891,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011203421,Planned Outage,Planned Maintenance / Change,null,null
+INC000011208034,Backhaul,Access Network / Local Loop,null,null
+INC000011212457,Backhaul,Access Network / Local Loop,null,null
+INC000011220740,Operation Ticket,Service Request / Operations,null,null
+INC000011212296,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011210769,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011138272,IoT - Others,Unclassified,null,null
+INC000011047818,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011076829,Satellite Interference,Physical Infrastructure / Hardware,null,null
+INC000011096420,Operation or Service Request,Service Request / Operations,null,null
+INC000011150855,No Fault Found,No Fault Found / Untraced,null,null
+INC000011145434,Non-Customer Fault Issues,Customer Side (CPE / Internal),null,null
+INC000011152483,Voice re-route,Partner / Carrier / Far-End,null,null
+INC000011123197,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011148297,Local Loop,Access Network / Local Loop,null,null
+INC000011144312,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011150899,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011150236,Mobility - Others,Unclassified,null,null
+INC000011129358,Untraced Fault,No Fault Found / Untraced,null,null
+INC000010754324,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011088947,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011077451,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011153267,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011153757,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011153767,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011157146,Local ITMC Local Territorial Link,Access Network / Local Loop,null,null
+INC000011159330,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011141951,Local Loop,Access Network / Local Loop,null,null
+INC000011156172,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011157049,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011158699,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011159650,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011149357,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011153749,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011146386,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011107844,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011145969,No Fault Found,No Fault Found / Untraced,null,null
+INC000011153275,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011176762,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011185683,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011173061,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011119110,Operation Ticket,Service Request / Operations,null,null
+INC000011119041,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011194259,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011207021,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011163252,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011192080,Core Platform/Network,Platform / API / Portal,null,null
+INC000011136841,Local ITMC Local Territorial Link,Access Network / Local Loop,null,null
+INC000011148276,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011150170,No Fault Found,No Fault Found / Untraced,null,null
+INC000011147210,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011172214,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011147117,Mobility - Network issue,Core Network / IP Backbone,null,null
+INC000011110484,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011204982,Backhaul,Access Network / Local Loop,null,null
+INC000011191034,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011145016,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011086914,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011085470,IoT - Others,Unclassified,null,null
+INC000011086851,Backhaul,Access Network / Local Loop,null,null
+INC000011147892,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011150878,Local Loop,Access Network / Local Loop,null,null
+INC000011149383,Local Loop,Access Network / Local Loop,null,null
+INC000011150861,Local Loop,Access Network / Local Loop,null,null
+INC000011143423,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011150320,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011153273,Planned Outage,Planned Maintenance / Change,null,null
+INC000011153302,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011161407,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011155451,Commercial issue,Commercial / Billing,null,null
+INC000011120984,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011158640,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011160424,Right When Test,No Fault Found / Untraced,null,null
+INC000011176009,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011176775,No Fault Found,No Fault Found / Untraced,null,null
+INC000011187964,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011176028,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011178471,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011178504,Planned Outage,Planned Maintenance / Change,null,null
+INC000011124542,Operation Ticket,Service Request / Operations,null,null
+INC000011194661,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011135803,No Fault Found,No Fault Found / Untraced,null,null
+INC000011146381,Mobility - General Inquiry,Service Request / Operations,null,null
+INC000011147138,Commercial issue,Commercial / Billing,null,null
+INC000011170696,Backhaul,Access Network / Local Loop,null,null
+INC000011172015,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011163291,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011169896,Operation Ticket,Service Request / Operations,null,null
+INC000011172004,Planned Outage,Planned Maintenance / Change,null,null
+INC000011142187,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011174271,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011109124,No Fault Found,No Fault Found / Untraced,null,null
+INC000011190490,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011200865,Planned Outage,Planned Maintenance / Change,null,null
+INC000011203410,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011203661,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011203397,Backhaul,Access Network / Local Loop,null,null
+INC000011204835,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011209471,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011145407,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011085542,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011024319,Operation Ticket,Service Request / Operations,null,null
+INC000011151789,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011152487,No Fault Found,No Fault Found / Untraced,null,null
+INC000011151781,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011150940,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011147185,Commercial issue,Commercial / Billing,null,null
+INC000011087250,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011106694,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011161112,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011153247,No Fault Found,No Fault Found / Untraced,null,null
+INC000011158563,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011159653,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011108240,Mobility - Configuration problem,Provisioning / Configuration,null,null
+INC000011149413,Mobility - Others,Unclassified,null,null
+INC000011184209,No Fault Found,No Fault Found / Untraced,null,null
+INC000011186696,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011186216,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011163253,Backhaul,Access Network / Local Loop,null,null
+INC000011176035,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011183859,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011176769,No Fault Found,No Fault Found / Untraced,null,null
+INC000011119018,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011124486,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011192085,No Fault Found,No Fault Found / Untraced,null,null
+INC000011192062,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011205827,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011203380,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011194660,Bad Weather,Force Majeure / External Event,null,null
+INC000011194294,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011207362,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011131624,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011145951,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011148248,No Fault Found,No Fault Found / Untraced,null,null
+INC000011148268,Mobility - Others,Unclassified,null,null
+INC000011164449,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011165682,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011170392,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011172908,Backhaul,Access Network / Local Loop,null,null
+INC000011110483,Maintenance Related,Planned Maintenance / Change,null,null
+INC000011114116,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011145427,No Fault Found,No Fault Found / Untraced,null,null
+INC000011193575,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011201139,Backhaul,Access Network / Local Loop,null,null
+INC000011207965,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011212281,Backhaul,Access Network / Local Loop,null,null
+INC000011218569,Planned Outage,Planned Maintenance / Change,null,null
+INC000011210469,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011209293,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011145391,Fault cannot replicate,No Fault Found / Untraced,null,null
+INC000011137616,Operation Ticket,Service Request / Operations,null,null
+INC000010989811,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011088112,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011088988,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011089369,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011152447,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011151798,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011152463,Mobility - Network issue,Core Network / IP Backbone,null,null
+INC000011150923,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011151294,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000010998661,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086230,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011088948,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011088067,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011088069,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011152513,Local Loop,Access Network / Local Loop,null,null
+INC000011153258,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011153288,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011153305,No Fault Found,No Fault Found / Untraced,null,null
+INC000011153806,No Fault Found,No Fault Found / Untraced,null,null
+INC000011139621,No Fault Found,No Fault Found / Untraced,null,null
+INC000011154846,Fault cannot replicate,No Fault Found / Untraced,null,null
+INC000011147106,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011158600,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011160404,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011154795,Local Loop,Access Network / Local Loop,null,null
+INC000011138486,No Fault Found,No Fault Found / Untraced,null,null
+INC000011155536,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011159718,Backhaul,Access Network / Local Loop,null,null
+INC000011159676,Backhaul,Access Network / Local Loop,null,null
+INC000011158607,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011146366,IoT - Network or APN configuration problem,Provisioning / Configuration,null,null
+INC000011180061,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011186933,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011173097,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011185702,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011186663,Right When Test,No Fault Found / Untraced,null,null
+INC000011147151,No Fault Found,No Fault Found / Untraced,null,null
+INC000011124253,No Fault Found,No Fault Found / Untraced,null,null
+INC000011194332,No Fault Found,No Fault Found / Untraced,null,null
+INC000011196460,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011196538,Planned Outage,Planned Maintenance / Change,null,null
+INC000011207405,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011199860,Planned Outage,Planned Maintenance / Change,null,null
+INC000011206146,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011127902,No Fault Found,No Fault Found / Untraced,null,null
+INC000011149281,Colo - Site/Rack Access,Physical Infrastructure / Hardware,null,null
+INC000011149355,Core Platform/Network,Platform / API / Portal,null,null
+INC000011163346,Core Platform/Network,Platform / API / Portal,null,null
+INC000011172228,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011156234,Operation Ticket,Service Request / Operations,null,null
+INC000011203372,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011205777,Operation Ticket,Service Request / Operations,null,null
+INC000011206138,Planned Outage,Planned Maintenance / Change,null,null
+INC000011202352,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011217393,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011219195,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011210536,No Fault Found,No Fault Found / Untraced,null,null
+INC000011209250,Commercial issue,Commercial / Billing,null,null
+INC000011216696,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011137245,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011139598,Satellite Interference,Physical Infrastructure / Hardware,null,null
+INC000011141979,Untraced Fault,No Fault Found / Untraced,null,null
+INC000010997819,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011089403,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011086856,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011090080,Operation Ticket,Service Request / Operations,null,null
+INC000011089879,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011086857,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011095168,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011096870,Fault cannot replicate,No Fault Found / Untraced,null,null
+INC000011150279,No Fault Found,No Fault Found / Untraced,null,null
+INC000011150920,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000010997844,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011147909,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011151790,Planned Outage,Planned Maintenance / Change,null,null
+INC000011143398,Mobility - General Inquiry,Service Request / Operations,null,null
+INC000011151278,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000010797260,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011086208,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086211,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086873,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086240,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000010997842,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011152506,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011152507,Core Platform/Network,Platform / API / Portal,null,null
+INC000011153294,Fault cannot replicate,No Fault Found / Untraced,null,null
+INC000011157587,Backhaul,Access Network / Local Loop,null,null
+INC000011161352,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011140539,Operation Ticket,Service Request / Operations,null,null
+INC000011157081,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011157648,Backhaul,Access Network / Local Loop,null,null
+INC000011160654,Backhaul,Access Network / Local Loop,null,null
+INC000011157595,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011130944,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011155151,Configuration problem,Provisioning / Configuration,null,null
+INC000011157674,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011178509,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011183874,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011183880,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011186939,Backhaul,Access Network / Local Loop,null,null
+INC000011188175,No Fault Found,No Fault Found / Untraced,null,null
+INC000011172849,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011176037,Backhaul,Access Network / Local Loop,null,null
+INC000011174584,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011177970,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011175959,Planned Outage,Planned Maintenance / Change,null,null
+INC000011176757,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011180076,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011123195,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011162691,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011137151,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011136829,Local Loop,Access Network / Local Loop,null,null
+INC000011135802,No Fault Found,No Fault Found / Untraced,null,null
+INC000011150223,No Fault Found,No Fault Found / Untraced,null,null
+INC000011165712,No Fault Found,No Fault Found / Untraced,null,null
+INC000011171970,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011143287,No Fault Found,No Fault Found / Untraced,null,null
+INC000011144344,Operation Ticket,Service Request / Operations,null,null
+INC000011169860,Planned Outage,Planned Maintenance / Change,null,null
+INC000011170705,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011163311,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011164503,Core Platform/Network,Platform / API / Portal,null,null
+INC000011147931,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011105753,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011202706,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011203667,Core Platform/Network,Platform / API / Portal,null,null
+INC000011209289,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011209300,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011210762,Backhaul,Access Network / Local Loop,null,null
+INC000011212268,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011208292,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011218592,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011219210,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011139567,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011088314,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086895,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086213,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011076792,Core Platform/Network,Platform / API / Portal,null,null
+INC000011086204,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011086238,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011091099,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011149338,No Fault Found,No Fault Found / Untraced,null,null
+INC000011150868,Mobility - Network issue,Core Network / IP Backbone,null,null
+INC000011147856,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011150917,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011141950,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011150936,Local Loop,Access Network / Local Loop,null,null
+INC000011150937,Local Loop,Access Network / Local Loop,null,null
+INC000011151788,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011150882,Mobility - Change Request,Provisioning / Configuration,null,null
+INC000011151335,Right When Test,No Fault Found / Untraced,null,null
+INC000011151255,Others,Unclassified,null,null
+INC000011149439,Fault cannot replicate,No Fault Found / Untraced,null,null
+INC000011147079,Mobility - Others,Unclassified,null,null
+INC000011151274,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011147084,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011089349,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011077452,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011153279,Planned Outage,Planned Maintenance / Change,null,null
+INC000011153831,Backhaul,Access Network / Local Loop,null,null
+INC000011151846,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011153832,Mobility - Others,Unclassified,null,null
+INC000011159674,Backhaul,Access Network / Local Loop,null,null
+INC000011178488,Bad Weather,Force Majeure / External Event,null,null
+INC000011178042,Backhaul,Access Network / Local Loop,null,null
+INC000011180071,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011180398,No Fault Found,No Fault Found / Untraced,null,null
+INC000011180132,No Fault Found,No Fault Found / Untraced,null,null
+INC000011183940,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011186912,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011118963,No Fault Found,No Fault Found / Untraced,null,null
+INC000011123386,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011044730,Mobility - Others,Unclassified,null,null
+INC000011194695,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011196483,Backhaul,Access Network / Local Loop,null,null
+INC000011195927,Planned Outage,Planned Maintenance / Change,null,null
+INC000011198280,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011197202,Backhaul,Access Network / Local Loop,null,null
+INC000011162675,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011190501,Backhaul,Access Network / Local Loop,null,null
+INC000011129436,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011126139,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011135801,No Fault Found,No Fault Found / Untraced,null,null
+INC000011145437,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011147158,No Fault Found,No Fault Found / Untraced,null,null
+INC000011147078,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011148271,No Fault Found,No Fault Found / Untraced,null,null
+INC000011150169,No Fault Found,No Fault Found / Untraced,null,null
+INC000011162734,Backhaul,Access Network / Local Loop,null,null
+INC000011164498,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011139131,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011147218,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011150248,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011144254,Local Loop,Access Network / Local Loop,null,null
+INC000011145438,Non-Customer Fault Issues,Customer Side (CPE / Internal),null,null
+INC000011173145,No Fault Found,No Fault Found / Untraced,null,null
+INC000011173101,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011201133,Planned Outage,Planned Maintenance / Change,null,null
+INC000011209460,Local ITMC Local Territorial Link,Access Network / Local Loop,null,null
+INC000011210810,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011217442,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011219182,Backhaul,Access Network / Local Loop,null,null
+INC000011210504,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011140818,No Fault Found,No Fault Found / Untraced,null,null
+INC000011087249,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011082096,Mobility - Others,Unclassified,null,null
+INC000011056252,IoT - Others,Unclassified,null,null
+INC000011099950,Operation Ticket,Service Request / Operations,null,null
+INC000011150238,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011149404,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011151823,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011086941,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086945,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011109838,Operation Ticket,Service Request / Operations,null,null
+INC000011131822,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011159328,Backhaul,Access Network / Local Loop,null,null
+INC000011110495,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011140776,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011161096,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011152496,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011154789,Calling number blocked by Carrier/Local,Security / Policy Block,null,null
+INC000011180351,Backhaul,Access Network / Local Loop,null,null
+INC000011183134,No Fault Found,No Fault Found / Untraced,null,null
+INC000011180122,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011182448,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011186695,Planned Outage,Planned Maintenance / Change,null,null
+INC000011189128,Core Platform/Network,Platform / API / Portal,null,null
+INC000011121651,Operation Ticket,Service Request / Operations,null,null
+INC000011195862,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011195879,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011197183,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011198313,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011205034,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011207378,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011136797,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011137202,Local ITMC Local Territorial Link,Access Network / Local Loop,null,null
+INC000011145439,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011165675,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011168157,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011175611,Bad Weather,Force Majeure / External Event,null,null
+INC000011165745,No Fault Found,No Fault Found / Untraced,null,null
+INC000011132937,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011147205,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011147885,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011168172,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011182521,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011102817,No Fault Found,No Fault Found / Untraced,null,null
+INC000011202725,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011203679,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011210525,Backhaul,Access Network / Local Loop,null,null
+INC000011138498,Local Loop,Access Network / Local Loop,null,null
+INC000011012632,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011086867,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011076809,IoT - Others,Unclassified,null,null
+INC000011086212,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011086229,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011086852,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011095441,Local Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011101678,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011143408,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011147105,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011152453,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011151291,No Fault Found,No Fault Found / Untraced,null,null
+INC000011152467,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011147932,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011151266,Local Loop,Access Network / Local Loop,null,null
+INC000011145017,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011156195,Backhaul,Access Network / Local Loop,null,null
+INC000011159324,Backhaul,Access Network / Local Loop,null,null
+INC000011129387,Operation Ticket,Service Request / Operations,null,null
+INC000011157143,Planned Outage,Planned Maintenance / Change,null,null
+INC000011162194,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011145393,IoT - Network connectivity problem,Core Network / IP Backbone,null,null
+INC000011176040,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011169889,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011180106,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011164539,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011135454,No Fault Found,No Fault Found / Untraced,null,null
+INC000011176758,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011115975,No Fault Found,No Fault Found / Untraced,null,null
+INC000011123353,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011194673,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011194711,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011197212,Backhaul,Access Network / Local Loop,null,null
+INC000011126138,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011114717,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011148316,No Fault Found,No Fault Found / Untraced,null,null
+INC000011162730,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011172160,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011147235,No Fault Found,No Fault Found / Untraced,null,null
+INC000011170732,No Fault Found,No Fault Found / Untraced,null,null
+INC000011169891,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011192058,Backhaul,Access Network / Local Loop,null,null
+INC000011203662,Core Platform/Network,Platform / API / Portal,null,null
+INC000011203730,Right When Test,No Fault Found / Untraced,null,null
+INC000011204834,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011205844,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011212518,Core Platform/Network,Platform / API / Portal,null,null
+INC000011220666,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011217386,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011143295,No Fault Found,No Fault Found / Untraced,null,null
+INC000010990007,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011086875,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011091133,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011145414,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011147943,Core / Network / Hardware Issue,Core Network / IP Backbone,null,null
+INC000011146420,Backhaul,Access Network / Local Loop,null,null
+INC000011149269,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011088990,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011152522,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011154776,Calling number blocked by Carrier/Local,Security / Policy Block,null,null
+INC000011158725,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011160702,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011135836,No Fault Found,No Fault Found / Untraced,null,null
+INC000011158701,No Fault Found,No Fault Found / Untraced,null,null
+INC000011153345,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011151832,Customer Equipment,Customer Side (CPE / Internal),null,null
+INC000011131778,Far End Fault,Partner / Carrier / Far-End,null,null
+INC000011162210,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011170702,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011177442,No Fault Found,No Fault Found / Untraced,null,null
+INC000011186165,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011186906,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011197149,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011193573,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011198344,Untraced Fault,No Fault Found / Untraced,null,null
+INC000011126282,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011147060,Mobility - Others,Unclassified,null,null
+INC000011170395,No Fault Found,No Fault Found / Untraced,null,null
+INC000011149261,Customer equipment,Customer Side (CPE / Internal),null,null
+INC000011147176,No Fault Found,No Fault Found / Untraced,null,null
+INC000011163283,No Fault Found,No Fault Found / Untraced,null,null
+INC000011168177,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011123232,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011107273,Operation Ticket,Service Request / Operations,null,null
+INC000011201047,Backhaul,Access Network / Local Loop,null,null
+INC000011206087,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011200211,Operation Ticket,Service Request / Operations,null,null
+INC000011191424,Core Platform/Network,Platform / API / Portal,null,null
+INC000011205773,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011143272,Mobility - Others,Unclassified,null,null
+INC000011208280,Backhaul,Access Network / Local Loop,null,null
+INC000011216157,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011219225,Backhaul,Access Network / Local Loop,null,null
+INC000011218022,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011138448,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000010802937,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011145023,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011096442,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011089348,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011088145,Force Majeure/Uncontrollable,Force Majeure / External Event,null,null
+INC000011161052,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011167713,International Link/Trunk or Submarine cable,International Transport,null,null
+INC000011151774,Others,Unclassified,null,null
+INC000011088307,International Network Service Degradation,Performance / Quality Degradation,null,null
+INC000011086200,International Network Service Degradation,Performance / Quality Degradation,null,null

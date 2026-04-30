@@ -9,6 +9,7 @@ import uuid
 import time
 import random
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from google.cloud import bigquery, secretmanager
 import functions_framework
@@ -35,6 +36,13 @@ CACHE_BATCHED_FETCH_SIZE = int(os.environ.get('CACHE_BATCHED_FETCH_SIZE', '500')
 CACHE_BATCH_DURATION_SEC = int(os.environ.get('CACHE_BATCH_DURATION_SEC', '120'))  # 2-minute window
 MAX_RUN_SECONDS = int(os.environ.get('MAX_RUN_SECONDS', '3300'))  # Exit before 3600s hard timeout
 RUNNING_STALE_MINUTES = int(os.environ.get('RUNNING_STALE_MINUTES', '70'))  # Auto-clean stale RUNNING rows sooner
+BASE_WINDOW_DAYS = int(os.environ.get('BASE_WINDOW_DAYS', '1'))
+BASE_WINDOW_HOURS = float(os.environ.get('BASE_WINDOW_HOURS', str(BASE_WINDOW_DAYS * 24)))
+MIN_ADAPTIVE_WINDOW_HOURS = float(os.environ.get('MIN_ADAPTIVE_WINDOW_HOURS', '2'))
+MAX_ADAPTIVE_WINDOW_HOURS = float(os.environ.get('MAX_ADAPTIVE_WINDOW_HOURS', '720'))
+ADAPTIVE_TARGET_ROWS = int(os.environ.get('ADAPTIVE_TARGET_ROWS', '4000'))
+ADAPTIVE_LOW_WATERMARK_ROWS = int(os.environ.get('ADAPTIVE_LOW_WATERMARK_ROWS', '800'))
+ADAPTIVE_HIGH_WATERMARK_ROWS = int(os.environ.get('ADAPTIVE_HIGH_WATERMARK_ROWS', '12000'))
 
 DEFAULT_PROJECTS = [
     'GS&O Data Analytics',
@@ -56,6 +64,7 @@ DEFAULT_PROJECTS = [
     'Operational Case Reviews',
     'IT Helpdesk',
     'Vendor Verification Team',
+    'IPECR',
     'GS&O Strategic Initiatives'
 ]
 
@@ -65,6 +74,10 @@ ROOT_CAUSE_JIRA_ID = 'customfield_10775'
 RESOLUTION_SECURITY_JIRA_ID = 'customfield_11349'
 SYMPTOMS_JIRA_ID = 'customfield_11365'
 ATTACK_JIRA_ID = 'customfield_15295'
+FEATURE_TEAM_JIRA_ID = 'customfield_10780'
+REMEDY_TICKET_MIGRATED_JIRA_ID = 'customfield_10647'
+MAINTENANCE_WINDOW_START_JIRA_ID = 'customfield_10514'
+MAINTENANCE_WINDOW_END_JIRA_ID = 'customfield_10515'
 
 
 def to_utc_aware(dt):
@@ -138,6 +151,27 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
     ).result()
     client.query(
         f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Description STRING"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IssueId STRING"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS ReporterId STRING"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS AssigneeId STRING"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS DueDate DATE"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS FeatureTeam STRING"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS MaintenanceWindowStart TIMESTAMP"
+    ).result()
+    client.query(
+        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS MaintenanceWindowEnd TIMESTAMP"
     ).result()
 
     labels_field = existing_fields.get('Labels')
@@ -235,35 +269,81 @@ def get_known_project_keys(client, dataset_id, table_id, project):
     return {r.Key for r in rows if getattr(r, 'Key', None)}
 
 
-def get_very_stale_project_keys(client, dataset_id, table_id, project, stale_days=30):
-    """Return keys in BQ that haven't been updated in > stale_days."""
+def get_recent_window_metrics(client, dataset_id, table_id, project, sample_size=5):
+    """Return recent complete windows for adaptive sizing."""
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter('p', 'STRING', project),
-            bigquery.ScalarQueryParameter('stale_cutoff', 'TIMESTAMP', 
-              (datetime.now(timezone.utc) - timedelta(days=stale_days))),
+            bigquery.ScalarQueryParameter('n', 'INT64', int(sample_size)),
         ]
     )
     rows = client.query(
         f"""
-        WITH latest AS (
-          SELECT Key, SyncTime,
-                 ROW_NUMBER() OVER (PARTITION BY Key ORDER BY SyncTime DESC, Updated DESC) AS rn
-          FROM `{dataset_id}.{table_id}`
-          WHERE Project = @p
-            AND Key IS NOT NULL
-            AND TRIM(Key) <> ''
-        )
-        SELECT DISTINCT Key
-        FROM latest
-        WHERE rn = 1 AND SyncTime < @stale_cutoff
+        SELECT
+          RowCount,
+          TIMESTAMP_DIFF(WindowEnd, WindowStart, SECOND) AS WindowSeconds
+        FROM `{dataset_id}.{table_id}`
+        WHERE Project=@p
+          AND Status='complete'
+          AND RowCount IS NOT NULL
+          AND WindowEnd > WindowStart
+        ORDER BY LastRun DESC
+        LIMIT @n
         """,
         job_config=job_config,
     ).result()
-    return {r.Key for r in rows if getattr(r, 'Key', None)}
+
+    metrics = []
+    for r in rows:
+        try:
+            rc = int(r.RowCount)
+            sec = int(r.WindowSeconds)
+            if sec > 0:
+                metrics.append((rc, sec))
+        except Exception:
+            continue
+    return metrics
 
 
-def select_window(client, dataset_id, table_id, project, base_days=3):
+def choose_window_hours(client, dataset_id, table_id, project):
+    """Choose next window size using recent rows-per-hour density."""
+    min_hours = max(MIN_ADAPTIVE_WINDOW_HOURS, 1.0)
+    max_hours = max(MAX_ADAPTIVE_WINDOW_HOURS, min_hours)
+    base_hours = min(max(BASE_WINDOW_HOURS, min_hours), max_hours)
+
+    metrics = get_recent_window_metrics(client, dataset_id, table_id, project)
+    if not metrics:
+        logging.info(f"Adaptive window bootstrap (default): {base_hours:.2f}h")
+        return base_hours
+
+    total_rows = sum(rc for rc, _ in metrics)
+    total_hours = sum(sec for _, sec in metrics) / 3600.0
+    rows_per_hour = (total_rows / total_hours) if total_hours > 0 else 0.0
+    last_rows = metrics[0][0]
+
+    if rows_per_hour <= 0:
+        adaptive_hours = max_hours
+    else:
+        adaptive_hours = ADAPTIVE_TARGET_ROWS / rows_per_hour
+
+    if last_rows >= ADAPTIVE_HIGH_WATERMARK_ROWS:
+        adaptive_hours *= 0.5
+    elif last_rows <= ADAPTIVE_LOW_WATERMARK_ROWS:
+        adaptive_hours *= 1.5
+
+    adaptive_hours = min(max(adaptive_hours, min_hours), max_hours)
+    logging.info(
+        "Adaptive window chosen for %s: %.2fh (rows_per_hour=%.2f, last_rows=%s, sample=%s)",
+        project,
+        adaptive_hours,
+        rows_per_hour,
+        last_rows,
+        len(metrics),
+    )
+    return adaptive_hours
+
+
+def select_window(client, dataset_id, table_id, project):
     now = datetime.now(timezone.utc)
     ws = None
     we = None
@@ -311,7 +391,8 @@ def select_window(client, dataset_id, table_id, project, base_days=3):
     else:
         start = MIN_START
 
-    end = start + timedelta(days=base_days)
+    window_hours = choose_window_hours(client, dataset_id, table_id, project)
+    end = start + timedelta(hours=window_hours)
     end = min(end, now)
 
     # Final check: if resulting window is too small, return None
@@ -453,6 +534,12 @@ def extract_issue_links(issuelinks):
     return ', '.join(links) if links else None
 
 
+def extract_incident_numbers(remedy_ticket_number):
+    if not remedy_ticket_number:
+        return []
+    return re.findall(r'INC\d{9,}', str(remedy_ticket_number))
+
+
 def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name):
     if not issue:
         return None
@@ -466,14 +553,22 @@ def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name):
         "T": fields.get('issuetype', {}).get('name'),
         "Project": fields.get('project', {}).get('name'),
         "Key": key,
+        "IssueId": issue.get('id'),
         "Summary": fields.get('summary'),
         "Status": fields.get('status', {}).get('name'),
         "Created": convert_timestamp(fields.get('created')),
         "Updated": convert_timestamp(fields.get('updated')),
         "Resolved": convert_timestamp(fields.get('resolutiondate')),
+        "DueDate": fields.get('duedate'),
         "Reporter": get_field_value(fields.get('reporter')),
+        "ReporterId": (fields.get('reporter') or {}).get('accountId') if isinstance(fields.get('reporter'), dict) else None,
         "Assignee": get_field_value(fields.get('assignee')),
+        "AssigneeId": (fields.get('assignee') or {}).get('accountId') if isinstance(fields.get('assignee'), dict) else None,
         "Component": ', '.join([get_field_value(component) for component in fields.get('components', [])]) if fields.get('components') else None,
+        "FeatureTeam": get_field_value(fields.get(FEATURE_TEAM_JIRA_ID)),
+        "MaintenanceWindowStart": convert_timestamp(fields.get(MAINTENANCE_WINDOW_START_JIRA_ID)),
+        "MaintenanceWindowEnd": convert_timestamp(fields.get(MAINTENANCE_WINDOW_END_JIRA_ID)),
+        "RemedyTicketNumber": ', '.join(extract_incident_numbers(get_field_value(fields.get(REMEDY_TICKET_MIGRATED_JIRA_ID)) or get_field_value(fields.get('customfield_10088')))) or get_field_value(fields.get(REMEDY_TICKET_MIGRATED_JIRA_ID)) or get_field_value(fields.get('customfield_10088')),
         "Links": extract_issue_links(fields.get('issuelinks')),
         "Description": extract_adf_text(fields.get('description')),
         "Attachment": json.dumps(fields.get('attachment')) if fields.get('attachment') else None,
@@ -549,6 +644,7 @@ def fetch_and_sync_jira_tickets_nightly():
             bigquery.SchemaField("T", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Project", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Key", "STRING", mode="REQUIRED"),
+            bigquery.SchemaField("IssueId", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Summary", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Status", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Priority", "STRING", mode="NULLABLE"),
@@ -556,9 +652,15 @@ def fetch_and_sync_jira_tickets_nightly():
             bigquery.SchemaField("Created", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("Updated", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("Resolved", "TIMESTAMP", mode="NULLABLE"),
+            bigquery.SchemaField("DueDate", "DATE", mode="NULLABLE"),
             bigquery.SchemaField("Reporter", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("ReporterId", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Assignee", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("AssigneeId", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Component", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("FeatureTeam", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("MaintenanceWindowStart", "TIMESTAMP", mode="NULLABLE"),
+            bigquery.SchemaField("MaintenanceWindowEnd", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Description", "STRING", mode="NULLABLE"),
@@ -587,6 +689,7 @@ def fetch_and_sync_jira_tickets_nightly():
             'created',
             'updated',
             'resolutiondate',
+            'duedate',
             'reporter',
             'assignee',
             'components',
@@ -596,6 +699,7 @@ def fetch_and_sync_jira_tickets_nightly():
             'description',
             'labels',
             'attachment',
+            'customfield_10088',
             SR_REF_JIRA_ID,
             ASSOCIATED_TEAM_JIRA_ID,
             TRANSACTION_STATUS_JIRA_ID,
@@ -605,6 +709,10 @@ def fetch_and_sync_jira_tickets_nightly():
             RESOLUTION_SECURITY_JIRA_ID,
             SYMPTOMS_JIRA_ID,
             ATTACK_JIRA_ID,
+            FEATURE_TEAM_JIRA_ID,
+            REMEDY_TICKET_MIGRATED_JIRA_ID,
+            MAINTENANCE_WINDOW_START_JIRA_ID,
+            MAINTENANCE_WINDOW_END_JIRA_ID,
         ]
 
         def search_issues(jql: str, label: str, fields):
@@ -730,7 +838,19 @@ def fetch_and_sync_jira_tickets_nightly():
 
         # Use single temp table with run_id suffix for all projects
         temp_table_id_run = f"{temp_table_id}_{run_id.replace('-', '_')[:8]}"
-        
+
+        # Clean up orphaned temp tables from previous crashed runs (older than 2h)
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+            for tbl in client.list_tables(f"{client.project}.{dataset_id}"):
+                if tbl.table_id.startswith(temp_table_id + '_') and tbl.table_id != temp_table_id_run:
+                    tbl_ref = client.get_table(f"{dataset_id}.{tbl.table_id}")
+                    if tbl_ref.created.replace(tzinfo=timezone.utc) < cutoff:
+                        client.delete_table(tbl_ref, not_found_ok=True)
+                        logging.info(f"Cleaned up orphaned temp table: {tbl.table_id}")
+        except Exception as _cleanup_ex:
+            logging.warning(f"Orphan temp table cleanup failed (non-fatal): {_cleanup_ex}")
+
         # Create temp table once for all projects
         if not create_or_replace_temp_table(client, dataset_id, temp_table_id_run, bq_schema):
             logging.error("Failed to create temp table for run.")
@@ -757,7 +877,7 @@ def fetch_and_sync_jira_tickets_nightly():
                     budget_reached = True
                     break
 
-                ws, we = select_window(client, dataset_id, progress_table_id, proj, base_days=1)
+                ws, we = select_window(client, dataset_id, progress_table_id, proj)
                 if not ws or not we:
                     logging.info(f"No further window for {proj} (too close to now or complete)")
                     break
@@ -819,6 +939,7 @@ def fetch_and_sync_jira_tickets_nightly():
                         WHEN MATCHED THEN UPDATE SET
                             T.T = S.T,
                             T.Project = S.Project,
+                            T.IssueId = S.IssueId,
                             T.Summary = S.Summary,
                             T.Status = S.Status,
                             T.Priority = S.Priority,
@@ -826,9 +947,17 @@ def fetch_and_sync_jira_tickets_nightly():
                             T.Created = S.Created,
                             T.Updated = S.Updated,
                             T.Resolved = S.Resolved,
+                            T.DueDate = S.DueDate,
                             T.Reporter = S.Reporter,
+                            T.ReporterId = S.ReporterId,
                             T.Assignee = S.Assignee,
+                            T.AssigneeId = S.AssigneeId,
                             T.Component = IF(S.Component IS NULL, NULL, [S.Component]),
+                            T.FeatureTeam = S.FeatureTeam,
+                            T.MaintenanceWindowStart = S.MaintenanceWindowStart,
+                            T.MaintenanceWindowEnd = S.MaintenanceWindowEnd,
+                            T.RemedyTicketNumber = IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]),
+                            T.Links = S.Links,
                             T.Description = S.Description,
                             T.Labels = S.Labels,
                             T.Attachment = S.Attachment,
@@ -840,11 +969,12 @@ def fetch_and_sync_jira_tickets_nightly():
                             T.RootCause = S.RootCause,
                             T.ResolutionSecurity = S.ResolutionSecurity,
                             T.Symptoms = S.Symptoms,
+                            T.ATTCK = S.ATTCK,
                             T.SyncTime = S.SyncTime,
                             T.IsDeleted = FALSE,
                             T.DeletedAt = NULL
-                        WHEN NOT MATCHED THEN INSERT (T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, SyncTime, IsDeleted, DeletedAt)
-                        VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.SyncTime, FALSE, NULL)
+                        WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, SyncTime, IsDeleted, DeletedAt)
+                        VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.SyncTime, FALSE, NULL)
                     '''
                     client.query(merge_query).result()
                     logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")
@@ -872,7 +1002,7 @@ def fetch_and_sync_jira_tickets_nightly():
             if budget_reached:
                 break
 
-            # Nightly catch-up: fill active Jira keys missing in BQ, and refresh very stale rows.
+            # Nightly catch-up: fill active Jira keys missing in BQ.
             if MISSING_KEY_CATCHUP_PER_PROJECT > 0 and not budget_reached:
                 try:
                     catchup_keys, catchup_had_error = search_issue_keys(proj_clause, f'catchup_keyset:{proj}')
@@ -884,22 +1014,14 @@ def fetch_and_sync_jira_tickets_nightly():
                     
                     # Find missing keys
                     missing_keys = sorted([k for k in project_current_keys if k not in known_keys])
-                    
-                    # Find very stale keys (>30 days old without update)
-                    stale_keys = sorted(get_very_stale_project_keys(client, dataset_id, table_id, proj, stale_days=30))
-                    
-                    # Combine and deduplicate
-                    to_refresh = sorted(set(missing_keys + stale_keys))
-                    
+
                     # Limit total per run
-                    to_fetch = to_refresh[:MISSING_KEY_CATCHUP_PER_PROJECT]
+                    to_fetch = missing_keys[:MISSING_KEY_CATCHUP_PER_PROJECT]
                     
                     if to_fetch:
-                        missing_count = len([k for k in to_fetch if k in missing_keys])
-                        stale_count = len([k for k in to_fetch if k in stale_keys])
                         logging.info(
-                            f"[{proj}] Catch-up: {len(missing_keys)} missing keys, {len(stale_keys)} stale keys; "
-                            f"fetching {len(to_fetch)} ({missing_count} missing + {stale_count} stale) this run"
+                            f"[{proj}] Catch-up: {len(missing_keys)} missing keys; "
+                            f"fetching {len(to_fetch)} this run"
                         )
 
                         # Use batched fetch and insert to minimize memory usage
@@ -920,6 +1042,7 @@ def fetch_and_sync_jira_tickets_nightly():
                                 WHEN MATCHED THEN UPDATE SET
                                     T.T = S.T,
                                     T.Project = S.Project,
+                                    T.IssueId = S.IssueId,
                                     T.Summary = S.Summary,
                                     T.Status = S.Status,
                                     T.Priority = S.Priority,
@@ -927,9 +1050,17 @@ def fetch_and_sync_jira_tickets_nightly():
                                     T.Created = S.Created,
                                     T.Updated = S.Updated,
                                     T.Resolved = S.Resolved,
+                                    T.DueDate = S.DueDate,
                                     T.Reporter = S.Reporter,
+                                    T.ReporterId = S.ReporterId,
                                     T.Assignee = S.Assignee,
+                                    T.AssigneeId = S.AssigneeId,
                                     T.Component = IF(S.Component IS NULL, NULL, [S.Component]),
+                                    T.FeatureTeam = S.FeatureTeam,
+                                    T.MaintenanceWindowStart = S.MaintenanceWindowStart,
+                                    T.MaintenanceWindowEnd = S.MaintenanceWindowEnd,
+                                    T.RemedyTicketNumber = IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]),
+                                    T.Links = S.Links,
                                     T.Description = S.Description,
                                     T.Labels = S.Labels,
                                     T.Attachment = S.Attachment,
@@ -941,11 +1072,12 @@ def fetch_and_sync_jira_tickets_nightly():
                                     T.RootCause = S.RootCause,
                                     T.ResolutionSecurity = S.ResolutionSecurity,
                                     T.Symptoms = S.Symptoms,
+                                    T.ATTCK = S.ATTCK,
                                     T.SyncTime = S.SyncTime,
                                     T.IsDeleted = FALSE,
                                     T.DeletedAt = NULL
-                                WHEN NOT MATCHED THEN INSERT (T, Project, Key, Summary, Status, Priority, Resolution, Created, Updated, Resolved, Reporter, Assignee, Component, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, SyncTime, IsDeleted, DeletedAt)
-                                VALUES (S.T, S.Project, S.Key, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.Reporter, S.Assignee, IF(S.Component IS NULL, NULL, [S.Component]), S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.SyncTime, FALSE, NULL)
+                                WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, SyncTime, IsDeleted, DeletedAt)
+                                VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.SyncTime, FALSE, NULL)
                             '''
                             client.query(merge_query).result()
                             total_rows_merged += catchup_rows_count

@@ -32,6 +32,12 @@ DEFAULT_BASE_WINDOW_DAYS = int(os.environ.get('BASE_WINDOW_DAYS', '1'))
 BACKFILL_MODE = os.environ.get('BACKFILL_MODE', '').strip().lower() == 'true'
 BACKFILL_BASE_WINDOW_DAYS = int(os.environ.get('BACKFILL_BASE_WINDOW_DAYS', '14'))
 MAX_BASE_WINDOW_DAYS = int(os.environ.get('MAX_BASE_WINDOW_DAYS', '30'))
+BASE_WINDOW_HOURS = float(os.environ.get('BASE_WINDOW_HOURS', str(DEFAULT_BASE_WINDOW_DAYS * 24)))
+MIN_ADAPTIVE_WINDOW_HOURS = float(os.environ.get('MIN_ADAPTIVE_WINDOW_HOURS', '2'))
+MAX_ADAPTIVE_WINDOW_HOURS = float(os.environ.get('MAX_ADAPTIVE_WINDOW_HOURS', str(MAX_BASE_WINDOW_DAYS * 24)))
+ADAPTIVE_TARGET_ROWS = int(os.environ.get('ADAPTIVE_TARGET_ROWS', '1500'))
+ADAPTIVE_LOW_WATERMARK_ROWS = int(os.environ.get('ADAPTIVE_LOW_WATERMARK_ROWS', '300'))
+ADAPTIVE_HIGH_WATERMARK_ROWS = int(os.environ.get('ADAPTIVE_HIGH_WATERMARK_ROWS', '5000'))
 
 # Debug logging at module init
 logging.debug(f"ENV CONFIG: BASE_WINDOW_DAYS={DEFAULT_BASE_WINDOW_DAYS}, BACKFILL_MODE={BACKFILL_MODE}, BACKFILL_BASE_WINDOW_DAYS={BACKFILL_BASE_WINDOW_DAYS}, MAX_BASE_WINDOW_DAYS={MAX_BASE_WINDOW_DAYS}")
@@ -56,6 +62,7 @@ DEFAULT_PROJECTS = [
     'Operational Case Reviews',
     'IT Helpdesk',
     'Vendor Verification Team',
+    'IPECR',
     'GS&O Strategic Initiatives'
 ]
 
@@ -92,36 +99,89 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
 
 
 def choose_window_days(now, latest_window_end):
-    """Choose dynamic window size for backfill while keeping daily mode stable."""
-    base_days = max(DEFAULT_BASE_WINDOW_DAYS, 1)
-    max_days = max(MAX_BASE_WINDOW_DAYS, base_days)
+    """Legacy wrapper kept for compatibility; adaptive logic now works in hours."""
+    _ = now
+    _ = latest_window_end
+    hours = max(BASE_WINDOW_HOURS, MIN_ADAPTIVE_WINDOW_HOURS)
+    return hours / 24.0
 
-    if not BACKFILL_MODE:
-        logging.info(f"BACKFILL_MODE is False, returning base {base_days} days")
-        return min(base_days, max_days)
 
-    if latest_window_end is None:
-        logging.info(f"No prior window, returning BACKFILL_BASE_WINDOW_DAYS {BACKFILL_BASE_WINDOW_DAYS} days")
-        return min(max(BACKFILL_BASE_WINDOW_DAYS, base_days), max_days)
+def get_recent_window_metrics(client, dataset_id, table_id, project, sample_size=5):
+    """Return recent complete windows for adaptive sizing."""
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('p', 'STRING', project),
+            bigquery.ScalarQueryParameter('n', 'INT64', int(sample_size)),
+        ]
+    )
+    rows = client.query(
+        f"""
+        SELECT
+          RowCount,
+          TIMESTAMP_DIFF(WindowEnd, WindowStart, SECOND) AS WindowSeconds
+        FROM `{dataset_id}.{table_id}`
+        WHERE Project=@p
+          AND Status='complete'
+          AND RowCount IS NOT NULL
+          AND WindowEnd > WindowStart
+        ORDER BY LastRun DESC
+        LIMIT @n
+        """,
+        job_config=job_config,
+    ).result()
 
-    lag_days = max(int((now - latest_window_end).total_seconds() // 86400), 0)
-    candidate_days = BACKFILL_BASE_WINDOW_DAYS
-    if lag_days >= 365:
-        candidate_days = max(candidate_days, 30)
-        logging.info(f"Lag {lag_days} days >= 365, using 30-day window")
-    elif lag_days >= 90:
-        candidate_days = max(candidate_days, 14)
-        logging.info(f"Lag {lag_days} days >= 90, using 14-day window")
-    elif lag_days >= 30:
-        candidate_days = max(candidate_days, 7)
-        logging.info(f"Lag {lag_days} days >= 30, using 7-day window")
+    metrics = []
+    for r in rows:
+        try:
+            rc = int(r.RowCount)
+            sec = int(r.WindowSeconds)
+            if sec > 0:
+                metrics.append((rc, sec))
+        except Exception:
+            continue
+    return metrics
+
+
+def choose_window_hours(client, dataset_id, table_id, project):
+    """Choose next window size using recent rows-per-hour density."""
+    min_hours = max(MIN_ADAPTIVE_WINDOW_HOURS, 1.0)
+    max_hours = max(MAX_ADAPTIVE_WINDOW_HOURS, min_hours)
+    base_hours = min(max(BASE_WINDOW_HOURS, min_hours), max_hours)
+
+    metrics = get_recent_window_metrics(client, dataset_id, table_id, project)
+    if not metrics:
+        if BACKFILL_MODE:
+            bootstrap_hours = min(max(BACKFILL_BASE_WINDOW_DAYS * 24.0, min_hours), max_hours)
+            logging.info(f"Adaptive window bootstrap (backfill mode): {bootstrap_hours:.2f}h")
+            return bootstrap_hours
+        logging.info(f"Adaptive window bootstrap (default): {base_hours:.2f}h")
+        return base_hours
+
+    total_rows = sum(rc for rc, _ in metrics)
+    total_hours = sum(sec for _, sec in metrics) / 3600.0
+    rows_per_hour = (total_rows / total_hours) if total_hours > 0 else 0.0
+    last_rows = metrics[0][0]
+
+    if rows_per_hour <= 0:
+        adaptive_hours = max_hours
     else:
-        candidate_days = max(candidate_days, base_days)
-        logging.info(f"Lag {lag_days} days < 30, using base {base_days}-day window")
+        adaptive_hours = ADAPTIVE_TARGET_ROWS / rows_per_hour
 
-    result = min(max(candidate_days, base_days), max_days)
-    logging.info(f"choose_window_days: lag_days={lag_days}, candidate={candidate_days}, result={result}")
-    return result
+    if last_rows >= ADAPTIVE_HIGH_WATERMARK_ROWS:
+        adaptive_hours *= 0.5
+    elif last_rows <= ADAPTIVE_LOW_WATERMARK_ROWS:
+        adaptive_hours *= 1.5
+
+    adaptive_hours = min(max(adaptive_hours, min_hours), max_hours)
+    logging.info(
+        "Adaptive window chosen for %s: %.2fh (rows_per_hour=%.2f, last_rows=%s, sample=%s)",
+        project,
+        adaptive_hours,
+        rows_per_hour,
+        last_rows,
+        len(metrics),
+    )
+    return adaptive_hours
 
 
 def select_window(client, dataset_id, table_id, project):
@@ -169,8 +229,8 @@ def select_window(client, dataset_id, table_id, project):
     else:
         start = MIN_START
 
-    window_days = choose_window_days(now, latest)
-    end = start + timedelta(days=window_days)
+    window_hours = choose_window_hours(client, dataset_id, table_id, project)
+    end = start + timedelta(hours=window_hours)
     end = min(end, now)
     try:
         if (end - start).total_seconds() / 3600.0 < MIN_WINDOW_HOURS:
@@ -442,6 +502,18 @@ def fetch_and_sync_jira_comments_nightly():
                             'Visibility_Value': vis.get('value'),
                             'SyncTime': now_str,
                         }
+
+        # Clean up orphaned temp tables from previous crashed runs (older than 2h)
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+            for tbl in client.list_tables(f"{client.project}.{dataset_id}"):
+                if tbl.table_id.startswith(temp_table_id + '_') and tbl.table_id != temp_table_id_run:
+                    tbl_ref = client.get_table(f"{dataset_id}.{tbl.table_id}")
+                    if tbl_ref.created.replace(tzinfo=timezone.utc) < cutoff:
+                        client.delete_table(tbl_ref, not_found_ok=True)
+                        logging.info(f"Cleaned up orphaned temp table: {tbl.table_id}")
+        except Exception as _cleanup_ex:
+            logging.warning(f"Orphan temp table cleanup failed (non-fatal): {_cleanup_ex}")
 
         if not create_or_replace_temp_table(client, dataset_id, temp_table_id_run, bq_schema):
             logging.error("Setup failed: Could not create run-scoped temp table.")

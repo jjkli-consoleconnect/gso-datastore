@@ -1,4 +1,4 @@
--- Incremental AI infusion cache refresh for HDWL tickets.
+﻿-- Incremental AI infusion cache refresh for HDWL tickets.
 -- Run as a scheduled query (recommended: every 1-4 hours).
 -- This script identifies the first meaningful worklog response per ticket.
 -- Resource optimization: only scans candidate keys changed since last run.
@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` (
   AIFirstResponseTimestamp TIMESTAMP,
   AIFirstResponse_Audit STRING,
   AIAtFault STRING,
+  AIAtFault_Audit STRING,
   ClassifiedAt TIMESTAMP NOT NULL,
   ModelName STRING,
   PromptVersion STRING
@@ -29,9 +30,17 @@ CLUSTER BY Incident_Number;
 ALTER TABLE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
 ADD COLUMN IF NOT EXISTS AIAtFault STRING;
 
+ALTER TABLE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
+ADD COLUMN IF NOT EXISTS AIAtFault_Audit STRING;
+
 MERGE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` AS target
 USING (
-  WITH candidate_keys AS (
+  WITH null_fault_cache AS (
+    SELECT DISTINCT Incident_Number
+    FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
+    WHERE AIAtFault IS NULL OR AIAtFault_Audit IS NULL
+  ),
+  candidate_keys AS (
     SELECT DISTINCT Incident_Number
     FROM (
       SELECT h.Incident_Number
@@ -81,6 +90,11 @@ USING (
           w.Last_Modified_Date >= TIMESTAMP_SUB(watermark_ts, INTERVAL 6 HOUR)
           OR w.WorkLog_Submit_Date >= TIMESTAMP_SUB(run_ts, INTERVAL 30 DAY)
         )
+
+      UNION DISTINCT
+
+      -- Backfill path: re-process existing cache rows with missing AI fault fields
+      SELECT Incident_Number FROM null_fault_cache
     )
     WHERE Incident_Number IS NOT NULL
   ),
@@ -119,6 +133,7 @@ USING (
       Incident_Number,
       PayloadHash,
       AIAtFault,
+      AIAtFault_Audit,
       ROW_NUMBER() OVER (
         PARTITION BY Incident_Number
         ORDER BY ClassifiedAt DESC
@@ -160,7 +175,7 @@ USING (
         '- States the team is looking into it with no further detail\n',
         '- Is a generic auto-response or templated acknowledgement\n',
         '- Simply shares a ticket/incident number with the customer (e.g. "Your incident has been created, reference INC0012345"), with no further context or update\n',
-        '- Confirms that a new ticket has been created and a support engineer assigned, even if addressed to the customer and including a ticket reference (e.g. "PCCW Global has created a ticket for you. New Ticket. Reference INC0012345. A support engineer has been assigned.") — this is a ticket creation notification only, and is NON-MEANINGFUL.\n\n',
+        '- Confirms that a new ticket has been created and a support engineer assigned, even if addressed to the customer and including a ticket reference (e.g. "PCCW Global has created a ticket for you. New Ticket. Reference INC0012345. A support engineer has been assigned.") â€” this is a ticket creation notification only, and is NON-MEANINGFUL.\n\n',
         'Hard exclusion rule:\n',
         '- If WorkLog_Type = "Testing Result Information", treat it as internal-only and NEVER consider it a customer update, even if content appears detailed.\n\n',
         'From the worklogs below, identify the FIRST worklog entry that qualifies as a meaningful response.\n',
@@ -186,7 +201,8 @@ USING (
         '- Choose Carrier/Vendor when root cause points to partner network, far-end fault, peering partner, provider/carrier issue, third-party infrastructure, or vendor platform.\n',
         '- Choose PCCW when root cause points to PCCW network/platform/provisioning/process/configuration/operations mistakes or internal infrastructure faults.\n',
         '- Choose Nobody when evidence indicates no fault found, right-when-tested, force majeure, uncontrollable events, planned maintenance with no clear accountable party, or insufficient evidence to assign blame confidently.\n',
-        '- Output must be exactly one of: Customer, Carrier/Vendor, PCCW, Nobody.\n\n',
+        '- Output must be exactly one of: Customer, Carrier/Vendor, PCCW, Nobody.\n',
+        '- Also return AIAtFault_Audit: one sentence (max 200 chars) justifying your classification, citing the key evidence used (e.g. fault cause, worklog detail).\n\n',
         'Worklogs (chronological order):\n',
         COALESCE(w.WorkLogs_Formatted, 'No worklogs for this ticket')
       ) AS PromptText
@@ -201,7 +217,7 @@ USING (
     LEFT JOIN latest_cache lc
       ON lc.Incident_Number = b.Incident_Number
      AND lc.rn = 1
-    WHERE lc.Incident_Number IS NULL OR lc.PayloadHash != b.PayloadHash OR lc.AIAtFault IS NULL
+    WHERE lc.Incident_Number IS NULL OR lc.PayloadHash != b.PayloadHash OR lc.AIAtFault IS NULL OR lc.AIAtFault_Audit IS NULL
   )
   SELECT
     d.Incident_Number,
@@ -238,6 +254,7 @@ USING (
       WHEN LOWER(TRIM(COALESCE(ai.AIAtFault, ''))) IN ('nobody', 'none', 'no one', 'noone', 'not attributable') THEN 'Nobody'
       ELSE 'Nobody'
     END AS AIAtFault,
+    ai.AIAtFault_Audit,
     run_ts AS ClassifiedAt,
     'gemini-2.5-flash-via-AI.GENERATE' AS ModelName,
     'hdwl-firstresponse-v10-atfault' AS PromptVersion
@@ -251,7 +268,8 @@ USING (
           AIFirstResponse STRING OPTIONS(description="Exact text of first meaningful worklog response, or null"),
           AIFirstResponseTimestamp STRING OPTIONS(description="ISO 8601 timestamp of that worklog, or null"),
           AIFirstResponse_Audit STRING OPTIONS(description="One sentence max 200 chars explaining derivation"),
-          AIAtFault STRING OPTIONS(description="One value only: Customer, Carrier/Vendor, PCCW, or Nobody")
+          AIAtFault STRING OPTIONS(description="One value only: Customer, Carrier/Vendor, PCCW, or Nobody"),
+          AIAtFault_Audit STRING OPTIONS(description="One sentence max 200 chars justifying the AIAtFault classification")
         ''',
         model_params => JSON '{"generation_config":{"thinking_config": {"thinking_budget": 0}}}'
       ) AS ai
@@ -265,6 +283,7 @@ WHEN MATCHED THEN UPDATE SET
   target.AIFirstResponseTimestamp = src.AIFirstResponseTimestamp,
   target.AIFirstResponse_Audit = src.AIFirstResponse_Audit,
   target.AIAtFault = src.AIAtFault,
+  target.AIAtFault_Audit = src.AIAtFault_Audit,
   target.ClassifiedAt = src.ClassifiedAt,
   target.ModelName = src.ModelName,
   target.PromptVersion = src.PromptVersion
@@ -275,6 +294,7 @@ WHEN NOT MATCHED THEN INSERT (
   AIFirstResponseTimestamp,
   AIFirstResponse_Audit,
   AIAtFault,
+  AIAtFault_Audit,
   ClassifiedAt,
   ModelName,
   PromptVersion
@@ -285,6 +305,7 @@ WHEN NOT MATCHED THEN INSERT (
   src.AIFirstResponseTimestamp,
   src.AIFirstResponse_Audit,
   src.AIAtFault,
+  src.AIAtFault_Audit,
   src.ClassifiedAt,
   src.ModelName,
   src.PromptVersion
