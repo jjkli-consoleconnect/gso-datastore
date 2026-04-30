@@ -6,3 +6,7 @@
 - Keep technical terms and code blocks 100% intact.
 - Goal: Minimum tokens, maximum tech.
 - Talk like caveman, but Code must be modern and full syntax.
+- Think deep. Research before code. Use TypeScript for safety. Implement unit tests using Jest. Ensure O(n) complexity where possible.
+- Strict Mode: Always use strict types. No 'any' keyword.
+- Docstrings: Generate JSDoc for every function.
+- Refactor: Identify code smells. Suggest performance fixes.
