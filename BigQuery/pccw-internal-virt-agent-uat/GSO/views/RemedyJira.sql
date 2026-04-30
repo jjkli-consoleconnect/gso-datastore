@@ -226,8 +226,8 @@ SELECT
     WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('TAC','CCAS','VOICECE','IOTCE','TXCE','SMSCE') THEN 'Customer Engineering'
     WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('MSS') THEN 'Center Operations'
     WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('CCPROV','GSDT') THEN 'Global Service Delivery'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'VIM' THEN 'Vendor Verification'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'ITOPS' THEN 'IT Operations'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('VIM','VVT') THEN 'Vendor Verification'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('ITOPS','ITHD') THEN 'IT Operations'
     ELSE NULL
   END AS GSOTeam,
 
@@ -551,17 +551,19 @@ ON se.Team_Name = (
 
     -- Fallback to ProjectCode (priority 2)
     WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('GDA','GTA','GKC','CCAI') THEN 'Automation & Analytics'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('TAC','CCAS') THEN 'Customer Engineering'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('VOICECE','IOTCE','TXCE','SMSCE','MSS') THEN 'Center Operations'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('TAC','CCAS','VOICECE','IOTCE','TXCE','SMSCE') THEN 'Customer Engineering'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('MSS') THEN 'Center Operations'
     WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('CCPROV','GSDT') THEN 'Global Service Delivery'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'VIM' THEN 'Vendor Verification'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'ITOPS' THEN 'IT Operations'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('VIM','VVT') THEN 'Vendor Verification'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('ITOPS','ITHD') THEN 'IT Operations'
     ELSE NULL
   END
 )
 
 -- Exclude Jira project keys for automation/analytics/internal projects
-WHERE NOT REGEXP_CONTAINS(COALESCE(j.Key, ''), r'(CCAI|GTA|GDA|GKC)')
+WHERE 
+  REGEXP_CONTAINS(COALESCE(j.Key, ''), r'(TXCE|GSDT|ITHD|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|CCPROV)')
+  OR j.Key IS NULL
 
 
 

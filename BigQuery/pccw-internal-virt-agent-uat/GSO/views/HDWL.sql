@@ -21,6 +21,7 @@ SELECT
   h.ProductDescription,
   h.Fault_Cause,
   h.FaultCauseDetail as Fault_Cause_Detail,
+  h.inserted_at,
   CASE h.Fault_Cause
     -- Access Network / Local Loop
     WHEN 'Backhaul' THEN 'Access Network / Local Loop'
@@ -427,4 +428,5 @@ LEFT JOIN (
 ORDER BY
   h.Incident_Number,
   w.WorkLog_Submit_Date
+
 

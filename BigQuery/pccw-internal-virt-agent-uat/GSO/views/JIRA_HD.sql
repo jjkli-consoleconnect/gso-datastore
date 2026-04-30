@@ -17,7 +17,8 @@ WITH FlattenedTierTwo AS (
     `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
     LEFT JOIN UNNEST(t.RemedyTicketNumber) AS remedy_incident
   WHERE COALESCE(t.IsDeleted, FALSE) = FALSE
-    AND NOT REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(CCAI|GTA|GDA|GKC|OCR|QMS|CSM|GSOSI|SH|VIM|VME)')
+    AND REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(TXCE|GSDT|ITHD|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|CCPROV)')
+    OR t.Key IS NULL
 ),
 RankedJira AS (
   -- Deduplicate: per Remedy incident, pick the primary Jira (prioritize T2 projects)
@@ -435,7 +436,7 @@ SELECT
   REGEXP_EXTRACT(Key, r'^([A-Z]+)') AS ProjectCode,
   CASE
     WHEN REGEXP_EXTRACT(COALESCE(Key, ''), r'^([A-Z]+)') IN ('GSDT','CCPROV') THEN 'Service Delivery'
-    WHEN REGEXP_EXTRACT(COALESCE(Key, ''), r'^([A-Z]+)') IN ('TAC', 'CCAS', 'IOTCE', 'VOICECE', 'TXCE', 'SMSCE', 'SH') THEN 'Support'
+    WHEN REGEXP_EXTRACT(COALESCE(Key, ''), r'^([A-Z]+)') IN ('TAC', 'CCAS', 'IOTCE', 'VOICECE', 'TXCE', 'SMSCE') THEN 'Support'
     WHEN REGEXP_EXTRACT(COALESCE(Key, ''), r'^([A-Z]+)') IN ('ITHD', 'ITOPS') THEN 'IT Operations'
     WHEN REGEXP_EXTRACT(COALESCE(Key, ''), r'^([A-Z]+)') IN ('MSS') THEN 'Center Operations'
     WHEN REGEXP_EXTRACT(COALESCE(Key, ''), r'^([A-Z]+)') IS NULL THEN 'Support'
@@ -906,6 +907,7 @@ LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
 -- T2 LSR: COUNT_DISTINCT(T2Solved) / COUNT_DISTINCT(T2 Project Keys)
 --   T2 Load Service Resolution rate - percentage of T2 tickets solved without T3 escalation
 --   Denominator: COUNT_DISTINCT(CASE WHEN TAC|CCAS|VOICECE|SMSCE|IOTCE|MSS|TXCE THEN Key ELSE NULL END)
+
 
 
 
