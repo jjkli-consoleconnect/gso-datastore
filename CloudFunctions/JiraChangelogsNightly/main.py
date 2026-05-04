@@ -15,7 +15,8 @@ import functions_framework
 
 from jira_helpers import (
     load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table,
-    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists
+    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists,
+    execute_bq_query_with_retry
 )
 from logging_config import setup_root_logging
 from pipeline_runs_logger import log_pipeline_run
@@ -555,7 +556,7 @@ def fetch_and_sync_jira_changelogs_nightly():
                                     VALUES (S.Issue_Key,S.History_ID,S.Transition_Timestamp,S.Changed_Field,S.Changed_FieldType,S.Change_Item_Index,S.From_ID,S.From_Value,S.To_ID,S.To_Value,S.Transitioned_From,S.Transitioned_To,S.Transitioned_By_Account_ID,S.Transitioned_By_Display_Name,S.SyncTime,FALSE,NULL)
                 """
                 try:
-                    client.query(merge).result()
+                    execute_bq_query_with_retry(client, merge, max_retries=5, initial_delay=10.0)
                     logging.info("Merged changelogs temp table into final table.")
                     mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'complete', row_count=rows_this_window)
                     try:

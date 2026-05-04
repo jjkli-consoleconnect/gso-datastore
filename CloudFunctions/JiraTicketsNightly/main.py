@@ -17,7 +17,8 @@ import functions_framework
 # Import shared helper functions (files in same directory)
 from jira_helpers import (
     load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table,
-    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists
+    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists,
+    execute_bq_query_with_retry
 )
 from logging_config import setup_root_logging
 from pipeline_runs_logger import log_pipeline_run
@@ -119,60 +120,33 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
 
     existing_columns = set(existing_fields.keys())
 
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IsDeleted BOOL"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS DeletedAt TIMESTAMP"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS AssociatedTeam STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS TransactionStatus STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Service STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Origin STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS RootCause STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS ResolutionSecurity STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Symptoms STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS ATTCK STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Description STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IssueId STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS ReporterId STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS AssigneeId STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS DueDate DATE"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS FeatureTeam STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS MaintenanceWindowStart TIMESTAMP"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS MaintenanceWindowEnd TIMESTAMP"
-    ).result()
+    # Only issue DDL when the column is genuinely absent — avoids quota burns on every run.
+    simple_columns = [
+        ('IsDeleted', 'BOOL'),
+        ('DeletedAt', 'TIMESTAMP'),
+        ('AssociatedTeam', 'STRING'),
+        ('TransactionStatus', 'STRING'),
+        ('Service', 'STRING'),
+        ('Origin', 'STRING'),
+        ('RootCause', 'STRING'),
+        ('ResolutionSecurity', 'STRING'),
+        ('Symptoms', 'STRING'),
+        ('ATTCK', 'STRING'),
+        ('Description', 'STRING'),
+        ('IssueId', 'STRING'),
+        ('ReporterId', 'STRING'),
+        ('AssigneeId', 'STRING'),
+        ('DueDate', 'DATE'),
+        ('FeatureTeam', 'STRING'),
+        ('MaintenanceWindowStart', 'TIMESTAMP'),
+        ('MaintenanceWindowEnd', 'TIMESTAMP'),
+    ]
+    for col_name, col_type in simple_columns:
+        if col_name not in existing_columns:
+            client.query(
+                f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+            ).result()
+            logging.info(f"Added missing column {col_name} to {table_id}")
 
     labels_field = existing_fields.get('Labels')
     if labels_field is None:
@@ -614,6 +588,7 @@ def fetch_and_sync_jira_tickets_nightly():
     run_id = str(uuid.uuid4())
     client = None
     run_started = None
+    temp_table_id_run = None
     total_rows_merged = 0
     final_status = "ERROR"
     final_level = "ERROR"
@@ -678,7 +653,10 @@ def fetch_and_sync_jira_tickets_nightly():
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
         ]
 
-        ensure_soft_delete_columns(client, dataset_id, table_id)
+        try:
+            ensure_soft_delete_columns(client, dataset_id, table_id)
+        except Exception as _schema_err:
+            logging.warning(f"ensure_soft_delete_columns non-fatal error (columns likely exist): {_schema_err}")
 
         ticket_search_fields = [
             'key',
@@ -927,6 +905,7 @@ def fetch_and_sync_jira_tickets_nightly():
                         mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=len(rows_to_insert))
                         break
 
+                merge_succeeded = False
                 try:
                     merge_query = f'''
                         MERGE `{dataset_id}.{table_id}` T
@@ -976,10 +955,16 @@ def fetch_and_sync_jira_tickets_nightly():
                         WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, SyncTime, IsDeleted, DeletedAt)
                         VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.SyncTime, FALSE, NULL)
                     '''
-                    client.query(merge_query).result()
+                    execute_bq_query_with_retry(client, merge_query, max_retries=5, initial_delay=10.0)
                     logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")
+                    merge_succeeded = True
                 except Exception as e:
-                    logging.error(f"Error merging temp table: {e}")
+                    logging.error(f"Error merging temp table for {proj}: {e}")
+                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=0)
+                    break
+
+                if not merge_succeeded:
+                    break
 
                 run_ended = datetime.now(timezone.utc)
                 duration_seconds = (run_ended - run_started).total_seconds()
@@ -1079,7 +1064,7 @@ def fetch_and_sync_jira_tickets_nightly():
                                 WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, SyncTime, IsDeleted, DeletedAt)
                                 VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.SyncTime, FALSE, NULL)
                             '''
-                            client.query(merge_query).result()
+                            execute_bq_query_with_retry(client, merge_query, max_retries=5, initial_delay=10.0)
                             total_rows_merged += catchup_rows_count
                             logging.info(f"[{proj}] Catch-up merged {catchup_rows_count} missing key rows")
                 except Exception as catchup_exc:
@@ -1205,7 +1190,7 @@ def fetch_and_sync_jira_tickets_nightly():
             logging.warning(f"Failed to write final pipeline status for {run_id}: {log_err}")
 
         try:
-            if client:
+            if client and temp_table_id_run:
                 delete_temp_table(client, dataset_id, temp_table_id_run)
         except Exception as cleanup_err:
             logging.warning(f"Failed to cleanup temp table {temp_table_id_run}: {cleanup_err}")

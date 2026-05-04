@@ -22,7 +22,8 @@ import functions_framework
 # Import shared helper functions from local copy
 from jira_helpers import (
     load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table, 
-    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists
+    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists,
+    execute_bq_query_with_retry
 )
 from logging_config import setup_root_logging
 from pipeline_runs_logger import log_pipeline_run
@@ -161,18 +162,25 @@ def load_config():
 
 def ensure_changelog_columns(client, dataset_id, table_id):
     """Ensure generic changelog columns exist so non-status changes can be stored safely."""
-    for ddl in [
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IsDeleted BOOL",
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS DeletedAt TIMESTAMP",
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Changed_Field STRING",
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Changed_FieldType STRING",
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Change_Item_Index INT64",
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS From_ID STRING",
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS From_Value STRING",
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS To_ID STRING",
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS To_Value STRING",
-    ]:
-        client.query(ddl).result()
+    table = client.get_table(f"{dataset_id}.{table_id}")
+    existing_columns = {f.name for f in table.schema}
+    columns = [
+        ("IsDeleted", "BOOL"),
+        ("DeletedAt", "TIMESTAMP"),
+        ("Changed_Field", "STRING"),
+        ("Changed_FieldType", "STRING"),
+        ("Change_Item_Index", "INT64"),
+        ("From_ID", "STRING"),
+        ("From_Value", "STRING"),
+        ("To_ID", "STRING"),
+        ("To_Value", "STRING"),
+    ]
+    for col_name, col_type in columns:
+        if col_name not in existing_columns:
+            client.query(
+                f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+            ).result()
+            logging.info(f"Added missing column {col_name} to {table_id}")
 
 
 def fetch_issue_history(issue_key, username, api_token, session):
@@ -247,8 +255,11 @@ def fetch_and_sync_jira_changelog():
         project_id = client.project
         dataset_id = 'GSO'
 
-        ensure_changelog_columns(client, dataset_id, table_id)
-        
+        try:
+            ensure_changelog_columns(client, dataset_id, table_id)
+        except Exception as _schema_err:
+            logging.warning(f"ensure_changelog_columns non-fatal error (columns likely exist): {_schema_err}")
+
         log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
 
         # Load base JQL
@@ -297,8 +308,10 @@ def fetch_and_sync_jira_changelog():
 
         # Optimized single-pass approach: capture ANY activity in last 30 minutes
         # Includes: field updates, resolutions, and new comments (which capture all changelog activity)
-        jql_any_activity = build_jql(base_jql, "(updated >= -30m OR resolutiondate >= -30m OR comment.updated >= -30m)", joiner='AND')
-        logging.info(f"JQL (any activity in last 30m): {jql_any_activity}")
+        lookback_minutes = 15
+
+        jql_any_activity = build_jql(base_jql, f"(updated >= -{lookback_minutes}m OR resolutiondate >= -{lookback_minutes}m OR comment.updated >= -{lookback_minutes}m)", joiner='AND')
+        logging.info(f"JQL (any activity in last {lookback_minutes}m): {jql_any_activity}")
 
         # BigQuery schema
         bq_schema = [
@@ -319,34 +332,6 @@ def fetch_and_sync_jira_changelog():
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
         ]
         
-        if not create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
-            logging.error("Setup failed: Could not create temp table.")
-            run_ended = datetime.now(timezone.utc)
-            duration_seconds = (run_ended - run_started).total_seconds()
-            log_pipeline_run(
-                client,
-                pipeline_name=pipeline_name,
-                run_id=run_id,
-                level="ERROR",
-                message="Could not create temp table",
-                status="ERROR",
-                duration_seconds=duration_seconds,
-            )
-            return
-        if not wait_for_table(client, dataset_id, temp_table_id):
-            logging.error("Setup failed: Temp table not available.")
-            run_ended = datetime.now(timezone.utc)
-            duration_seconds = (run_ended - run_started).total_seconds()
-            log_pipeline_run(
-                client,
-                pipeline_name=pipeline_name,
-                run_id=run_id,
-                level="ERROR",
-                message="Temp table not available",
-                status="ERROR",
-                duration_seconds=duration_seconds,
-            )
-            return
         rows_to_insert = []
         issue_keys_total = set()
 
@@ -417,8 +402,7 @@ def fetch_and_sync_jira_changelog():
 
         if not issue_keys_total:
             logging.info("No issues found with status changes")
-            delete_temp_table(client, dataset_id, temp_table_id)
-            window_start_dt = run_started - timedelta(minutes=30)
+            window_start_dt = run_started - timedelta(minutes=lookback_minutes)
             window_end_dt = run_started
             run_ended = datetime.now(timezone.utc)
             duration_seconds = (run_ended - run_started).total_seconds()
@@ -479,6 +463,55 @@ def fetch_and_sync_jira_changelog():
 
         logging.info(f"Extracted {transitions_count} status transitions")
 
+        if not rows_to_insert:
+            logging.info("No changelog rows found for recently changed issues")
+            window_start_dt = run_started - timedelta(minutes=lookback_minutes)
+            window_end_dt = run_started
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="INFO",
+                message="Pipeline finished (no data)",
+                status="SUCCESS",
+                window_start=window_start_dt,
+                window_end=window_end_dt,
+                rows_merged=0,
+                duration_seconds=duration_seconds,
+            )
+            return
+
+        if not create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
+            logging.error("Setup failed: Could not create temp table.")
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="ERROR",
+                message="Could not create temp table",
+                status="ERROR",
+                duration_seconds=duration_seconds,
+            )
+            return
+        if not wait_for_table(client, dataset_id, temp_table_id):
+            logging.error("Setup failed: Temp table not available.")
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="ERROR",
+                message="Temp table not available",
+                status="ERROR",
+                duration_seconds=duration_seconds,
+            )
+            return
+
         if rows_to_insert:
             if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, bq_schema, retries=5, delay=5):
                 logging.error("Failed to insert rows into temp table after retries.")
@@ -513,15 +546,28 @@ def fetch_and_sync_jira_changelog():
                 WHEN NOT MATCHED THEN INSERT (Issue_Key, History_ID, Transition_Timestamp, Changed_Field, Changed_FieldType, Change_Item_Index, From_ID, From_Value, To_ID, To_Value, Transitioned_From, Transitioned_To, Transitioned_By_Account_ID, Transitioned_By_Display_Name, SyncTime, IsDeleted, DeletedAt)
                 VALUES (S.Issue_Key, S.History_ID, S.Transition_Timestamp, S.Changed_Field, S.Changed_FieldType, S.Change_Item_Index, S.From_ID, S.From_Value, S.To_ID, S.To_Value, S.Transitioned_From, S.Transitioned_To, S.Transitioned_By_Account_ID, S.Transitioned_By_Display_Name, S.SyncTime, FALSE, NULL)
             '''
-            client.query(merge_query).result()
+            execute_bq_query_with_retry(client, merge_query, max_retries=5, initial_delay=10.0)
             logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")
         except Exception as e:
             logging.error(f"Error merging temp table: {e}")
+            delete_temp_table(client, dataset_id, temp_table_id)
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="ERROR",
+                message=f"MERGE failed: {e}",
+                status="ERROR",
+                duration_seconds=duration_seconds,
+            )
+            raise
 
         delete_temp_table(client, dataset_id, temp_table_id)
 
         # Log pipeline end
-        window_start_dt = run_started - timedelta(minutes=30)
+        window_start_dt = run_started - timedelta(minutes=lookback_minutes)
         window_end_dt = run_started
         run_ended = datetime.now(timezone.utc)
         duration_seconds = (run_ended - run_started).total_seconds()

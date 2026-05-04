@@ -15,7 +15,8 @@ import functions_framework
 
 from jira_helpers import (
     load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table,
-    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists
+    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists,
+    execute_bq_query_with_retry
 )
 from logging_config import setup_root_logging
 from pipeline_runs_logger import log_pipeline_run
@@ -582,7 +583,7 @@ def fetch_and_sync_jira_comments_nightly():
                                     VALUES (S.Issue_Key,S.Comment_ID,S.Author_Account_ID,S.Author_Display_Name,S.Created,S.Updated,S.Body,S.Visibility_Type,S.Visibility_Value,S.SyncTime,FALSE,NULL)
                 """
                 try:
-                    client.query(merge).result()
+                    execute_bq_query_with_retry(client, merge, max_retries=5, initial_delay=10.0)
                     logging.info("Merged comments temp table into final table.")
                     mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'complete', row_count=rows_this_window)
                     try:

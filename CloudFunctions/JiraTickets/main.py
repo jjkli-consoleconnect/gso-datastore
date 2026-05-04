@@ -24,7 +24,8 @@ import functions_framework
 # Import shared helper functions from local copy
 from jira_helpers import (
     load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table, 
-    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists
+    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists,
+    execute_bq_query_with_retry
 )
 from logging_config import setup_root_logging
 from pipeline_runs_logger import log_pipeline_run
@@ -165,54 +166,31 @@ def ensure_ticket_columns(client, dataset_id, table_id):
 
     existing_columns = set(existing_fields.keys())
 
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS AssociatedTeam STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS TransactionStatus STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Service STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Origin STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS RootCause STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS ResolutionSecurity STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Symptoms STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS ATTCK STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Description STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS IssueId STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS ReporterId STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS AssigneeId STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS DueDate DATE"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS FeatureTeam STRING"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS MaintenanceWindowStart TIMESTAMP"
-    ).result()
-    client.query(
-        f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS MaintenanceWindowEnd TIMESTAMP"
-    ).result()
+    # Only issue DDL when the column is genuinely absent — avoids quota burns on every run.
+    simple_columns = [
+        ('AssociatedTeam', 'STRING'),
+        ('TransactionStatus', 'STRING'),
+        ('Service', 'STRING'),
+        ('Origin', 'STRING'),
+        ('RootCause', 'STRING'),
+        ('ResolutionSecurity', 'STRING'),
+        ('Symptoms', 'STRING'),
+        ('ATTCK', 'STRING'),
+        ('Description', 'STRING'),
+        ('IssueId', 'STRING'),
+        ('ReporterId', 'STRING'),
+        ('AssigneeId', 'STRING'),
+        ('DueDate', 'DATE'),
+        ('FeatureTeam', 'STRING'),
+        ('MaintenanceWindowStart', 'TIMESTAMP'),
+        ('MaintenanceWindowEnd', 'TIMESTAMP'),
+    ]
+    for col_name, col_type in simple_columns:
+        if col_name not in existing_columns:
+            client.query(
+                f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+            ).result()
+            logging.info(f"Added missing column {col_name} to {table_id}")
 
     labels_field = existing_fields.get('Labels')
     if labels_field is None:
@@ -439,8 +417,11 @@ def fetch_and_sync_jira_data():
         project_id = client.project
         dataset_id = 'GSO'
 
-        ensure_ticket_columns(client, dataset_id, table_id)
-        
+        try:
+            ensure_ticket_columns(client, dataset_id, table_id)
+        except Exception as _schema_err:
+            logging.warning(f"ensure_ticket_columns non-fatal error (columns likely exist): {_schema_err}")
+
         log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
 
         # Load base JQL
@@ -487,12 +468,13 @@ def fetch_and_sync_jira_data():
             )
             return
 
-        # Optimized single-pass approach: capture ANY activity in last 30 minutes
-        # Includes: field updates, resolutions, and new comments
-        jql_any_activity = build_jql(base_jql, "(updated >= -30m OR resolutiondate >= -30m OR comment.updated >= -30m)", joiner='AND')
-        logging.info(f"JQL (any activity in last 30m): {jql_any_activity}")
+        lookback_minutes = 15
 
-        jql_window_start = run_started - timedelta(minutes=30)
+        # Optimized single-pass approach: capture any recent activity with a small safety overlap.
+        jql_any_activity = build_jql(base_jql, f"(updated >= -{lookback_minutes}m OR resolutiondate >= -{lookback_minutes}m OR comment.updated >= -{lookback_minutes}m)", joiner='AND')
+        logging.info(f"JQL (any activity in last {lookback_minutes}m): {jql_any_activity}")
+
+        jql_window_start = run_started - timedelta(minutes=lookback_minutes)
         jql_window_end = run_started
 
         # BigQuery schema (all fields exactly as in original)
@@ -577,35 +559,6 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("ITHD_Resolution", "STRING", mode="NULLABLE"),
         ]
         
-        if not create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
-            logging.error("Setup failed: Could not create temp table.")
-            run_ended = datetime.now(timezone.utc)
-            duration_seconds = (run_ended - run_started).total_seconds()
-            log_pipeline_run(
-                client,
-                pipeline_name=pipeline_name,
-                run_id=run_id,
-                level="ERROR",
-                message="Could not create temp table",
-                status="ERROR",
-                duration_seconds=duration_seconds,
-            )
-            return
-        if not wait_for_table(client, dataset_id, temp_table_id):
-            logging.error("Setup failed: Temp table not available.")
-            run_ended = datetime.now(timezone.utc)
-            duration_seconds = (run_ended - run_started).total_seconds()
-            log_pipeline_run(
-                client,
-                pipeline_name=pipeline_name,
-                run_id=run_id,
-                level="ERROR",
-                message="Temp table not available",
-                status="ERROR",
-                duration_seconds=duration_seconds,
-            )
-            return
-
         rows_to_insert = []
         issue_keys_total = set()
         BULK_FETCH_SIZE = 50
@@ -856,6 +809,53 @@ def fetch_and_sync_jira_data():
         # Close session to release connections
         session.close()
 
+        if not rows_to_insert:
+            logging.info("No tickets found with recent activity")
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="INFO",
+                message="Pipeline finished (no data)",
+                status="SUCCESS",
+                window_start=jql_window_start,
+                window_end=jql_window_end,
+                rows_merged=0,
+                duration_seconds=duration_seconds,
+            )
+            return
+
+        if not create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
+            logging.error("Setup failed: Could not create temp table.")
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="ERROR",
+                message="Could not create temp table",
+                status="ERROR",
+                duration_seconds=duration_seconds,
+            )
+            return
+        if not wait_for_table(client, dataset_id, temp_table_id):
+            logging.error("Setup failed: Temp table not available.")
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="ERROR",
+                message="Temp table not available",
+                status="ERROR",
+                duration_seconds=duration_seconds,
+            )
+            return
+
         if rows_to_insert:
             if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, bq_schema, retries=5, delay=5):
                 logging.error("Failed to insert rows into temp table after retries.")
@@ -962,10 +962,23 @@ def fetch_and_sync_jira_data():
                     T.ITHD_Resolution = S.ITHD_Resolution
                 WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, SyncTime, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, AppSupEscalation, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, StoryPoints, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution) VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.SyncTime, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.AppSupEscalation, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.StoryPoints, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution)
             '''
-            client.query(merge_query).result()
+            execute_bq_query_with_retry(client, merge_query, max_retries=5, initial_delay=10.0)
             logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")
         except Exception as e:
             logging.error(f"Error merging temp table: {e}")
+            delete_temp_table(client, dataset_id, temp_table_id)
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="ERROR",
+                message=f"MERGE failed: {e}",
+                status="ERROR",
+                duration_seconds=duration_seconds,
+            )
+            raise
 
         delete_temp_table(client, dataset_id, temp_table_id)
 

@@ -23,7 +23,8 @@ import functions_framework
 # Import shared helper functions from local copy
 from jira_helpers import (
     load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table, 
-    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists
+    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists,
+    execute_bq_query_with_retry
 )
 from logging_config import setup_root_logging
 from pipeline_runs_logger import log_pipeline_run
@@ -347,10 +348,11 @@ def fetch_and_sync_jira_comments():
             )
             return
 
-        # Optimized single-pass approach: capture ANY activity in last 30 minutes
-        # Includes: field updates, resolutions, and new comments
-        jql_any_activity = build_jql(base_jql, "(updated >= -30m OR resolutiondate >= -30m OR comment.updated >= -30m)", joiner='AND')
-        logging.info(f"JQL (any activity in last 30m): {jql_any_activity}")
+        lookback_minutes = 15
+
+        # Optimized single-pass approach: capture any recent activity with a small safety overlap.
+        jql_any_activity = build_jql(base_jql, f"(updated >= -{lookback_minutes}m OR resolutiondate >= -{lookback_minutes}m OR comment.updated >= -{lookback_minutes}m)", joiner='AND')
+        logging.info(f"JQL (any activity in last {lookback_minutes}m): {jql_any_activity}")
 
         # BigQuery schema
         bq_schema = [
@@ -366,35 +368,6 @@ def fetch_and_sync_jira_comments():
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
         ]
         
-        if not create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
-            logging.error("Setup failed: Could not create temp table.")
-            run_ended = datetime.now(timezone.utc)
-            duration_seconds = (run_ended - run_started).total_seconds()
-            log_pipeline_run(
-                client,
-                pipeline_name=pipeline_name,
-                run_id=run_id,
-                level="ERROR",
-                message="Could not create temp table",
-                status="ERROR",
-                duration_seconds=duration_seconds,
-            )
-            return
-        if not wait_for_table(client, dataset_id, temp_table_id):
-            logging.error("Setup failed: Temp table not available.")
-            run_ended = datetime.now(timezone.utc)
-            duration_seconds = (run_ended - run_started).total_seconds()
-            log_pipeline_run(
-                client,
-                pipeline_name=pipeline_name,
-                run_id=run_id,
-                level="ERROR",
-                message="Temp table not available",
-                status="ERROR",
-                duration_seconds=duration_seconds,
-            )
-            return
-
         rows_to_insert = []
         issue_keys_total = set()
 
@@ -483,8 +456,7 @@ def fetch_and_sync_jira_comments():
 
         if not issue_keys_total:
             logging.info("No issues found with recent comments")
-            delete_temp_table(client, dataset_id, temp_table_id)
-            window_start_dt = run_started - timedelta(minutes=30)
+            window_start_dt = run_started - timedelta(minutes=lookback_minutes)
             window_end_dt = run_started
             run_ended = datetime.now(timezone.utc)
             duration_seconds = (run_ended - run_started).total_seconds()
@@ -517,6 +489,55 @@ def fetch_and_sync_jira_comments():
 
         logging.info(f"Fetched {comments_count} total comments")
 
+        if not rows_to_insert:
+            logging.info("No comments found for recently changed issues")
+            window_start_dt = run_started - timedelta(minutes=lookback_minutes)
+            window_end_dt = run_started
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="INFO",
+                message="Pipeline finished (no data)",
+                status="SUCCESS",
+                window_start=window_start_dt,
+                window_end=window_end_dt,
+                rows_merged=0,
+                duration_seconds=duration_seconds,
+            )
+            return
+
+        if not create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
+            logging.error("Setup failed: Could not create temp table.")
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="ERROR",
+                message="Could not create temp table",
+                status="ERROR",
+                duration_seconds=duration_seconds,
+            )
+            return
+        if not wait_for_table(client, dataset_id, temp_table_id):
+            logging.error("Setup failed: Temp table not available.")
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="ERROR",
+                message="Temp table not available",
+                status="ERROR",
+                duration_seconds=duration_seconds,
+            )
+            return
+
         if rows_to_insert:
             if not insert_rows_resilient(client, dataset_id, temp_table_id, rows_to_insert, bq_schema, max_attempts=4):
                 logging.error("Failed to insert rows into temp table after resilient attempts.")
@@ -541,15 +562,28 @@ def fetch_and_sync_jira_comments():
                 WHEN NOT MATCHED THEN INSERT (Issue_Key, Comment_ID, Author_Account_ID, Author_Display_Name, Created, Updated, Body, Visibility_Type, Visibility_Value, SyncTime)
                 VALUES (S.Issue_Key, S.Comment_ID, S.Author_Account_ID, S.Author_Display_Name, S.Created, S.Updated, S.Body, S.Visibility_Type, S.Visibility_Value, S.SyncTime)
             '''
-            client.query(merge_query).result()
+            execute_bq_query_with_retry(client, merge_query, max_retries=5, initial_delay=10.0)
             logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")
         except Exception as e:
             logging.error(f"Error merging temp table: {e}")
+            delete_temp_table(client, dataset_id, temp_table_id)
+            run_ended = datetime.now(timezone.utc)
+            duration_seconds = (run_ended - run_started).total_seconds()
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="ERROR",
+                message=f"MERGE failed: {e}",
+                status="ERROR",
+                duration_seconds=duration_seconds,
+            )
+            raise
 
         delete_temp_table(client, dataset_id, temp_table_id)
 
         # Log pipeline end
-        window_start_dt = run_started - timedelta(minutes=30)
+        window_start_dt = run_started - timedelta(minutes=lookback_minutes)
         window_end_dt = run_started
         run_ended = datetime.now(timezone.utc)
         duration_seconds = (run_ended - run_started).total_seconds()

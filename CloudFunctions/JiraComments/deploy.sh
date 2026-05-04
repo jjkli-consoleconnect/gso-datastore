@@ -1,14 +1,14 @@
 #!/bin/bash
 set -e
 
-PROJECT_ID="pccw-internal-virt-agent-uat"
+PROJECT_ID="pccw-internal-virtual-agent"
 REGION="europe-west2"
 FUNCTION_NAME="jira-comments-sync"
 MEMORY="1024MB"
 TIMEOUT="540s"
 RUNTIME="python311"
-VPC_CONNECTOR="eu-uat-wanda-vpc-conn"
-SERVICE_ACCOUNT="jira-bigquery@pccw-internal-virt-agent-uat.iam.gserviceaccount.com"
+VPC_CONNECTOR="eu-prod-wanda-vpc-conn"
+SERVICE_ACCOUNT="jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com"
 
 echo "Deploying Jira Comments Cloud Function..."
 echo "Project: $PROJECT_ID"
@@ -28,6 +28,7 @@ gcloud functions deploy $FUNCTION_NAME \
   --memory=$MEMORY \
   --timeout=$TIMEOUT \
   --vpc-connector="projects/$PROJECT_ID/locations/$REGION/connectors/$VPC_CONNECTOR" \
+  --egress-settings=all \
   --service-account=$SERVICE_ACCOUNT \
   --project=$PROJECT_ID
 
