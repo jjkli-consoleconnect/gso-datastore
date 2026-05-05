@@ -54,4 +54,8 @@ resp = requests.patch(
     json={"labels": LABELS},
 )
 if not resp.ok:
-    print(f"Labels PATCH f
+    print(f"Labels PATCH failed {resp.status_code}: {resp.text}")
+else:
+    print(f"Labels applied: {resp.json().get('labels')}")
+
+print("Done.")

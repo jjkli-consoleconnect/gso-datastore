@@ -3,7 +3,6 @@
 -- This script identifies the first meaningful worklog response per ticket.
 -- Resource optimization: only scans candidate keys changed since last run.
 
-SET @@query_label = "seeds_environment=prod,seeds_product=hdwl_aiinfused,seeds_component=bigquery";
 
 DECLARE run_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
 DECLARE watermark_ts TIMESTAMP DEFAULT COALESCE(
@@ -13,6 +12,8 @@ DECLARE watermark_ts TIMESTAMP DEFAULT COALESCE(
   ),
   TIMESTAMP_SUB(run_ts, INTERVAL 30 DAY)
 );
+
+SET @@query_label = "seeds_environment:prod,seeds_product:hdwl_aiinfused,seeds_component:bigquery";
 
 CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` (
   Incident_Number STRING NOT NULL,
@@ -56,7 +57,6 @@ USING (
           'GSOC',
           'ICX',
           'PHSOC',
-          'Planned Event Mgt',
           'Soft Switch Management',
           'USNOC',
           'VAS NOC'
@@ -82,7 +82,6 @@ USING (
           'GSOC',
           'ICX',
           'PHSOC',
-          'Planned Event Mgt',
           'Soft Switch Management',
           'USNOC',
           'VAS NOC'
