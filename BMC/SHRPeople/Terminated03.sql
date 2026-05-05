@@ -1,4 +1,4 @@
--- SHR:People export - Remaining minor statuses and blanks
+-- SHR:People export - Terminated (IDs with first character >= 'P')
 SELECT 
   CASE 
     WHEN src.SanitizedID = '' THEN NULL 
@@ -44,8 +44,5 @@ FROM (
 WHERE 
   src.SanitizedID IS NOT NULL
   AND src.SanitizedID <> ''
-  AND (
-    src.`SR Status` IN ('WIP','Spare','Pending','Suspend','Aban','Cancel','Planned','Reserved','DR')
-    OR src.`SR Status` IS NULL
-    OR src.`SR Status` = ''
-  );
+  AND src.`SR Status` = 'Terminated'
+  AND DBFN('UPPER', DBFN('SUBSTR', src.SanitizedID, 1, 1)) >= 'P';

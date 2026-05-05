@@ -128,7 +128,7 @@ c_first AS (
 ),
 ai_ticket_classification AS (
   -- AI fields are served from an incremental cache table to keep the view fast.
-  -- Refresh cache via scheduled MERGE in GSO/routines/MSS_AIClassification_Incremental.sql.
+  -- Refresh cache via scheduled MERGE in GSO/routines/MSS_AIInfused.sql.
   SELECT
     Key,
     AIRootCause,
@@ -148,7 +148,7 @@ ai_ticket_classification AS (
         PARTITION BY a.Key
         ORDER BY a.ClassifiedAt DESC
       ) AS rn
-    FROM `pccw-internal-virt-agent-uat.GSO.MSS_AIClassification` a
+    FROM `pccw-internal-virt-agent-uat.GSO.MSS_AIInfused` a
   )
   WHERE rn = 1
 ),

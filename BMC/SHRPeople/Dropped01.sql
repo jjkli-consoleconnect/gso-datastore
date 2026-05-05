@@ -1,4 +1,4 @@
--- SHR:People export - Dropped
+-- SHR:People export - Dropped (IDs with first character < 'N')
 SELECT 
   CASE 
     WHEN src.SanitizedID = '' THEN NULL 
@@ -44,4 +44,5 @@ FROM (
 WHERE 
   src.SanitizedID IS NOT NULL
   AND src.SanitizedID <> ''
-  AND src.`SR Status` = 'Dropped';
+  AND src.`SR Status` = 'Dropped'
+  AND DBFN('UPPER', DBFN('SUBSTR', src.SanitizedID, 1, 1)) < 'N';

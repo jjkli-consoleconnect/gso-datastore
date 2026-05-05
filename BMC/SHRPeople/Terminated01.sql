@@ -1,4 +1,4 @@
--- SHR:People export - Terminated (IDs with first character < 'N')
+-- SHR:People export - Terminated (IDs with first character < 'H')
 SELECT 
   CASE 
     WHEN src.SanitizedID = '' THEN NULL 
@@ -45,4 +45,4 @@ WHERE
   src.SanitizedID IS NOT NULL
   AND src.SanitizedID <> ''
   AND src.`SR Status` = 'Terminated'
-  AND DBFN('UPPER', DBFN('SUBSTR', src.SanitizedID, 1, 1)) < 'N';
+  AND DBFN('UPPER', DBFN('SUBSTR', src.SanitizedID, 1, 1)) < 'H';

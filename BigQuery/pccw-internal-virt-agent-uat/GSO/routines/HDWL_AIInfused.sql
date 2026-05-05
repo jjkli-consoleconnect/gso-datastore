@@ -3,6 +3,8 @@
 -- This script identifies the first meaningful worklog response per ticket.
 -- Resource optimization: only scans candidate keys changed since last run.
 
+SET @@query_label = "seeds_environment=prod,seeds_product=hdwl_aiinfused,seeds_component=bigquery";
+
 DECLARE run_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
 DECLARE watermark_ts TIMESTAMP DEFAULT COALESCE(
   (

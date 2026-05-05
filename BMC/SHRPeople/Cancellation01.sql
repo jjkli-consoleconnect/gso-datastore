@@ -1,4 +1,4 @@
--- SHR:People export - Cancellation and medium-volume statuses
+-- SHR:People export - Cancellation and Relocated
 SELECT 
   CASE 
     WHEN src.SanitizedID = '' THEN NULL 
@@ -44,4 +44,4 @@ FROM (
 WHERE 
   src.SanitizedID IS NOT NULL
   AND src.SanitizedID <> ''
-  AND src.`SR Status` IN ('Cancellation', 'Relocated', 'Prospect', 'Downgraded', 'Provisioning');
+  AND src.`SR Status` IN ('Cancellation', 'Relocated');

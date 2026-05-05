@@ -3,16 +3,18 @@
 -- This script only reclassifies rows when relevant source content changes.
 -- Resource optimization: only scan candidate keys changed since last run.
 
+SET @@query_label = "seeds_environment=prod,seeds_product=mss_aiinfused,seeds_component=bigquery";
+
 DECLARE run_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
 DECLARE watermark_ts TIMESTAMP DEFAULT COALESCE(
   (
     SELECT MAX(ClassifiedAt)
-    FROM `pccw-internal-virt-agent-uat.GSO.MSS_AIClassification`
+    FROM `pccw-internal-virt-agent-uat.GSO.MSS_AIInfused`
   ),
   TIMESTAMP_SUB(run_ts, INTERVAL 30 DAY)
 );
 
-CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.MSS_AIClassification` (
+CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.MSS_AIInfused` (
   Key STRING NOT NULL,
   PayloadHash STRING NOT NULL,
   SourceUpdated TIMESTAMP,
@@ -29,7 +31,7 @@ CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.MSS_AIClassificatio
 PARTITION BY DATE(ClassifiedAt)
 CLUSTER BY Key;
 
-MERGE `pccw-internal-virt-agent-uat.GSO.MSS_AIClassification` AS target
+MERGE `pccw-internal-virt-agent-uat.GSO.MSS_AIInfused` AS target
 USING (
   WITH candidate_keys AS (
     SELECT DISTINCT Key
@@ -98,7 +100,7 @@ USING (
         PARTITION BY Key
         ORDER BY ClassifiedAt DESC
       ) AS rn
-    FROM `pccw-internal-virt-agent-uat.GSO.MSS_AIClassification`
+    FROM `pccw-internal-virt-agent-uat.GSO.MSS_AIInfused`
     WHERE Key IN (SELECT Key FROM candidate_keys)
   ),
   base AS (

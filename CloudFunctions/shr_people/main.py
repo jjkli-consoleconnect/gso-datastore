@@ -481,6 +481,12 @@ def process_shr_people_email(cloud_event):
                 
                 if success:
                     total_rows_merged += rows
+                    
+                    # Warn if approaching 50k row cap
+                    if rows >= 47000:
+                        warning_msg = f"Row cap warning: '{filename}' returned {rows} rows (cap=50000). Split query required."
+                        logger.warning(warning_msg)
+                        log_pipeline_run(_current_run_id, "WARNING", "WARN", warning_msg, None, None, rows, "ROW_CAP_WARNING", None)
         
         if not csv_found:
             logger.info("No CSV attachments found in message")
