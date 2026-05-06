@@ -399,7 +399,14 @@ SELECT
   ai.AIFirstResponseTimestamp,
   ai.AIFirstResponse_Audit,
   ai.AIAtFault,
-  ai.AIAtFault_Audit
+  ai.AIAtFault_Audit,
+  ai.AI_FaultDomain,
+  ai.AI_CarrierVendor,
+  ai.AI_PrimarySymptom,
+  ai.AI_LikelyRootCause,
+  ai.AI_ConfidenceScore,
+  ai.AI_EvidenceSummary,
+  ai.AI_DeviceInterfaceContext
   
 FROM
   `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
@@ -416,6 +423,13 @@ LEFT JOIN (
     AIFirstResponse_Audit,
     AIAtFault,
     AIAtFault_Audit,
+    AI_FaultDomain,
+    AI_CarrierVendor,
+    AI_PrimarySymptom,
+    AI_LikelyRootCause,
+    AI_ConfidenceScore,
+    AI_EvidenceSummary,
+    AI_DeviceInterfaceContext,
     ROW_NUMBER() OVER (
       PARTITION BY Incident_Number
       ORDER BY ClassifiedAt DESC
@@ -428,5 +442,6 @@ LEFT JOIN (
 ORDER BY
   h.Incident_Number,
   w.WorkLog_Submit_Date
+
 
 

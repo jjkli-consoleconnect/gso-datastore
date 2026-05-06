@@ -16,7 +16,8 @@ WITH FlattenedTierTwo AS (
   FROM
     `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
     LEFT JOIN UNNEST(t.RemedyTicketNumber) AS remedy_incident
-  WHERE NOT REGEXP_CONTAINS(COALESCE(t.Key, ''    AND REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(TXCE|GSDT|ITHD|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|CCPROV)')
+  WHERE COALESCE(t.IsDeleted, FALSE) = FALSE
+    AND REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(TXCE|GSDT|ITHD|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|CCPROV)')
     OR t.Key IS NULL
 ),
 RankedJira AS (
@@ -906,4 +907,8 @@ LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
 -- T2 LSR: COUNT_DISTINCT(T2Solved) / COUNT_DISTINCT(T2 Project Keys)
 --   T2 Load Service Resolution rate - percentage of T2 tickets solved without T3 escalation
 --   Denominator: COUNT_DISTINCT(CASE WHEN TAC|CCAS|VOICECE|SMSCE|IOTCE|MSS|TXCE THEN Key ELSE NULL END)
+
+
+
+
 

@@ -1,17 +1,10 @@
-﻿-- Incremental AI infusion cache refresh for HDWL tickets.
+-- Incremental AI infusion cache refresh for HDWL tickets.
 -- Run as a scheduled query (recommended: every 1-4 hours).
 -- This script identifies the first meaningful worklog response per ticket.
 -- Resource optimization: only scans candidate keys changed since last run.
 
 
 DECLARE run_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
-DECLARE watermark_ts TIMESTAMP DEFAULT COALESCE(
-  (
-    SELECT MAX(ClassifiedAt)
-    FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
-  ),
-  TIMESTAMP_SUB(run_ts, INTERVAL 30 DAY)
-);
 
 SET @@query_label = "seeds_environment:prod,seeds_product:hdwl_aiinfused,seeds_component:bigquery";
 
@@ -23,6 +16,13 @@ CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` (
   AIFirstResponse_Audit STRING,
   AIAtFault STRING,
   AIAtFault_Audit STRING,
+  AI_FaultDomain STRING,
+  AI_CarrierVendor STRING,
+  AI_PrimarySymptom STRING,
+  AI_LikelyRootCause STRING,
+  AI_ConfidenceScore FLOAT64,
+  AI_EvidenceSummary STRING,
+  AI_DeviceInterfaceContext STRING,
   ClassifiedAt TIMESTAMP NOT NULL,
   ModelName STRING,
   PromptVersion STRING
@@ -31,21 +31,42 @@ PARTITION BY DATE(ClassifiedAt)
 CLUSTER BY Incident_Number;
 
 ALTER TABLE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
-ADD COLUMN IF NOT EXISTS AIAtFault STRING;
+ADD COLUMN IF NOT EXISTS AIAtFault STRING,
+ADD COLUMN IF NOT EXISTS AIAtFault_Audit STRING,
+ADD COLUMN IF NOT EXISTS AI_FaultDomain STRING,
+ADD COLUMN IF NOT EXISTS AI_CarrierVendor STRING,
+ADD COLUMN IF NOT EXISTS AI_PrimarySymptom STRING,
+ADD COLUMN IF NOT EXISTS AI_LikelyRootCause STRING,
+ADD COLUMN IF NOT EXISTS AI_ConfidenceScore FLOAT64,
+ADD COLUMN IF NOT EXISTS AI_EvidenceSummary STRING,
+ADD COLUMN IF NOT EXISTS AI_DeviceInterfaceContext STRING;
 
 ALTER TABLE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
-ADD COLUMN IF NOT EXISTS AIAtFault_Audit STRING;
+DROP COLUMN IF EXISTS AI_NextBestAction,
+DROP COLUMN IF EXISTS AI_OwnershipNow,
+DROP COLUMN IF EXISTS AI_SLABreachRisk,
+DROP COLUMN IF EXISTS AI_SuspectedParty;
 
 MERGE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` AS target
 USING (
   WITH null_fault_cache AS (
     SELECT DISTINCT Incident_Number
     FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
-    WHERE AIAtFault IS NULL OR AIAtFault_Audit IS NULL
+    WHERE AIAtFault IS NULL
+      OR AIAtFault_Audit IS NULL
+      OR AI_FaultDomain IS NULL
+      OR AI_CarrierVendor IS NULL
+      OR AI_PrimarySymptom IS NULL
+      OR AI_LikelyRootCause IS NULL
+      OR AI_ConfidenceScore IS NULL
+      OR AI_EvidenceSummary IS NULL
+      OR AI_DeviceInterfaceContext IS NULL
+      OR AI_FaultDomain NOT IN ('Access', 'Core', 'CPE', 'Power', 'Security', 'External', 'Unknown')
   ),
   candidate_keys AS (
     SELECT DISTINCT Incident_Number
     FROM (
+      -- Primary path: closed tickets in the last 24 hours
       SELECT h.Incident_Number
       FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
       WHERE h.Incident_Number IS NOT NULL
@@ -61,40 +82,12 @@ USING (
           'USNOC',
           'VAS NOC'
         )
-        AND (
-          h.LastModifiedDate >= TIMESTAMP_SUB(watermark_ts, INTERVAL 6 HOUR)
-          OR h.Submit_Date >= TIMESTAMP_SUB(run_ts, INTERVAL 30 DAY)
-          OR h.ReportedDate >= TIMESTAMP_SUB(run_ts, INTERVAL 30 DAY)
-        )
+        AND h.Status = 'Closed'
+        AND h.Closed_Date >= TIMESTAMP_SUB(run_ts, INTERVAL 24 HOUR)
 
       UNION DISTINCT
 
-      SELECT w.Incident_Number
-      FROM `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` w
-      JOIN `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
-        ON h.Incident_Number = w.Incident_Number
-      WHERE w.Incident_Number IS NOT NULL
-        AND h.Fault_Cause IS NOT NULL
-        AND h.Assigned_Group IN (
-          'Bel NOC',
-          'Console Connect',
-          'FMC',
-          'GSOC',
-          'ICX',
-          'PHSOC',
-          'Soft Switch Management',
-          'USNOC',
-          'VAS NOC'
-        )
-        AND w.WorkLog_Type IN ('Email-Progress Update', 'Internal Work Log (Email)')
-        AND (
-          w.Last_Modified_Date >= TIMESTAMP_SUB(watermark_ts, INTERVAL 6 HOUR)
-          OR w.WorkLog_Submit_Date >= TIMESTAMP_SUB(run_ts, INTERVAL 30 DAY)
-        )
-
-      UNION DISTINCT
-
-      -- Backfill path: re-process existing cache rows with missing AI fault fields
+      -- Backfill path: re-process existing cache rows with missing AI enrichment fields
       SELECT Incident_Number FROM null_fault_cache
     )
     WHERE Incident_Number IS NOT NULL
@@ -126,7 +119,20 @@ USING (
       ) AS WorkLogs_Formatted
     FROM `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` w
     JOIN candidate_keys ck ON ck.Incident_Number = w.Incident_Number
-    WHERE w.WorkLog_Type IN ('Email-Progress Update', 'Internal Work Log (Email)')
+    GROUP BY w.Incident_Number
+  ),
+  w_device_names AS (
+    SELECT
+      w.Incident_Number,
+      ARRAY_TO_STRING(ARRAY_AGG(DISTINCT device_name ORDER BY device_name), ', ') AS DeviceNamesExtracted
+    FROM `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` w
+    JOIN candidate_keys ck ON ck.Incident_Number = w.Incident_Number
+    CROSS JOIN UNNEST(
+      REGEXP_EXTRACT_ALL(
+        COALESCE(w.ExtractedDescription, ''),
+        r'[A-Za-z]{2,3}[0-9]{2,3}\.[A-Za-z]{2,3}[0-9]{2,3}'
+      )
+    ) AS device_name
     GROUP BY w.Incident_Number
   ),
   latest_cache AS (
@@ -135,6 +141,13 @@ USING (
       PayloadHash,
       AIAtFault,
       AIAtFault_Audit,
+      AI_FaultDomain,
+      AI_CarrierVendor,
+      AI_PrimarySymptom,
+      AI_LikelyRootCause,
+      AI_ConfidenceScore,
+      AI_EvidenceSummary,
+      AI_DeviceInterfaceContext,
       ROW_NUMBER() OVER (
         PARTITION BY Incident_Number
         ORDER BY ClassifiedAt DESC
@@ -148,11 +161,13 @@ USING (
       TO_HEX(SHA256(CONCAT(
         CAST(COALESCE(w.WorkLog_Count, 0) AS STRING), '|',
         COALESCE(w.WorkLogs_Formatted, ''), '|',
+        COALESCE(dn.DeviceNamesExtracted, ''), '|',
         COALESCE(h.Customer_Name, ''), '|',
         COALESCE(h.Fault_Cause, ''), '|',
         COALESCE(h.FaultCauseDetail, ''), '|',
-        'hdwl-firstresponse-v10-atfault'
+        'hdwl-firstresponse-v16-device-regex-fallback'
       ))) AS PayloadHash,
+      COALESCE(dn.DeviceNamesExtracted, '') AS DeviceNamesExtracted,
       CONCAT(
         'You are analyzing a helpdesk ticket worklog to identify the FIRST MEANINGFUL response to the customer.\n\n',
         'Ticket customer name: ', COALESCE(h.Customer_Name, 'Unknown'), '\n\n',
@@ -204,6 +219,36 @@ USING (
         '- Choose Nobody when evidence indicates no fault found, right-when-tested, force majeure, uncontrollable events, planned maintenance with no clear accountable party, or insufficient evidence to assign blame confidently.\n',
         '- Output must be exactly one of: Customer, Carrier/Vendor, PCCW, Nobody.\n',
         '- Also return AIAtFault_Audit: one sentence (max 200 chars) justifying your classification, citing the key evidence used (e.g. fault cause, worklog detail).\n\n',
+        'Also return these enrichment fields derived PRIMARILY from the worklog content below.\n',
+        'The worklogs contain all technical communications: internal engineer notes, carrier escalations,\n',
+        'vendor responses, testing results, and customer emails. Read them carefully before answering.\n',
+        'Fault_Cause and Fault_Cause_Detail are secondary hints only — trust worklog evidence over metadata.\n\n',
+        '- AI_FaultDomain: choose EXACTLY ONE label from this fixed set only:\n',
+        '  Access (last-mile, access port, DSL, optical access), Core (backbone, routing, switching, IP/MPLS),\n',
+        '  CPE (customer premises equipment, router, ONT, NTU), Power (power failure, UPS, generator),\n',
+        '  Security (DDoS, BGP hijack, firewall), External (carrier/provider/peering partner fault outside PCCW),\n',
+        '  Unknown (insufficient evidence).\n',
+        '  Do NOT output free text or combined labels in this field.\n',
+        '  Base this on device names, interfaces, symptoms, and what the internal/carrier worklogs say.\n',
+        '- AI_CarrierVendor: extract involved carrier/vendor company name(s) from worklogs.\n',
+        '  Return telco/provider/vendor entity names only (comma-separated if multiple, max 3 names).\n',
+        '  Examples: "Tata Communications", "NTT", "HKT", "China Telecom", "AT&T".\n',
+        '  Use known company naming from telco context and normalize obvious variants (e.g. "TATA" -> "Tata Communications").\n',
+        '  If no external carrier/vendor is mentioned or inferable, return "Unknown".\n',
+        '- AI_PrimarySymptom: concise description (max 150 chars) of the main symptom observed.\n',
+        '  E.g. "complete loss of BGP session", "high packet loss on customer port", "intermittent flaps".\n',
+        '  Read what engineers and customers described as the observable fault.\n',
+        '- AI_LikelyRootCause: concise technical root cause hypothesis (max 200 chars) grounded in evidence.\n',
+        '  E.g. "fiber cut on access segment", "BGP misconfiguration by carrier", "power failure at remote site".\n',
+        '  If root cause was confirmed in worklogs, use that. If not, use best evidence.\n',
+        '- AI_ConfidenceScore: numeric 0.0 to 1.0 reflecting how certain you are based on evidence quality.\n',
+        '  1.0 = explicitly confirmed in worklogs. 0.5 = inferred from partial evidence. 0.2 = very limited info.\n',
+        '- AI_EvidenceSummary: one sentence (max 200 chars) citing the single strongest piece of evidence.\n',
+        '  Quote key worklog phrases or data points that most support your classification.\n',
+        '- AI_DeviceInterfaceContext: device names, interface IDs, circuit IDs, or path info (max 300 chars).\n',
+        '  Extract from worklog entries — e.g. "PE1-HK ge-0/0/2.100, circuit CC-HK-1234".\n',
+        '  Regex-extracted device candidates from worklogs: ', COALESCE(dn.DeviceNamesExtracted, 'None'), '\n',
+        '  Use these candidates as hints. If no valid device/interface/circuit info exists, return "Unknown".\n\n',
         'Worklogs (chronological order):\n',
         COALESCE(w.WorkLogs_Formatted, 'No worklogs for this ticket')
       ) AS PromptText
@@ -211,6 +256,7 @@ USING (
     LEFT JOIN `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
       ON h.Incident_Number = ck.Incident_Number
     LEFT JOIN w_all w ON w.Incident_Number = ck.Incident_Number
+    LEFT JOIN w_device_names dn ON dn.Incident_Number = ck.Incident_Number
   ),
   delta AS (
     SELECT b.*
@@ -218,7 +264,17 @@ USING (
     LEFT JOIN latest_cache lc
       ON lc.Incident_Number = b.Incident_Number
      AND lc.rn = 1
-    WHERE lc.Incident_Number IS NULL OR lc.PayloadHash != b.PayloadHash OR lc.AIAtFault IS NULL OR lc.AIAtFault_Audit IS NULL
+    WHERE lc.Incident_Number IS NULL
+      OR lc.PayloadHash != b.PayloadHash
+      OR lc.AIAtFault IS NULL
+      OR lc.AIAtFault_Audit IS NULL
+      OR lc.AI_FaultDomain IS NULL
+      OR lc.AI_CarrierVendor IS NULL
+      OR lc.AI_PrimarySymptom IS NULL
+      OR lc.AI_LikelyRootCause IS NULL
+      OR lc.AI_ConfidenceScore IS NULL
+      OR lc.AI_EvidenceSummary IS NULL
+      OR lc.AI_DeviceInterfaceContext IS NULL
   )
   SELECT
     d.Incident_Number,
@@ -256,13 +312,33 @@ USING (
       ELSE 'Nobody'
     END AS AIAtFault,
     ai.AIAtFault_Audit,
+    CASE
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(COALESCE(ai.AI_FaultDomain, ''))), r'access|last.?mile|local loop|dsl|fttx|pon|olt|ont port') THEN 'Access'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(COALESCE(ai.AI_FaultDomain, ''))), r'core|backbone|mpls|ip routing|router core|switching core|bgp core') THEN 'Core'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(COALESCE(ai.AI_FaultDomain, ''))), r'cpe|customer premise|customer premises|customer router|onu|ont|ntu') THEN 'CPE'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(COALESCE(ai.AI_FaultDomain, ''))), r'power|ups|generator|electric|electricity|power outage') THEN 'Power'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(COALESCE(ai.AI_FaultDomain, ''))), r'security|ddos|attack|hijack|firewall|acl block|geo block') THEN 'Security'
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(COALESCE(ai.AI_FaultDomain, ''))), r'external|carrier|vendor|provider|partner|peering|upstream|far.?end|third.?party') THEN 'External'
+      ELSE 'Unknown'
+    END AS AI_FaultDomain,
+    COALESCE(NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_CarrierVendor, '')), 1, 200), ''), 'Unknown') AS AI_CarrierVendor,
+    NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_PrimarySymptom, '')), 1, 300), '') AS AI_PrimarySymptom,
+    NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_LikelyRootCause, '')), 1, 400), '') AS AI_LikelyRootCause,
+    GREATEST(0.0, LEAST(1.0, COALESCE(ai.AI_ConfidenceScore, 0.5))) AS AI_ConfidenceScore,
+    NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_EvidenceSummary, '')), 1, 400), '') AS AI_EvidenceSummary,
+    COALESCE(
+      NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_DeviceInterfaceContext, '')), 1, 500), ''),
+      NULLIF(SUBSTR(TRIM(COALESCE(d.DeviceNamesExtracted, '')), 1, 500), ''),
+      'Unknown'
+    ) AS AI_DeviceInterfaceContext,
     run_ts AS ClassifiedAt,
     'gemini-2.5-flash-via-AI.GENERATE' AS ModelName,
-    'hdwl-firstresponse-v10-atfault' AS PromptVersion
+    'hdwl-firstresponse-v16-device-regex-fallback' AS PromptVersion
   FROM (
     SELECT
       d.Incident_Number,
       d.PayloadHash,
+      d.DeviceNamesExtracted,
       AI.GENERATE(
         d.PromptText,
         output_schema => '''
@@ -270,7 +346,14 @@ USING (
           AIFirstResponseTimestamp STRING OPTIONS(description="ISO 8601 timestamp of that worklog, or null"),
           AIFirstResponse_Audit STRING OPTIONS(description="One sentence max 200 chars explaining derivation"),
           AIAtFault STRING OPTIONS(description="One value only: Customer, Carrier/Vendor, PCCW, or Nobody"),
-          AIAtFault_Audit STRING OPTIONS(description="One sentence max 200 chars justifying the AIAtFault classification")
+          AIAtFault_Audit STRING OPTIONS(description="One sentence max 200 chars justifying the AIAtFault classification"),
+          AI_FaultDomain STRING OPTIONS(description="One value only: Access, Core, CPE, Power, Security, External, Unknown"),
+          AI_CarrierVendor STRING OPTIONS(description="Carrier/vendor company name(s) from worklogs, comma-separated max 3, or Unknown"),
+          AI_PrimarySymptom STRING OPTIONS(description="Primary observed symptom"),
+          AI_LikelyRootCause STRING OPTIONS(description="Most likely technical root cause"),
+          AI_ConfidenceScore FLOAT64 OPTIONS(description="Confidence score between 0 and 1"),
+          AI_EvidenceSummary STRING OPTIONS(description="One sentence citing strongest worklog evidence"),
+          AI_DeviceInterfaceContext STRING OPTIONS(description="Device names, interface IDs, circuit IDs extracted from worklogs")
         ''',
         model_params => JSON '{"generation_config":{"thinking_config": {"thinking_budget": 0}}}'
       ) AS ai
@@ -285,6 +368,13 @@ WHEN MATCHED THEN UPDATE SET
   target.AIFirstResponse_Audit = src.AIFirstResponse_Audit,
   target.AIAtFault = src.AIAtFault,
   target.AIAtFault_Audit = src.AIAtFault_Audit,
+  target.AI_FaultDomain = src.AI_FaultDomain,
+  target.AI_CarrierVendor = src.AI_CarrierVendor,
+  target.AI_PrimarySymptom = src.AI_PrimarySymptom,
+  target.AI_LikelyRootCause = src.AI_LikelyRootCause,
+  target.AI_ConfidenceScore = src.AI_ConfidenceScore,
+  target.AI_EvidenceSummary = src.AI_EvidenceSummary,
+  target.AI_DeviceInterfaceContext = src.AI_DeviceInterfaceContext,
   target.ClassifiedAt = src.ClassifiedAt,
   target.ModelName = src.ModelName,
   target.PromptVersion = src.PromptVersion
@@ -296,6 +386,13 @@ WHEN NOT MATCHED THEN INSERT (
   AIFirstResponse_Audit,
   AIAtFault,
   AIAtFault_Audit,
+  AI_FaultDomain,
+  AI_CarrierVendor,
+  AI_PrimarySymptom,
+  AI_LikelyRootCause,
+  AI_ConfidenceScore,
+  AI_EvidenceSummary,
+  AI_DeviceInterfaceContext,
   ClassifiedAt,
   ModelName,
   PromptVersion
@@ -307,6 +404,13 @@ WHEN NOT MATCHED THEN INSERT (
   src.AIFirstResponse_Audit,
   src.AIAtFault,
   src.AIAtFault_Audit,
+  src.AI_FaultDomain,
+  src.AI_CarrierVendor,
+  src.AI_PrimarySymptom,
+  src.AI_LikelyRootCause,
+  src.AI_ConfidenceScore,
+  src.AI_EvidenceSummary,
+  src.AI_DeviceInterfaceContext,
   src.ClassifiedAt,
   src.ModelName,
   src.PromptVersion
