@@ -56,6 +56,29 @@ UniqueJira AS (
     WHERE jira_rank = 1 OR RemedyTicketNumber_flat IS NULL
   )
   WHERE unique_rank = 1
+),
+LatestAI AS (
+  SELECT * EXCEPT(rn)
+  FROM (
+    SELECT
+      Incident_Number,
+      AIFirstResponse,
+      AIFirstResponseTimestamp,
+      AIFirstResponse_Audit,
+      AIAtFault,
+      AIAtFault_Audit,
+      AI_FaultDomain,
+      AI_CarrierVendor,
+      AI_PrimarySymptom,
+      AI_LikelyRootCause,
+      AI_ConfidenceScore,
+      AI_EvidenceSummary,
+      AI_DeviceName,
+      AI_CircuitReference,
+      ROW_NUMBER() OVER (PARTITION BY Incident_Number ORDER BY ClassifiedAt DESC) AS rn
+    FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
+  )
+  WHERE rn = 1
 )
 SELECT
   hd.Incident_Number,
@@ -882,13 +905,28 @@ SELECT
   END AS ProductFamily,
   shr.`SR Status`,
   st.SR_Ref AS JiraSRNo,
-  st.SyncTime
+  st.SyncTime,
+  ai.AIFirstResponse,
+  ai.AIFirstResponseTimestamp,
+  ai.AIFirstResponse_Audit,
+  ai.AIAtFault,
+  ai.AIAtFault_Audit,
+  ai.AI_FaultDomain,
+  ai.AI_CarrierVendor,
+  ai.AI_PrimarySymptom,
+  ai.AI_LikelyRootCause,
+  ai.AI_ConfidenceScore,
+  ai.AI_EvidenceSummary,
+  ai.AI_DeviceName,
+  ai.AI_CircuitReference
 
 FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` AS hd
 FULL OUTER JOIN UniqueJira AS st
   ON hd.Incident_Number = st.RemedyTicketNumber_flat AND st.unique_rank = 1
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
-  ON CONCAT('SR', st.SR_Ref) = shr.SRNo;
+  ON CONCAT('SR', st.SR_Ref) = shr.SRNo
+LEFT JOIN LatestAI AS ai
+  ON ai.Incident_Number = hd.Incident_Number;
 
 -- ========================================
 -- AGGREGATION METRICS (Looker Measures)

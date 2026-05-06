@@ -77,9 +77,9 @@
 
 ### AI_CarrierVendor
 - **Type:** STRING (free text, comma-separated, max 3 names, max 200 chars)
-- **What it is:** Name(s) of the external carrier or vendor involved in the fault, extracted from worklogs.
-- **How it's derived:** AI extracts telco/provider entity names from worklog text using telco domain knowledge. Normalizes common variants (e.g. "TATA" → "Tata Communications").
-- **Examples:** `"Tata Communications"`, `"NTT, HKT"`, `"China Telecom"`
+- **What it is:** Name(s) of the carrier, vendor, or operator entity involved in the ticket, extracted from worklogs.
+- **How it's derived:** AI extracts telco/provider/operator names from worklog text using telco domain knowledge. It is instructed to look in salutations, recipient mailboxes, signatures, domains, quoted emails, escalation targets, subject lines, and internal notes. Normalizes common variants (e.g. "TATA" → "Tata Communications", "PCCWG" → "PCCW").
+- **Examples:** `"Tata Communications"`, `"NTT, HKT"`, `"China Telecom"`, `"PCCW"`
 - **Value when none found:** `"Unknown"`
 
 ---
@@ -120,12 +120,21 @@
 
 ---
 
-### AI_DeviceInterfaceContext
+### AI_DeviceName
+- **Type:** STRING (free text, regex-derived)
+- **What it is:** Device names matched from worklogs using the configured regex pattern only.
+- **How it's derived:** Uses `REGEXP_EXTRACT_ALL` with the supplied pattern `[A-Za-z]{2,3}[0-9]{2,3}\.[A-Za-z]{2,3}[0-9]{2,3}` against worklog text. No AI fallback is used.
+- **Examples:** `"rt01.hkg"`, `"pe12.sin"`
+- **Value when none found:** `NULL`
+
+---
+
+### AI_CircuitReference
 - **Type:** STRING (free text, max 300 chars)
-- **What it is:** Device names, interface IDs, circuit IDs, or network path information relevant to the fault.
-- **How it's derived:** AI extracts device/interface/circuit identifiers from worklog text. A regex pattern (`[A-Za-z]{2,3}[0-9]{2,3}\.[A-Za-z]{2,3}[0-9]{2,3}`) pre-extracts candidate device name tokens from worklogs as hints for the AI. If the AI returns no result, the regex candidates are used as fallback.
-- **Examples:** `"PE1-HK ge-0/0/2.100, circuit CC-HK-1234"`, `"rt01.hkg, rt02.sin"`
-- **Value when none found:** `"Unknown"`
+- **What it is:** Interface IDs, circuit IDs, service references, VLANs, ports, or network path information relevant to the ticket.
+- **How it's derived:** AI extracts circuit or path identifiers from worklog text. Device names are not the primary target for this field.
+- **Examples:** `"ge-0/0/2.100, circuit CC-HK-1234"`, `"VLAN 2201 via HK-SIN path"`
+- **Value when none found:** `NULL`
 
 ---
 

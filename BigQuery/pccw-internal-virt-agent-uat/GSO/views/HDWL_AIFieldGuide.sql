@@ -10,7 +10,7 @@ SELECT 5, 'AIAtFault_Audit', 'One-sentence justification citing the key evidence
 UNION ALL
 SELECT 6, 'AI_FaultDomain', 'Technical network domain of the fault based on device names, interface types, symptoms, and worklog content.', 'Controlled', 'Access | Core | CPE | Power | Security | External | Unknown'
 UNION ALL
-SELECT 7, 'AI_CarrierVendor', 'Name of external carrier or vendor extracted from worklogs. Returns up to 3 comma-separated names. Returns Unknown if none found.', 'Free text', NULL
+SELECT 7, 'AI_CarrierVendor', 'Name of carrier, vendor, or operator entity extracted from worklogs. Returns up to 3 comma-separated names. PCCW is also allowed. Returns Unknown only when no entity can be identified.', 'Free text', NULL
 UNION ALL
 SELECT 8, 'AI_PrimarySymptom', 'Concise description of the main observable fault symptom described in worklogs.', 'Free text', NULL
 UNION ALL
@@ -20,5 +20,7 @@ SELECT 10, 'AI_ConfidenceScore', 'Confidence score from 0.0 to 1.0 based on evid
 UNION ALL
 SELECT 11, 'AI_EvidenceSummary', 'Single strongest piece of evidence supporting the AI classifications.', 'Free text', NULL
 UNION ALL
-SELECT 12, 'AI_DeviceInterfaceContext', 'Device names, interface IDs, circuit IDs, or path information extracted from worklogs. Returns Unknown if none found.', 'Free text', NULL
+SELECT 12, 'AI_DeviceName', 'Device names extracted only from the configured regex pattern over worklogs. Null when no regex match is found.', 'Free text', NULL
+UNION ALL
+SELECT 13, 'AI_CircuitReference', 'Interface IDs, circuit IDs, service references, VLANs, ports, or path information extracted from worklogs. Null when no circuit or path reference is found.', 'Free text', NULL
 ORDER BY SortOrder;

@@ -406,7 +406,8 @@ SELECT
   ai.AI_LikelyRootCause,
   ai.AI_ConfidenceScore,
   ai.AI_EvidenceSummary,
-  ai.AI_DeviceInterfaceContext
+  ai.AI_DeviceName,
+  ai.AI_CircuitReference
   
 FROM
   `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
@@ -429,7 +430,8 @@ LEFT JOIN (
     AI_LikelyRootCause,
     AI_ConfidenceScore,
     AI_EvidenceSummary,
-    AI_DeviceInterfaceContext,
+    AI_DeviceName,
+    AI_CircuitReference,
     ROW_NUMBER() OVER (
       PARTITION BY Incident_Number
       ORDER BY ClassifiedAt DESC

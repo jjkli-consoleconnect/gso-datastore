@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` (
   AI_LikelyRootCause STRING,
   AI_ConfidenceScore FLOAT64,
   AI_EvidenceSummary STRING,
-  AI_DeviceInterfaceContext STRING,
+  AI_DeviceName STRING,
+  AI_CircuitReference STRING,
   ClassifiedAt TIMESTAMP NOT NULL,
   ModelName STRING,
   PromptVersion STRING
@@ -39,13 +40,15 @@ ADD COLUMN IF NOT EXISTS AI_PrimarySymptom STRING,
 ADD COLUMN IF NOT EXISTS AI_LikelyRootCause STRING,
 ADD COLUMN IF NOT EXISTS AI_ConfidenceScore FLOAT64,
 ADD COLUMN IF NOT EXISTS AI_EvidenceSummary STRING,
-ADD COLUMN IF NOT EXISTS AI_DeviceInterfaceContext STRING;
+ADD COLUMN IF NOT EXISTS AI_DeviceName STRING,
+ADD COLUMN IF NOT EXISTS AI_CircuitReference STRING;
 
 ALTER TABLE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
 DROP COLUMN IF EXISTS AI_NextBestAction,
 DROP COLUMN IF EXISTS AI_OwnershipNow,
 DROP COLUMN IF EXISTS AI_SLABreachRisk,
-DROP COLUMN IF EXISTS AI_SuspectedParty;
+DROP COLUMN IF EXISTS AI_SuspectedParty,
+DROP COLUMN IF EXISTS AI_DeviceInterfaceContext;
 
 MERGE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` AS target
 USING (
@@ -60,7 +63,7 @@ USING (
       OR AI_LikelyRootCause IS NULL
       OR AI_ConfidenceScore IS NULL
       OR AI_EvidenceSummary IS NULL
-      OR AI_DeviceInterfaceContext IS NULL
+      OR COALESCE(PromptVersion, '') != 'hdwl-firstresponse-v17-device-circuit-planned'
       OR AI_FaultDomain NOT IN ('Access', 'Core', 'CPE', 'Power', 'Security', 'External', 'Unknown')
   ),
   candidate_keys AS (
@@ -77,6 +80,7 @@ USING (
           'FMC',
           'GSOC',
           'ICX',
+          'Planned Event Mgt',
           'PHSOC',
           'Soft Switch Management',
           'USNOC',
@@ -147,7 +151,8 @@ USING (
       AI_LikelyRootCause,
       AI_ConfidenceScore,
       AI_EvidenceSummary,
-      AI_DeviceInterfaceContext,
+      AI_DeviceName,
+      AI_CircuitReference,
       ROW_NUMBER() OVER (
         PARTITION BY Incident_Number
         ORDER BY ClassifiedAt DESC
@@ -162,17 +167,23 @@ USING (
         CAST(COALESCE(w.WorkLog_Count, 0) AS STRING), '|',
         COALESCE(w.WorkLogs_Formatted, ''), '|',
         COALESCE(dn.DeviceNamesExtracted, ''), '|',
+        COALESCE(h.Assigned_Group, ''), '|',
         COALESCE(h.Customer_Name, ''), '|',
         COALESCE(h.Fault_Cause, ''), '|',
         COALESCE(h.FaultCauseDetail, ''), '|',
-        'hdwl-firstresponse-v16-device-regex-fallback'
+        'hdwl-firstresponse-v17-device-circuit-planned'
       ))) AS PayloadHash,
       COALESCE(dn.DeviceNamesExtracted, '') AS DeviceNamesExtracted,
       CONCAT(
         'You are analyzing a helpdesk ticket worklog to identify the FIRST MEANINGFUL response to the customer.\n\n',
         'Ticket customer name: ', COALESCE(h.Customer_Name, 'Unknown'), '\n\n',
+        'Assigned_Group: ', COALESCE(h.Assigned_Group, 'Unknown'), '\n',
         'Fault_Cause: ', COALESCE(h.Fault_Cause, 'Unknown'), '\n',
         'Fault_Cause_Detail: ', COALESCE(h.FaultCauseDetail, 'Unknown'), '\n\n',
+        'If Assigned_Group = Planned Event Mgt, assume this is most likely planned maintenance or change work unless the worklogs clearly show an unexpected fault.\n',
+        'For Planned Event Mgt tickets, maintenance advisories, maintenance progress notices, change execution updates, and maintenance completion notices count as meaningful customer-facing responses when they contain substantive schedule, impact, progress, or completion details.\n',
+        'For Planned Event Mgt tickets, prefer AIAtFault = Nobody for planned work unless the worklogs clearly show PCCW caused an unplanned fault or a named external carrier/vendor caused the impact.\n',
+        'For Planned Event Mgt tickets, AI_LikelyRootCause may describe scheduled maintenance, planned change, migration, or implementation activity if that is what the worklogs show.\n\n',
         'Only evaluate these customer-facing worklog types:\n',
         '- Email-Progress Update\n',
         '- Internal Work Log (Email)\n',
@@ -231,10 +242,11 @@ USING (
         '  Do NOT output free text or combined labels in this field.\n',
         '  Base this on device names, interfaces, symptoms, and what the internal/carrier worklogs say.\n',
         '- AI_CarrierVendor: extract involved carrier/vendor company name(s) from worklogs.\n',
-        '  Return telco/provider/vendor entity names only (comma-separated if multiple, max 3 names).\n',
-        '  Examples: "Tata Communications", "NTT", "HKT", "China Telecom", "AT&T".\n',
-        '  Use known company naming from telco context and normalize obvious variants (e.g. "TATA" -> "Tata Communications").\n',
-        '  If no external carrier/vendor is mentioned or inferable, return "Unknown".\n',
+        '  Return telco/provider/vendor entity names only (comma-separated if multiple, max 3 names). PCCW is also an allowed value when PCCW is the relevant network/operator entity referenced in the worklogs.\n',
+        '  Examples: "Tata Communications", "NTT", "HKT", "China Telecom", "AT&T", "PCCW".\n',
+        '  Look hard for carrier/vendor names in salutations, recipient mailboxes, signatures, domains, quoted emails, escalation targets, subject lines, and internal notes.\n',
+        '  Normalize obvious variants and aliases (e.g. "TATA" -> "Tata Communications", "PCCWG" -> "PCCW").\n',
+        '  Only return "Unknown" when no carrier/vendor/operator entity is named or can be inferred from the worklogs.\n',
         '- AI_PrimarySymptom: concise description (max 150 chars) of the main symptom observed.\n',
         '  E.g. "complete loss of BGP session", "high packet loss on customer port", "intermittent flaps".\n',
         '  Read what engineers and customers described as the observable fault.\n',
@@ -245,10 +257,10 @@ USING (
         '  1.0 = explicitly confirmed in worklogs. 0.5 = inferred from partial evidence. 0.2 = very limited info.\n',
         '- AI_EvidenceSummary: one sentence (max 200 chars) citing the single strongest piece of evidence.\n',
         '  Quote key worklog phrases or data points that most support your classification.\n',
-        '- AI_DeviceInterfaceContext: device names, interface IDs, circuit IDs, or path info (max 300 chars).\n',
-        '  Extract from worklog entries — e.g. "PE1-HK ge-0/0/2.100, circuit CC-HK-1234".\n',
-        '  Regex-extracted device candidates from worklogs: ', COALESCE(dn.DeviceNamesExtracted, 'None'), '\n',
-        '  Use these candidates as hints. If no valid device/interface/circuit info exists, return "Unknown".\n\n',
+        '- AI_CircuitReference: interface IDs, circuit IDs, service references, path references, VLANs, ports, or routing path details (max 300 chars).\n',
+        '  Do not return device names in this field unless needed as part of the circuit/path reference.\n',
+        '  If no valid circuit/interface/path reference exists, return null.\n',
+        '  Regex-extracted device-name candidates from worklogs for separate AI_DeviceName field: ', COALESCE(dn.DeviceNamesExtracted, 'None'), '\n\n',
         'Worklogs (chronological order):\n',
         COALESCE(w.WorkLogs_Formatted, 'No worklogs for this ticket')
       ) AS PromptText
@@ -274,7 +286,6 @@ USING (
       OR lc.AI_LikelyRootCause IS NULL
       OR lc.AI_ConfidenceScore IS NULL
       OR lc.AI_EvidenceSummary IS NULL
-      OR lc.AI_DeviceInterfaceContext IS NULL
   )
   SELECT
     d.Incident_Number,
@@ -321,19 +332,19 @@ USING (
       WHEN REGEXP_CONTAINS(LOWER(TRIM(COALESCE(ai.AI_FaultDomain, ''))), r'external|carrier|vendor|provider|partner|peering|upstream|far.?end|third.?party') THEN 'External'
       ELSE 'Unknown'
     END AS AI_FaultDomain,
-    COALESCE(NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_CarrierVendor, '')), 1, 200), ''), 'Unknown') AS AI_CarrierVendor,
+    CASE
+      WHEN REGEXP_CONTAINS(LOWER(TRIM(COALESCE(ai.AI_CarrierVendor, ''))), r'^pccw(\s+global|g)?$') THEN 'PCCW'
+      ELSE COALESCE(NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_CarrierVendor, '')), 1, 200), ''), 'Unknown')
+    END AS AI_CarrierVendor,
     NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_PrimarySymptom, '')), 1, 300), '') AS AI_PrimarySymptom,
     NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_LikelyRootCause, '')), 1, 400), '') AS AI_LikelyRootCause,
     GREATEST(0.0, LEAST(1.0, COALESCE(ai.AI_ConfidenceScore, 0.5))) AS AI_ConfidenceScore,
     NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_EvidenceSummary, '')), 1, 400), '') AS AI_EvidenceSummary,
-    COALESCE(
-      NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_DeviceInterfaceContext, '')), 1, 500), ''),
-      NULLIF(SUBSTR(TRIM(COALESCE(d.DeviceNamesExtracted, '')), 1, 500), ''),
-      'Unknown'
-    ) AS AI_DeviceInterfaceContext,
+    NULLIF(SUBSTR(TRIM(COALESCE(d.DeviceNamesExtracted, '')), 1, 500), '') AS AI_DeviceName,
+    NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_CircuitReference, '')), 1, 500), '') AS AI_CircuitReference,
     run_ts AS ClassifiedAt,
     'gemini-2.5-flash-via-AI.GENERATE' AS ModelName,
-    'hdwl-firstresponse-v16-device-regex-fallback' AS PromptVersion
+    'hdwl-firstresponse-v17-device-circuit-planned' AS PromptVersion
   FROM (
     SELECT
       d.Incident_Number,
@@ -353,7 +364,7 @@ USING (
           AI_LikelyRootCause STRING OPTIONS(description="Most likely technical root cause"),
           AI_ConfidenceScore FLOAT64 OPTIONS(description="Confidence score between 0 and 1"),
           AI_EvidenceSummary STRING OPTIONS(description="One sentence citing strongest worklog evidence"),
-          AI_DeviceInterfaceContext STRING OPTIONS(description="Device names, interface IDs, circuit IDs extracted from worklogs")
+          AI_CircuitReference STRING OPTIONS(description="Interface IDs, circuit IDs, service references, VLANs, ports, or path details extracted from worklogs")
         ''',
         model_params => JSON '{"generation_config":{"thinking_config": {"thinking_budget": 0}}}'
       ) AS ai
@@ -374,7 +385,8 @@ WHEN MATCHED THEN UPDATE SET
   target.AI_LikelyRootCause = src.AI_LikelyRootCause,
   target.AI_ConfidenceScore = src.AI_ConfidenceScore,
   target.AI_EvidenceSummary = src.AI_EvidenceSummary,
-  target.AI_DeviceInterfaceContext = src.AI_DeviceInterfaceContext,
+  target.AI_DeviceName = src.AI_DeviceName,
+  target.AI_CircuitReference = src.AI_CircuitReference,
   target.ClassifiedAt = src.ClassifiedAt,
   target.ModelName = src.ModelName,
   target.PromptVersion = src.PromptVersion
@@ -392,7 +404,8 @@ WHEN NOT MATCHED THEN INSERT (
   AI_LikelyRootCause,
   AI_ConfidenceScore,
   AI_EvidenceSummary,
-  AI_DeviceInterfaceContext,
+  AI_DeviceName,
+  AI_CircuitReference,
   ClassifiedAt,
   ModelName,
   PromptVersion
@@ -410,7 +423,8 @@ WHEN NOT MATCHED THEN INSERT (
   src.AI_LikelyRootCause,
   src.AI_ConfidenceScore,
   src.AI_EvidenceSummary,
-  src.AI_DeviceInterfaceContext,
+  src.AI_DeviceName,
+  src.AI_CircuitReference,
   src.ClassifiedAt,
   src.ModelName,
   src.PromptVersion
