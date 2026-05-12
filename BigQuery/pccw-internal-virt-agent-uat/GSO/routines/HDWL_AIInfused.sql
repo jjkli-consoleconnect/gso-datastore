@@ -6,7 +6,7 @@
 
 DECLARE run_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
 
-SET @@query_label = "seeds_environment:prod,seeds_product:hdwl_aiinfused,seeds_component:bigquery";
+SET @@query_label = "seeds_environment:prod,seeds_product:aiinfused_hdwl,seeds_component:bigquery";
 
 CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` (
   Incident_Number STRING NOT NULL,

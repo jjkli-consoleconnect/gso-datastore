@@ -23,4 +23,4 @@ UNION ALL
 SELECT 12, 'AI_DeviceName', 'Device names extracted only from the configured regex pattern over worklogs. Null when no regex match is found.', 'Free text', NULL
 UNION ALL
 SELECT 13, 'AI_CircuitReference', 'Interface IDs, circuit IDs, service references, VLANs, ports, or path information extracted from worklogs. Null when no circuit or path reference is found.', 'Free text', NULL
-ORDER BY SortOrder;
+ORDER BY SortOrder

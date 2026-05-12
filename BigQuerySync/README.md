@@ -49,3 +49,14 @@ Local override example:
 - Routines require a `.meta.json` sidecar to carry non-body attributes.
 - Push protects production by default with a `-WhatIf` preview; pass `-Force` to apply.
 - If `bq-sync.config.local.json` exists, it overrides matching top-level settings from `bq-sync.config.json`.
+
+## HubSpot Survey Loads
+- Use `load_hubspot_surveys.py` to create and upsert the monthly HubSpot survey exports into `pccw-internal-virt-agent-uat.GSO`.
+- Default behavior scans `Temp/` for the latest matching SCN and Remedy survey workbooks.
+- Loads are idempotent on `record_id`: rerunning the same export updates matching rows and inserts new ones.
+
+Example:
+
+```powershell
+"g:/My Drive/Scripts/.venv/Scripts/python.exe" "g:/My Drive/Scripts/BigQuerySync/load_hubspot_surveys.py"
+```

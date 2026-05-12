@@ -363,7 +363,13 @@ def fetch_and_sync_jira_changelog():
                     
                     resp.raise_for_status()
                     attempt = 0  # Reset on success
-                    
+
+                    # Detect silent Jira auth failure (returns 200 with empty results)
+                    login_reason = resp.headers.get('x-seraph-loginreason', '')
+                    if 'AUTHENTICATED_FAILED' in login_reason or 'AUTHENTICATION_DENIED' in login_reason:
+                        logging.error(f"Jira auth FAILED for {label} (x-seraph-loginreason: {login_reason}). API token may be expired or revoked. Update 'jira-api-token' secret.")
+                        break
+
                     data_local = resp.json()
                     issues_local = data_local.get('issues', [])
                     if not issues_local:

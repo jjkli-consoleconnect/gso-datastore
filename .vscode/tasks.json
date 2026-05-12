@@ -98,6 +98,25 @@
 			"type": "shell",
 			"command": "gcloud auth application-default login",
 			"isBackground": false
+		},
+		{
+			"label": "BigQuery: Load HubSpot Surveys (DryRun)",
+			"type": "shell",
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": [
+				"${workspaceFolder}/BigQuerySync/load_hubspot_surveys.py",
+				"--dry-run"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "BigQuery: Load HubSpot Surveys",
+			"type": "shell",
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": [
+				"${workspaceFolder}/BigQuerySync/load_hubspot_surveys.py"
+			],
+			"problemMatcher": []
 		}
 	]
 }

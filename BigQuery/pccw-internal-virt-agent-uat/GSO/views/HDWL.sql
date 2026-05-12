@@ -444,6 +444,3 @@ LEFT JOIN (
 ORDER BY
   h.Incident_Number,
   w.WorkLog_Submit_Date
-
-
-
