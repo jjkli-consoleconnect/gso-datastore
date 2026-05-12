@@ -45,6 +45,7 @@ SELECT
 	b.record_id,
 	b.submission_timestamp,
 	FORMAT_TIMESTAMP('%Y-%m', b.submission_timestamp) AS submission_month,
+	DATE_TRUNC(DATE(b.submission_timestamp), MONTH) AS submission_month_date,
 	b.survey_name,
 	b.srno,
 	b.email,
