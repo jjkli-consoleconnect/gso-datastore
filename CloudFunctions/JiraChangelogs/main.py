@@ -285,6 +285,7 @@ def fetch_and_sync_jira_changelog():
             'project = "IT Helpdesk" OR '\
             'project = "Vendor Verification Team" OR '\
             'project = IPECR OR '\
+            'project = "Internal Knowledge Management" OR '\
             'project = "GS&O Strategic Initiatives" '
             ')'
         )

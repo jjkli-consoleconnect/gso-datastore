@@ -47,6 +47,13 @@ SHR_PEOPLE_CONFIG = {
         "CustID", "CustName", "SRNo", "Product_Family", "Product_ID",
         "Insight_Circuit_ID", "Circuit_Owner", "ProductDescription", "SR_Status"
     ],
+    "legacy_mirror_map": {
+        "Product Family": "Product_Family",
+        "Product ID": "Product_ID",
+        "Insight Circuit ID": "Insight_Circuit_ID",
+        "Circuit Owner": "Circuit_Owner",
+        "SR Status": "SR_Status"
+    },
     "field_map": {
         "CustID": "CustID",
         "CustName": "CustName",
@@ -278,8 +285,10 @@ def process_csv_data(csv_content: bytes, config: Dict) -> Tuple[bool, int]:
         load_job.result()
         logger.info(f"Loaded {len(transformed_rows)} rows to staging table {staging_table_id}")
         
-        # Ensure target table has all necessary columns
-        target_columns = config['all_columns']
+        # Ensure target table has all necessary columns, including legacy mirrored fields.
+        target_columns = list(config['all_columns'])
+        legacy_mirror_map = config.get('legacy_mirror_map', {})
+        target_columns.extend([col for col in legacy_mirror_map.keys() if col not in target_columns])
         ensure_target_table_columns(bq_client, config['target_dataset'], config['target_table'], target_columns)
         
         # MERGE staging into target
@@ -298,43 +307,64 @@ def process_csv_data(csv_content: bytes, config: Dict) -> Tuple[bool, int]:
 
 
 def build_merge_query(config: Dict) -> str:
-    """Build MERGE query to merge staging into target table"""
+    """Build MERGE query to merge staging into target table."""
     staging_table = f"`{PROJECT_ID}.{config['staging_dataset']}.{config['staging_table']}`"
     target_table = f"`{PROJECT_ID}.{config['target_dataset']}.{config['target_table']}`"
     primary_key = config['primary_key']
     all_columns = config['all_columns']
-    
+    legacy_mirror_map = config.get('legacy_mirror_map', {})
+
+    def quote_identifier(column_name: str) -> str:
+        return f"`{column_name}`"
+
     # Build deduplicated source
-    source_columns = ', '.join([f"CAST({col} AS STRING) AS {col}" for col in all_columns])
-    
+    source_columns = ', '.join(
+        [f"CAST({quote_identifier(col)} AS STRING) AS {quote_identifier(col)}" for col in all_columns]
+    )
+
     dedup_source = f"""
     SELECT * FROM (
         SELECT
             {source_columns},
-            ROW_NUMBER() OVER (PARTITION BY {primary_key} ORDER BY {primary_key}) AS rn
+            ROW_NUMBER() OVER (PARTITION BY {quote_identifier(primary_key)} ORDER BY {quote_identifier(primary_key)}) AS rn
         FROM {staging_table}
-        WHERE {primary_key} IS NOT NULL AND {primary_key} != ""
+        WHERE {quote_identifier(primary_key)} IS NOT NULL AND {quote_identifier(primary_key)} != ""
     ) WHERE rn = 1
     """
-    
+
     # Build UPDATE SET clause
-    update_set = ',\n        '.join([f"T.{col} = S.{col}" for col in all_columns if col != primary_key])
-    
+    update_assignments = [
+        f"T.{quote_identifier(col)} = S.{quote_identifier(col)}"
+        for col in all_columns
+        if col != primary_key
+    ]
+    for legacy_col, source_col in legacy_mirror_map.items():
+        update_assignments.append(
+            f"T.{quote_identifier(legacy_col)} = S.{quote_identifier(source_col)}"
+        )
+    update_set = ',\n        '.join(update_assignments)
+
     # Build INSERT columns and values
-    insert_cols = ', '.join(all_columns)
-    insert_vals = ', '.join([f"S.{col}" for col in all_columns])
-    
+    insert_columns = list(all_columns)
+    insert_values = [f"S.{quote_identifier(col)}" for col in all_columns]
+    for legacy_col, source_col in legacy_mirror_map.items():
+        insert_columns.append(legacy_col)
+        insert_values.append(f"S.{quote_identifier(source_col)}")
+
+    insert_cols = ', '.join([quote_identifier(col) for col in insert_columns])
+    insert_vals = ', '.join(insert_values)
+
     merge_query = f"""
     MERGE {target_table} T
     USING ({dedup_source}) S
-    ON T.{primary_key} = S.{primary_key}
+    ON T.{quote_identifier(primary_key)} = S.{quote_identifier(primary_key)}
     WHEN MATCHED THEN UPDATE SET
         {update_set}
     WHEN NOT MATCHED THEN
         INSERT ({insert_cols})
         VALUES ({insert_vals})
     """
-    
+
     return merge_query
 
 

@@ -17,8 +17,11 @@ WITH FlattenedTierTwo AS (
     `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
     LEFT JOIN UNNEST(t.RemedyTicketNumber) AS remedy_incident
   WHERE COALESCE(t.IsDeleted, FALSE) = FALSE
-    AND REGEXP_CONTAINS(COALESCE(t.Key, ''), r'(TXCE|GSDT|ITHD|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|CCPROV)')
-    OR t.Key IS NULL
+    AND NOT LOWER(COALESCE(t.Summary, '')) LIKE 'insight alert%'
+    AND (
+      t.Key IS NULL
+      OR REGEXP_CONTAINS(t.Key, r'(TXCE|GSDT|ITHD|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|CCPROV)')
+    )
 ),
 RankedJira AS (
   -- Deduplicate: per Remedy incident, pick the primary Jira (prioritize T2 projects)
@@ -1007,3 +1010,4 @@ LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON CONCAT('SR', st.SR_Ref) = shr.SRNo
 LEFT JOIN LatestAI AS ai
   ON ai.Incident_Number = hd.Incident_Number
+

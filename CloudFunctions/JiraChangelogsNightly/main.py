@@ -58,6 +58,7 @@ DEFAULT_PROJECTS = [
     'IT Helpdesk',
     'Vendor Verification Team',
     'IPECR',
+    'Internal Knowledge Management',
     'GS&O Strategic Initiatives'
 ]
 

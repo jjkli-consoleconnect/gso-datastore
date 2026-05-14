@@ -1,0 +1,208 @@
+from google.cloud import bigquery
+
+client = bigquery.Client(project='pccw-internal-virt-agent-uat')
+
+# Drop existing table
+print("Dropping existing table...")
+client.delete_table('pccw-internal-virt-agent-uat.GSO.CenterOps_CircuitMetrics', not_found_ok=True)
+
+# Create view instead
+sql = """
+CREATE OR REPLACE VIEW `pccw-internal-virt-agent-uat.GSO.CenterOps_CircuitMetrics` AS
+
+SELECT DISTINCT
+  -- Circuit info (from SHRPeople)
+  shr.SRNo,
+  shr.Circuit_Owner,
+  shr.Product_Family,
+  shr.Product_ID,
+  shr.CustName,
+  shr.SR_Status,
+  shr.Insight_Circuit_ID,
+  
+  -- Ticket identifiers
+  hdwl.Incident_Number,
+  hdwl.Status,
+  hdwl.CaseType,
+  
+  -- Dates
+  hdwl.Reported_Date,
+  hdwl.Responded_Date,
+  hdwl.Closed_Date,
+  hdwl.LastResolvedDate,
+  EXTRACT(YEAR FROM hdwl.Reported_Date) AS Report_Year,
+  EXTRACT(MONTH FROM hdwl.Reported_Date) AS Report_Month,
+  
+  -- Circuit identifier
+  hdwl.GSMP_Circuit_ID,
+  hdwl.Assigned_Group,
+  
+  -- MTTR and performance
+  hdwl.TrueMTTR_mins,
+  CAST(hdwl.`1st_Response_Minutes` AS INT64) AS First_Response_Minutes,
+  
+  -- Fault analysis (AI-enriched)
+  hdwl.AIFaultCause,
+  hdwl.Fault_Cause,
+  REGEXP_REPLACE(UPPER(TRIM(COALESCE(hdwl.Fault_Cause, ''))), r'[^A-Z0-9]+', ' ') AS Fault_Cause_Normalized,
+  CASE
+    WHEN TRIM(COALESCE(hdwl.CaseType, '')) IN ('Incident', 'MCEvent-Child')
+      AND REGEXP_REPLACE(UPPER(TRIM(COALESCE(hdwl.Fault_Cause, ''))), r'[^A-Z0-9]+', ' ') IN UNNEST([
+      'CONSOLE API ISSUE',
+      'CONSOLE PLATFORM CODE ISSUE',
+      'CONSOLE SECURITY ATTACK',
+      'CONSOLE SERVICE LAYER ISSUE',
+      'API FAILED REQUEST',
+      'ANYTHING INTERNAL NETWORK RELATED',
+      'BACKHAUL',
+      'CODE BUG IN CONSOLE SERVICE LAYER',
+      'CODE ERROR IN CONSOLE WORKFLOW',
+      'CONFIG ISSUE RELATED',
+      'CONNECTIVITY OUTAGE',
+      'CORE NETWORK HARDWARE ISSUE',
+      'CORE PLATFORM NETWORK',
+      'FAR END FAULT',
+      'FRONTIER STATION',
+      'HARDWARE ISSUE',
+      'INC PCCW GLOBAL NETWORK INFRASTRUTURE',
+      'INCIDENT API ISSUE',
+      'INCIDENT CONFIG MISMATCH DUE TO INFLIGHT CHANGE',
+      'INCIDENT CONSOLE FEATURE DEFICIENCY',
+      'INCIDENT DIRTY FIBRE',
+      'INCIDENT FAULTY EQUIPMENT EG PORT',
+      'INCIDENT IP ADDRESS S GEO BLOCKED',
+      'INCIDENT INTERFACE WAS UNPLUGGED',
+      'INCIDENT LIGHT LEVELS LOW NOT WITHIN SPEC',
+      'INCIDENT PLATFORM ISSUE CODE ERROR FUNCTIONALITY DEFICIENCY',
+      'INCIDENT SECURITY ATTACK',
+      'INCIDENT UNSTABLE CONNECTION',
+      'INCIDENT WEB PAGE NOT REACHABLE',
+      'INTERNATIONAL LINK TRUNK OR SUBMARINE CABLE',
+      'INTERNATIONAL PORTION FAULT BETWEEN TWO CABLE STATIONS COUNTRIES',
+      'INTERNET CONNECTIVITY DOWN',
+      'LOCAL LOOP',
+      'LOCAL ITMC LOCAL TERRITORIAL LINK',
+      'MAINTENANCE NOTIFICATION ERROR INTERNAL',
+      'MAINTENANCE NOTIFICATION ERROR PARTNER',
+      'NETWORK',
+      'NETWORK CONNECTIVITY DOWN',
+      'NON CUSTOMER APPLICATION',
+      'NON CUSTOMER FAULT ISSUES',
+      'OTHERS INTERNAL HUMAN ERROR',
+      'PARTNER NETWORK',
+      'PEERING PARTNER',
+      'PERFORMANCE',
+      'PROLONGED MAINTENANCE',
+      'RIGHT WHEN TEST',
+      'SCHEDULED MAINTENANCE NOT COMMUNICATED',
+      'SPECIFIC DATA CENTER POP OUTAGE',
+      'SUPPORT SERVICE OUTAGE',
+      'UNSCHEDULED MAINTENANCE',
+      'UNTRACED FAULT',
+      'VAS PCCW FAULT ISSUES',
+      'X CONNECT FAULTY RELATED',
+      'IPVPN BACKHAUL',
+      'IPVPN CORE PLATFORM NETWORK',
+      'IPVPN INTERNATIONAL LINK TRUNK OR SUBMARINE CABLE',
+      'IPVPN LOCAL ITMC LOCAL TERRITORIAL LINK',
+      'IPVPN LOCAL LOOP',
+      'IPVPN RIGHT WHEN TEST',
+      'IPVPN UNTRACED FAULT',
+      'INCOMPATIBLE MEDIA CONVERTER',
+      'X CONNECT FAULTY CABLING'
+    ]) THEN TRUE
+    ELSE FALSE
+  END AS Is_Counted_Fault,
+  CASE
+    WHEN TRIM(COALESCE(hdwl.CaseType, '')) IN ('Incident', 'MCEvent-Child')
+      AND REGEXP_REPLACE(UPPER(TRIM(COALESCE(hdwl.Fault_Cause, ''))), r'[^A-Z0-9]+', ' ') IN UNNEST([
+      'CONSOLE API ISSUE',
+      'CONSOLE PLATFORM CODE ISSUE',
+      'CONSOLE SECURITY ATTACK',
+      'CONSOLE SERVICE LAYER ISSUE',
+      'API FAILED REQUEST',
+      'ANYTHING INTERNAL NETWORK RELATED',
+      'BACKHAUL',
+      'CODE BUG IN CONSOLE SERVICE LAYER',
+      'CODE ERROR IN CONSOLE WORKFLOW',
+      'CONFIG ISSUE RELATED',
+      'CONNECTIVITY OUTAGE',
+      'CORE NETWORK HARDWARE ISSUE',
+      'CORE PLATFORM NETWORK',
+      'FAR END FAULT',
+      'FRONTIER STATION',
+      'HARDWARE ISSUE',
+      'INC PCCW GLOBAL NETWORK INFRASTRUTURE',
+      'INCIDENT API ISSUE',
+      'INCIDENT CONFIG MISMATCH DUE TO INFLIGHT CHANGE',
+      'INCIDENT CONSOLE FEATURE DEFICIENCY',
+      'INCIDENT DIRTY FIBRE',
+      'INCIDENT FAULTY EQUIPMENT EG PORT',
+      'INCIDENT IP ADDRESS S GEO BLOCKED',
+      'INCIDENT INTERFACE WAS UNPLUGGED',
+      'INCIDENT LIGHT LEVELS LOW NOT WITHIN SPEC',
+      'INCIDENT PLATFORM ISSUE CODE ERROR FUNCTIONALITY DEFICIENCY',
+      'INCIDENT SECURITY ATTACK',
+      'INCIDENT UNSTABLE CONNECTION',
+      'INCIDENT WEB PAGE NOT REACHABLE',
+      'INTERNATIONAL LINK TRUNK OR SUBMARINE CABLE',
+      'INTERNATIONAL PORTION FAULT BETWEEN TWO CABLE STATIONS COUNTRIES',
+      'INTERNET CONNECTIVITY DOWN',
+      'LOCAL LOOP',
+      'LOCAL ITMC LOCAL TERRITORIAL LINK',
+      'MAINTENANCE NOTIFICATION ERROR INTERNAL',
+      'MAINTENANCE NOTIFICATION ERROR PARTNER',
+      'NETWORK',
+      'NETWORK CONNECTIVITY DOWN',
+      'NON CUSTOMER APPLICATION',
+      'NON CUSTOMER FAULT ISSUES',
+      'OTHERS INTERNAL HUMAN ERROR',
+      'PARTNER NETWORK',
+      'PEERING PARTNER',
+      'PERFORMANCE',
+      'PROLONGED MAINTENANCE',
+      'RIGHT WHEN TEST',
+      'SCHEDULED MAINTENANCE NOT COMMUNICATED',
+      'SPECIFIC DATA CENTER POP OUTAGE',
+      'SUPPORT SERVICE OUTAGE',
+      'UNSCHEDULED MAINTENANCE',
+      'UNTRACED FAULT',
+      'VAS PCCW FAULT ISSUES',
+      'X CONNECT FAULTY RELATED',
+      'IPVPN BACKHAUL',
+      'IPVPN CORE PLATFORM NETWORK',
+      'IPVPN INTERNATIONAL LINK TRUNK OR SUBMARINE CABLE',
+      'IPVPN LOCAL ITMC LOCAL TERRITORIAL LINK',
+      'IPVPN LOCAL LOOP',
+      'IPVPN RIGHT WHEN TEST',
+      'IPVPN UNTRACED FAULT',
+      'INCOMPATIBLE MEDIA CONVERTER',
+      'X CONNECT FAULTY CABLING'
+    ]) THEN COALESCE(hdwl.TrueMTTR_mins, 0)
+    ELSE 0
+  END AS Counted_MTTR_mins,
+  hdwl.Fault_Cause_Detail,
+  hdwl.AIAtFault,
+  hdwl.AIAtFault_Audit,
+  hdwl.AI_FaultDomain,
+  hdwl.AI_CarrierVendor,
+  hdwl.AI_PrimarySymptom,
+  hdwl.AI_LikelyRootCause,
+  hdwl.AI_ConfidenceScore
+  
+FROM `pccw-internal-virt-agent-uat.GSO.SHRPeople` shr
+LEFT JOIN `pccw-internal-virt-agent-uat.GSO.HDWL` hdwl
+  ON REGEXP_REPLACE(TRIM(UPPER(CAST(shr.SRNo AS STRING))), r'[^A-Z0-9]', '')
+   = REGEXP_REPLACE(TRIM(UPPER(CAST(hdwl.SRno AS STRING))), r'[^A-Z0-9]', '')
+  AND hdwl.Reported_Date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 730 DAY)
+  
+WHERE shr.SR_Status = 'Operation'
+"""
+
+print("Creating view CenterOps_CircuitMetrics...")
+job = client.query(sql)
+job.result()
+print("✓ View created successfully")
+print(f"  Project: pccw-internal-virt-agent-uat")
+print(f"  Dataset: GSO")
+print(f"  View: CenterOps_CircuitMetrics")

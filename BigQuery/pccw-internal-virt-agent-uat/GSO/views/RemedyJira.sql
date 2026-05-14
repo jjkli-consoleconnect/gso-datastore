@@ -506,7 +506,7 @@ FROM (
   SELECT
     hd.*,
     COALESCE(NULLIF(hd.SRno, ''), hd.Incident_Number) AS JoinKey,
-    NULLIF(hd.SRno, '') AS SRKey,
+    NULLIF(REGEXP_REPLACE(hd.SRno, r'"', ''), '') AS SRKey,
     UPPER(REGEXP_REPLACE(TRIM(hd.Incident_Number), r'[^A-Z0-9]', '')) AS IncidentKey_alpha,
     REGEXP_REPLACE(REGEXP_EXTRACT(UPPER(REGEXP_REPLACE(TRIM(hd.Incident_Number), r'[^A-Z0-9]', '')), r'(\d+)'), r'^0+', '') AS IncidentKey_num,
     COALESCE(
@@ -564,6 +564,7 @@ ON se.Team_Name = (
 WHERE 
   REGEXP_CONTAINS(COALESCE(j.Key, ''), r'(TXCE|GSDT|ITHD|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|CCPROV)')
   OR j.Key IS NULL
+
 
 
 

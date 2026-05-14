@@ -16,9 +16,9 @@ SELECT
   h.Categorization_Tier_1,
   h.Categorization_Tier_2,
   h.Categorization_Tier_3,
-  h.Prod_ID,
-  h.Product_Family,
-  h.ProductDescription,
+  COALESCE(NULLIF(h.Prod_ID, ''), shr.Product_ID) AS Prod_ID,
+  COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) AS Product_Family,
+  COALESCE(NULLIF(h.ProductDescription, ''), shr.ProductDescription) AS ProductDescription,
   h.Fault_Cause,
   h.FaultCauseDetail as Fault_Cause_Detail,
   h.inserted_at,
@@ -418,6 +418,21 @@ LEFT JOIN
 
 LEFT JOIN (
   SELECT
+    SRNo,
+    ANY_VALUE(Product_Family) AS Product_Family,
+    ANY_VALUE(Product_ID) AS Product_ID,
+    ANY_VALUE(ProductDescription) AS ProductDescription
+  FROM `pccw-internal-virt-agent-uat.GSO.SHRPeople`
+  GROUP BY SRNo
+) shr
+  ON CASE
+    WHEN REGEXP_REPLACE(h.SRno, r'"', '') LIKE 'SR%'
+      THEN REGEXP_REPLACE(h.SRno, r'"', '')
+    ELSE CONCAT('SR', REGEXP_REPLACE(h.SRno, r'"', ''))
+  END = shr.SRNo
+
+LEFT JOIN (
+  SELECT
     Incident_Number,
     AIFirstResponse,
     AIFirstResponseTimestamp,
@@ -444,3 +459,4 @@ LEFT JOIN (
 ORDER BY
   h.Incident_Number,
   w.WorkLog_Submit_Date
+
