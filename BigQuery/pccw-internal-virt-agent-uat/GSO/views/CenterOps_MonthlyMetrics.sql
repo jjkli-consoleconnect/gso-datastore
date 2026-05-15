@@ -1,9 +1,3 @@
-from google.cloud import bigquery
-
-client = bigquery.Client(project="pccw-internal-virt-agent-uat")
-
-sql = """
-CREATE OR REPLACE VIEW `pccw-internal-virt-agent-uat.GSO.CenterOps_MonthlyMetrics` AS
 WITH months AS (
   SELECT month_start
   FROM UNNEST(
@@ -83,9 +77,3 @@ CROSS JOIN circuits c
 LEFT JOIN monthly_faults f
   ON f.month_start = m.month_start
 ORDER BY m.month_start
-"""
-
-print("Creating view GSO.CenterOps_MonthlyMetrics...")
-job = client.query(sql)
-job.result()
-print("✓ View created successfully")

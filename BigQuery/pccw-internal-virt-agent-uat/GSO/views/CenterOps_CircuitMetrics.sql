@@ -1,15 +1,3 @@
-from google.cloud import bigquery
-
-client = bigquery.Client(project='pccw-internal-virt-agent-uat')
-
-# Drop existing table
-print("Dropping existing table...")
-client.delete_table('pccw-internal-virt-agent-uat.GSO.CenterOps_CircuitMetrics', not_found_ok=True)
-
-# Create view instead
-sql = """
-CREATE OR REPLACE VIEW `pccw-internal-virt-agent-uat.GSO.CenterOps_CircuitMetrics` AS
-
 SELECT DISTINCT
   -- Circuit info (from SHRPeople)
   shr.SRNo,
@@ -197,12 +185,3 @@ LEFT JOIN `pccw-internal-virt-agent-uat.GSO.HDWL` hdwl
   AND hdwl.Reported_Date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 730 DAY)
   
 WHERE shr.SR_Status = 'Operation'
-"""
-
-print("Creating view CenterOps_CircuitMetrics...")
-job = client.query(sql)
-job.result()
-print("✓ View created successfully")
-print(f"  Project: pccw-internal-virt-agent-uat")
-print(f"  Dataset: GSO")
-print(f"  View: CenterOps_CircuitMetrics")

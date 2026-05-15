@@ -319,7 +319,7 @@ def log_pipeline_run(bq_client: bigquery.Client, run_id: str, status: str, rows_
 def send_error_notification(subject: str, body: str):
     """Send error notification to Slack via email"""
     try:
-        # This would need SendGrid or similar - for now just log
+        # Alert emailing is disabled; keep logging only.
         logger.error(f"ERROR NOTIFICATION: {subject}\n{body}")
         # TODO: Implement actual email sending if needed
     except Exception as e:

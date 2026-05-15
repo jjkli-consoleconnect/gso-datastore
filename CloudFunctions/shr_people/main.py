@@ -398,18 +398,11 @@ def manage_gmail_labels(service, message_id: str, remove_label: str, add_label: 
 
 
 def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, window_start: Optional[str] = None, window_end: Optional[str] = None, rows_merged: Optional[int] = None, error_code: Optional[str] = None, context_obj: Optional[Dict] = None):
-    """Log pipeline run to BigQuery using MERGE"""
+    """Log pipeline run to BigQuery using MERGE (identical to GAS script)"""
     try:
         duration_seconds = None
         if (status in ('SUCCESS', 'ERROR')) and _script_start_time:
             duration_seconds = (datetime.utcnow() - _script_start_time).total_seconds()
-
-        status_rank = {
-            'RUNNING': 1,
-            'WARNING': 2,
-            'SUCCESS': 3,
-            'ERROR': 4,
-        }.get(status, 0)
 
         # Build MERGE query matching GAS script exactly
         merge_query = f"""
@@ -424,22 +417,21 @@ def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, win
                 @msg AS Message,
                 @runid AS RunID,
                 @status AS Status,
-                @status_rank AS StatusRank,
                 @err AS ErrorCode,
                 @duration AS DurationSeconds,
                 CAST(NULL AS JSON) AS Context
         ) S
         ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID
         WHEN MATCHED THEN UPDATE SET
-            T.WindowStart = CASE WHEN CASE T.Status WHEN 'ERROR' THEN 4 WHEN 'SUCCESS' THEN 3 WHEN 'WARNING' THEN 2 WHEN 'RUNNING' THEN 1 ELSE 0 END > S.StatusRank THEN T.WindowStart ELSE COALESCE(S.WindowStart, T.WindowStart) END,
-            T.WindowEnd   = CASE WHEN CASE T.Status WHEN 'ERROR' THEN 4 WHEN 'SUCCESS' THEN 3 WHEN 'WARNING' THEN 2 WHEN 'RUNNING' THEN 1 ELSE 0 END > S.StatusRank THEN T.WindowEnd ELSE COALESCE(S.WindowEnd, T.WindowEnd) END,
-            T.RowsMerged  = CASE WHEN CASE T.Status WHEN 'ERROR' THEN 4 WHEN 'SUCCESS' THEN 3 WHEN 'WARNING' THEN 2 WHEN 'RUNNING' THEN 1 ELSE 0 END > S.StatusRank THEN T.RowsMerged ELSE COALESCE(S.RowsMerged, T.RowsMerged) END,
-            T.LogLevel    = CASE WHEN CASE T.Status WHEN 'ERROR' THEN 4 WHEN 'SUCCESS' THEN 3 WHEN 'WARNING' THEN 2 WHEN 'RUNNING' THEN 1 ELSE 0 END > S.StatusRank THEN T.LogLevel ELSE COALESCE(S.LogLevel, T.LogLevel) END,
-            T.Message     = CASE WHEN CASE T.Status WHEN 'ERROR' THEN 4 WHEN 'SUCCESS' THEN 3 WHEN 'WARNING' THEN 2 WHEN 'RUNNING' THEN 1 ELSE 0 END > S.StatusRank THEN T.Message ELSE COALESCE(S.Message, T.Message) END,
-            T.Status      = CASE WHEN CASE T.Status WHEN 'ERROR' THEN 4 WHEN 'SUCCESS' THEN 3 WHEN 'WARNING' THEN 2 WHEN 'RUNNING' THEN 1 ELSE 0 END > S.StatusRank THEN T.Status ELSE S.Status END,
-            T.ErrorCode   = CASE WHEN CASE T.Status WHEN 'ERROR' THEN 4 WHEN 'SUCCESS' THEN 3 WHEN 'WARNING' THEN 2 WHEN 'RUNNING' THEN 1 ELSE 0 END > S.StatusRank THEN T.ErrorCode ELSE COALESCE(S.ErrorCode, T.ErrorCode) END,
-            T.DurationSeconds = CASE WHEN CASE T.Status WHEN 'ERROR' THEN 4 WHEN 'SUCCESS' THEN 3 WHEN 'WARNING' THEN 2 WHEN 'RUNNING' THEN 1 ELSE 0 END > S.StatusRank THEN T.DurationSeconds ELSE COALESCE(S.DurationSeconds, T.DurationSeconds) END,
-            T.Context     = CASE WHEN CASE T.Status WHEN 'ERROR' THEN 4 WHEN 'SUCCESS' THEN 3 WHEN 'WARNING' THEN 2 WHEN 'RUNNING' THEN 1 ELSE 0 END > S.StatusRank THEN T.Context ELSE COALESCE(S.Context, T.Context) END
+            T.WindowStart = COALESCE(S.WindowStart, T.WindowStart),
+            T.WindowEnd   = COALESCE(S.WindowEnd,   T.WindowEnd),
+            T.RowsMerged  = COALESCE(S.RowsMerged,  T.RowsMerged),
+            T.LogLevel    = COALESCE(S.LogLevel,    T.LogLevel),
+            T.Message     = COALESCE(S.Message,     T.Message),
+            T.Status      = COALESCE(S.Status,      T.Status),
+            T.ErrorCode   = COALESCE(S.ErrorCode,   T.ErrorCode),
+            T.DurationSeconds = COALESCE(S.DurationSeconds, T.DurationSeconds),
+            T.Context     = COALESCE(S.Context,     T.Context)
         WHEN NOT MATCHED THEN
             INSERT (RunTime, PipelineName, WindowStart, WindowEnd, RowsMerged, LogLevel, Message, RunID, Status, ErrorCode, DurationSeconds, Context)
             VALUES (CURRENT_TIMESTAMP(), S.PipelineName, S.WindowStart, S.WindowEnd, S.RowsMerged, S.LogLevel, S.Message, S.RunID, S.Status, S.ErrorCode, S.DurationSeconds, S.Context)
@@ -455,7 +447,6 @@ def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, win
                 bigquery.ScalarQueryParameter("msg", "STRING", message),
                 bigquery.ScalarQueryParameter("runid", "STRING", run_id),
                 bigquery.ScalarQueryParameter("status", "STRING", status),
-                bigquery.ScalarQueryParameter("status_rank", "INT64", status_rank),
                 bigquery.ScalarQueryParameter("err", "STRING", error_code),
                 bigquery.ScalarQueryParameter("duration", "FLOAT64", duration_seconds),
             ]

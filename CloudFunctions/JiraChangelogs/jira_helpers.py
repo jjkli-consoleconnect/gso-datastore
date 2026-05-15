@@ -48,23 +48,6 @@ def table_exists(client, dataset, table):
         return False
 
 
-def create_or_replace_table(client, dataset, table, schema):
-    """Create or replace a BigQuery table with given schema."""
-    try:
-        # Handle both list of SchemaField objects and simple tuples
-        if schema and isinstance(schema[0], tuple):
-            schema = [bigquery.SchemaField(name, dtype) for name, dtype in schema]
-        
-        cols = ','.join(f'`{f.name}` {f.field_type}' for f in schema)
-        query = f"CREATE OR REPLACE TABLE `{dataset}.{table}` ({cols})"
-        client.query(query).result()
-        logging.debug(f"Created/replaced table {dataset}.{table}")
-        return True
-    except Exception as e:
-        logging.exception(f"Error creating/replacing table {dataset}.{table}: {e}")
-        return False
-
-
 def wait_for_table(client, dataset, table, retries=10, delay=2):
     """Wait for a BigQuery table to become available."""
     for _ in range(retries):
@@ -94,28 +77,6 @@ def insert_rows_with_retry(client, dataset, table, rows, schema, retries=6, dela
     
     logging.error(f"Failed to insert rows into {dataset}.{table} after {retries} attempts")
     return False
-
-
-def delete_table_quiet(client, dataset, table):
-    """Quietly delete a BigQuery table without raising errors."""
-    try:
-        client.delete_table(f"{dataset}.{table}", not_found_ok=True)
-        logging.debug(f"Deleted table {dataset}.{table}")
-    except Exception as e:
-        logging.debug(f"Could not delete table {dataset}.{table}: {e}")
-
-
-def ensure_table_columns(client, dataset, table, columns):
-    """
-    Ensure specific columns exist in a table (used for adding columns to existing tables).
-    columns should be list of tuples: [(col_name, col_type), ...]
-    """
-    for col_name, col_type in columns:
-        try:
-            query = f"ALTER TABLE `{dataset}.{table}` ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
-            client.query(query).result()
-        except Exception as e:
-            logging.debug(f"Could not add column {col_name} to {dataset}.{table}: {e}")
 
 
 def execute_bq_query_with_retry(client, query, job_config=None, max_retries=5, initial_delay=2.0):

@@ -1,9 +1,3 @@
-from google.cloud import bigquery
-
-client = bigquery.Client(project="pccw-internal-virt-agent-uat")
-
-sql = """
-CREATE OR REPLACE VIEW `pccw-internal-virt-agent-uat.GSO.CenterOps_MonthlyUpDown` AS
 WITH ticket_level AS (
   -- One row per ticket per month, keep dimensions for slicing
   SELECT
@@ -86,9 +80,3 @@ FROM (
   SELECT * FROM monthly_all
 )
 WHERE number_of_circuits > 0
-"""
-
-print("Creating view GSO.CenterOps_MonthlyUpDown...")
-job = client.query(sql)
-job.result()
-print("✓ View created successfully")

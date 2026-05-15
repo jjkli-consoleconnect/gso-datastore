@@ -11,4 +11,4 @@
 - Strict Mode: Always use strict types. No 'any' keyword.
 - Docstrings: Generate JSDoc for every function.
 - Refactor: Identify code smells. Suggest performance fixes.
-- for any markdown files that is required for future llm use, put it in the 'shared' foler, whereas for any scripts that are only one time use, put it in the 'Temp' folder. This way we can keep our repo organized and efficient.
+- for any markdown files that is required for future llm to reference to, put them in the 'knowledgebase' foler, whereas for any scripts that are only one time use, put it in the 'Temp' folder. This way we can keep our repo organized and efficient. 'shared' folder is for reusable components and utilities.

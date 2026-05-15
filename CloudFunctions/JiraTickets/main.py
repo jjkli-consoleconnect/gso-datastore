@@ -12,9 +12,6 @@ import re
 import uuid
 import time
 import random
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery, secretmanager
@@ -24,7 +21,7 @@ import functions_framework
 # Import shared helper functions from local copy
 from jira_helpers import (
     load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table, 
-    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists,
+    delete_temp_table, wait_for_table, insert_rows_with_retry,
     execute_bq_query_with_retry
 )
 from logging_config import setup_root_logging
@@ -70,74 +67,6 @@ def create_session_with_retries():
     session.mount("http://", adapter)
     
     return session
-
-
-def send_error_email(error_message, project_id="pccw-internal-virtual-agent"):
-    """Send error notification. Try SendGrid (if configured), fall back to SMTP."""
-    try:
-        recipient = get_secret("jira-sync-alert-recipient", project_id)
-
-        # Try SendGrid first (recommended when Gmail app passwords are blocked)
-        try:
-            sendgrid_api_key = get_secret("jira-sync-sendgrid-api-key", project_id)
-        except Exception:
-            sendgrid_api_key = None
-
-        if sendgrid_api_key:
-            try:
-                from_email = get_secret("jira-sync-alert-email", project_id)
-            except Exception:
-                from_email = f"no-reply@{project_id}.iam.gserviceaccount.com"
-
-            payload = {
-                "personalizations": [{"to": [{"email": recipient}]}],
-                "from": {"email": from_email},
-                "subject": "⚠️ Jira Tickets Sync FAILED",
-                "content": [{"type": "text/plain", "value": (
-                    f"Jira Tickets Sync has FAILED.\n\nTime: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\nFunction: jira-tickets-sync\n\nError Details:\n{error_message}\n\nCheck Cloud Function logs: https://console.cloud.google.com/functions/details/europe-west2/jira-tickets-sync?project={project_id}"
-                )}]
-            }
-            headers = {"Authorization": f"Bearer {sendgrid_api_key}", "Content-Type": "application/json"}
-            try:
-                r = requests.post("https://api.sendgrid.com/v3/mail/send", headers=headers, json=payload, timeout=10)
-                if r.status_code >= 300:
-                    logging.error(f"SendGrid send failed ({r.status_code}): {r.text}")
-                else:
-                    logging.info("Error notification sent via SendGrid")
-                    return
-            except Exception as ex:
-                logging.error(f"SendGrid send exception: {ex}")
-
-        # Fallback to SMTP (Gmail) if SendGrid not configured or failed
-        try:
-            smtp_user = get_secret("jira-sync-alert-email", project_id)
-            smtp_password = get_secret("jira-sync-alert-password", project_id)
-        except Exception:
-            smtp_user = None
-            smtp_password = None
-
-        if smtp_user and smtp_password:
-            try:
-                msg = MIMEMultipart()
-                msg['From'] = smtp_user
-                msg['To'] = recipient
-                msg['Subject'] = "⚠️ Jira Tickets Sync FAILED"
-                body = (
-                    f"Jira Tickets Sync has FAILED.\n\nTime: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\nFunction: jira-tickets-sync\n\nError Details:\n{error_message}\n\nCheck Cloud Function logs: https://console.cloud.google.com/functions/details/europe-west2/jira-tickets-sync?project={project_id}"
-                )
-                msg.attach(MIMEText(body, 'plain'))
-                with smtplib.SMTP('smtp.gmail.com', 587) as server:
-                    server.starttls()
-                    server.login(smtp_user, smtp_password)
-                    server.send_message(msg)
-                logging.info("Error notification email sent via SMTP")
-                return
-            except Exception as ex:
-                logging.error(f"SMTP send failed: {ex}")
-
-        logging.error("No email provider configured or all providers failed to send the error notification")
-    except Exception as e:
-        logging.error(f"Failed to send error notification: {e}")
 
 
 def get_secret(secret_id, project_id="pccw-internal-virtual-agent"):
@@ -353,15 +282,6 @@ def extract_incident_numbers(remedy_ticket_number):
     if not remedy_ticket_number:
         return []
     return re.findall(r'INC\d{9,}', str(remedy_ticket_number))
-
-
-def transform_sr_ref(value):
-    """Remove leading/trailing spaces and all 'SR' (case-insensitive) from the value."""
-    if value is None:
-        return None
-    value = str(value).strip()
-    value = value.replace('SR', '').replace('sr', '').replace('Sr', '').replace('sR', '')
-    return value
 
 
 def fetch_and_sync_jira_data():
@@ -1047,6 +967,4 @@ def main(request):
     except Exception as e:
         error_msg = f"Cloud Function failed: {type(e).__name__}: {str(e)}"
         logging.error(error_msg)
-        # Send error notification email
-        send_error_email(error_msg)
         return {"status": "error", "message": str(e)}, 500
