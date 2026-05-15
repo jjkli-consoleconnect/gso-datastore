@@ -70,6 +70,7 @@ LatestAI AS (
       AIFirstResponse_Audit,
       AIAtFault,
       AIAtFault_Audit,
+      AIFault_Audit,
       AI_FaultDomain,
       AI_CarrierVendor,
       AI_PrimarySymptom,
@@ -109,84 +110,15 @@ SELECT
   hd.Third_Response_Time,
   hd.Fault_Cause,
   CASE
-    WHEN REGEXP_CONTAINS(
-      LOWER(CONCAT(
-        COALESCE(ai.AI_LikelyRootCause, ''), ' ',
-        COALESCE(ai.AI_PrimarySymptom, ''), ' ',
-        COALESCE(ai.AI_EvidenceSummary, '')
-      )),
-      r'site access|datacenter access|data center access|smart hands|xc verification|cross-connect|cross connect|temporary access|temp site access|request for access'
-    ) THEN 'Service Request'
-    WHEN REGEXP_CONTAINS(
-      LOWER(CONCAT(
-        COALESCE(ai.AI_LikelyRootCause, ''), ' ',
-        COALESCE(ai.AI_PrimarySymptom, ''), ' ',
-        COALESCE(ai.AI_EvidenceSummary, ''), ' ',
-        COALESCE(hd.Assigned_Group, '')
-      )),
-      r'planned maintenance|scheduled maintenance|maintenance|planned change|migration|implementation|planned event mgt'
-    ) THEN 'Planned Maintenance / Change'
-    WHEN REGEXP_CONTAINS(
-      LOWER(CONCAT(
-        COALESCE(ai.AI_LikelyRootCause, ''), ' ',
-        COALESCE(ai.AI_EvidenceSummary, '')
-      )),
-      r'billing|invoice|payment|commercial'
-    ) THEN 'Commercial / Billing Dispute'
+    -- Direct mapping from structured AI_FaultDomain (ONLY source of truth)
+    WHEN ai.AI_FaultDomain = 'Power' THEN 'Power / Environmental Failure'
     WHEN ai.AI_FaultDomain = 'Access' THEN 'Access / Transmission Failure'
     WHEN ai.AI_FaultDomain = 'Core' THEN 'Network Infrastructure Failure'
     WHEN ai.AI_FaultDomain = 'CPE' THEN 'Customer Premises Equipment (CPE) Fault'
-    WHEN ai.AI_FaultDomain = 'External' OR ai.AIAtFault = 'Carrier/Vendor' THEN 'External Network Failure (Carrier / Partner)'
+    WHEN ai.AI_FaultDomain = 'External' THEN 'External Network Failure (Carrier / Partner)'
     WHEN ai.AI_FaultDomain = 'Security' THEN 'Security Event'
-    WHEN REGEXP_CONTAINS(
-      LOWER(CONCAT(
-        COALESCE(ai.AI_LikelyRootCause, ''), ' ',
-        COALESCE(ai.AI_EvidenceSummary, ''), ' ',
-        COALESCE(ai.AI_PrimarySymptom, '')
-      )),
-      r'fiber cut|fiber break|cable cut|dirty fibre|light level|pop outage|colo outage'
-    ) THEN 'Physical Plant / Fiber Failure'
-    WHEN REGEXP_CONTAINS(
-      LOWER(CONCAT(
-        COALESCE(ai.AI_LikelyRootCause, ''), ' ',
-        COALESCE(ai.AI_EvidenceSummary, ''), ' ',
-        COALESCE(ai.AI_PrimarySymptom, '')
-      )),
-      r'power outage|power failure|power issue|ups failure|dc plant|generator fail|environmental failure'
-    ) THEN 'Power / Environmental Failure'
-    WHEN REGEXP_CONTAINS(
-      LOWER(CONCAT(
-        COALESCE(ai.AI_LikelyRootCause, ''), ' ',
-        COALESCE(ai.AI_EvidenceSummary, ''), ' ',
-        COALESCE(ai.AI_PrimarySymptom, '')
-      )),
-      r'sfp|optic|optical|hardware|line card|port fault|interface module|modem hang|card fault|faulty module|faulty equipment|equipment failure'
-    ) THEN 'Equipment Failure'
-    WHEN REGEXP_CONTAINS(
-      LOWER(CONCAT(
-        COALESCE(ai.AI_LikelyRootCause, ''), ' ',
-        COALESCE(ai.AI_EvidenceSummary, ''), ' ',
-        COALESCE(ai.AI_PrimarySymptom, '')
-      )),
-      r'\bapi\b|\bportal\b|\bui\b|workflow|platform|web page|sim management'
-    ) THEN 'Software / Platform Failure'
-    WHEN REGEXP_CONTAINS(
-      LOWER(CONCAT(
-        COALESCE(ai.AI_LikelyRootCause, ''), ' ',
-        COALESCE(ai.AI_EvidenceSummary, ''), ' ',
-        COALESCE(ai.AI_PrimarySymptom, '')
-      )),
-      r'config|configuration|provision|vlan|routing policy|route announcement|apn'
-    ) THEN 'Configuration / Provisioning Error'
-    WHEN ai.AIAtFault = 'Nobody' AND REGEXP_CONTAINS(
-      LOWER(CONCAT(
-        COALESCE(ai.AI_LikelyRootCause, ''), ' ',
-        COALESCE(ai.AI_EvidenceSummary, ''), ' ',
-        COALESCE(ai.AI_PrimarySymptom, '')
-      )),
-      r'normal behavior|no fault|right when tested|verification|request|access request|temporary access'
-    ) THEN 'Service Request'
-    WHEN ai.AIAtFault = 'Nobody' THEN 'No Fault Found (NFF)'
+    -- Special case: Nobody = NFF
+    WHEN ai.AIAtFault = 'Nobody' AND ai.AI_FaultDomain IS NULL THEN 'No Fault Found (NFF)'
     ELSE CASE hd.Fault_Cause
     -- Access Network / Local Loop
     WHEN 'Backhaul' THEN 'Access / Transmission Failure'
@@ -994,6 +926,7 @@ SELECT
   ai.AIFirstResponse_Audit,
   ai.AIAtFault,
   ai.AIAtFault_Audit,
+  ai.AIFault_Audit,
   ai.AI_FaultDomain,
   ai.AI_CarrierVendor,
   ai.AI_PrimarySymptom,

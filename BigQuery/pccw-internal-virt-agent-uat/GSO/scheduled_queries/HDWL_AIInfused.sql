@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` (
   AIFirstResponse_Audit STRING,
   AIAtFault STRING,
   AIAtFault_Audit STRING,
+  AIFault_Audit STRING,
   AI_FaultDomain STRING,
   AI_CarrierVendor STRING,
   AI_PrimarySymptom STRING,
@@ -34,6 +35,7 @@ CLUSTER BY Incident_Number;
 ALTER TABLE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
 ADD COLUMN IF NOT EXISTS AIAtFault STRING,
 ADD COLUMN IF NOT EXISTS AIAtFault_Audit STRING,
+ADD COLUMN IF NOT EXISTS AIFault_Audit STRING,
 ADD COLUMN IF NOT EXISTS AI_FaultDomain STRING,
 ADD COLUMN IF NOT EXISTS AI_CarrierVendor STRING,
 ADD COLUMN IF NOT EXISTS AI_PrimarySymptom STRING,
@@ -57,13 +59,14 @@ USING (
     FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
     WHERE AIAtFault IS NULL
       OR AIAtFault_Audit IS NULL
+      OR AIFault_Audit IS NULL
       OR AI_FaultDomain IS NULL
       OR AI_CarrierVendor IS NULL
       OR AI_PrimarySymptom IS NULL
       OR AI_LikelyRootCause IS NULL
       OR AI_ConfidenceScore IS NULL
       OR AI_EvidenceSummary IS NULL
-      OR COALESCE(PromptVersion, '') != 'hdwl-firstresponse-v17-device-circuit-planned'
+      OR COALESCE(PromptVersion, '') != 'hdwl-firstresponse-v18-worklog-first-nff-minimize'
       OR AI_FaultDomain NOT IN ('Access', 'Core', 'CPE', 'Power', 'Security', 'External', 'Unknown')
   ),
   candidate_keys AS (
@@ -171,7 +174,7 @@ USING (
         COALESCE(h.Customer_Name, ''), '|',
         COALESCE(h.Fault_Cause, ''), '|',
         COALESCE(h.FaultCauseDetail, ''), '|',
-        'hdwl-firstresponse-v17-device-circuit-planned'
+        'hdwl-firstresponse-v18-worklog-first-nff-minimize'
       ))) AS PayloadHash,
       COALESCE(dn.DeviceNamesExtracted, '') AS DeviceNamesExtracted,
       CONCAT(
@@ -221,44 +224,55 @@ USING (
         '- Carrier/Vendor\n',
         '- PCCW\n',
         '- Nobody\n\n',
-        'AIAtFault decision rules:\n',
-        '- Use Fault_Cause and Fault_Cause_Detail as primary technical evidence.\n',
-        '- Use worklog content as supporting context, including interactions with customer, vendor, carrier, and PCCW teams.\n',
-        '- Choose Customer when root cause points to customer equipment, customer configuration, customer internal IT, or customer action/inaction.\n',
-        '- Choose Carrier/Vendor when root cause points to partner network, far-end fault, peering partner, provider/carrier issue, third-party infrastructure, or vendor platform.\n',
-        '- Choose PCCW when root cause points to PCCW network/platform/provisioning/process/configuration/operations mistakes or internal infrastructure faults.\n',
-        '- Choose Nobody when evidence indicates no fault found, right-when-tested, force majeure, uncontrollable events, planned maintenance with no clear accountable party, or insufficient evidence to assign blame confidently.\n',
+        'AIAtFault decision rules — WORKLOG EVIDENCE IS PRIMARY, FAULT_CAUSE IS SECONDARY VALIDATION:\n',
+        '- Read worklogs chronologically and extract ALL technical evidence: engineer findings, carrier escalations, test results, customer reports, internal notes.\n',
+        '- Fault_Cause metadata is a label only and may be inaccurate (especially "Non-Customer Fault Issues" which often masks PCCW, carrier, or complex issues). Treat it as a hint, not ground truth.\n',
+        '- Choose Customer ONLY if worklogs clearly show: (a) customer equipment problem (e.g. "customer router down", "customer DNS misconfigured"), (b) customer configuration error (e.g. "customer VLAN mismatch"), or (c) customer action/inaction (e.g. customer did not apply config).\n',
+        '- Choose Carrier/Vendor if worklogs show: (a) escalation TO or response FROM a named carrier/vendor (e.g. "contacted Tata NOC", "Liquid Telecom confirmed outage"), (b) far-end carrier infrastructure fault, (c) peering partner network issue, or (d) third-party platform/API failure.\n',
+        '- Choose PCCW if worklogs show: (a) PCCW engineer findings pointing to PCCW infrastructure (e.g. "backbone congestion", "PCCW port flapping"), (b) PCCW provisioning error, (c) PCCW platform/API issue, or (d) PCCW internal misconfiguration.\n',
+        '- Choose Nobody ONLY if worklogs provide clear evidence of one of these conditions ONLY: (a) no fault found / right-when-tested / transient cleared without intervention, (b) force majeure (weather, earthquake, backhoe cut by uncontrollable third party), (c) planned maintenance with no unexpected fault.\n',
+        '- CRITICAL: If worklogs mention ANY symptom, technical finding, engineer action, or carrier confirmation, you MUST derive a fault cause (Customer/Carrier/Vendor/PCCW). NEVER default to Nobody without explicit evidence of no-fault.\n',
+        '- Avoid defaulting to Nobody due to missing information. Use best available evidence from worklogs.\n',
         '- Output must be exactly one of: Customer, Carrier/Vendor, PCCW, Nobody.\n',
-        '- Also return AIAtFault_Audit: one sentence (max 200 chars) justifying your classification, citing the key evidence used (e.g. fault cause, worklog detail).\n\n',
-        'Also return these enrichment fields derived PRIMARILY from the worklog content below.\n',
+        '- Also return AIAtFault_Audit: one sentence (max 200 chars) justifying your classification, citing the specific worklog evidence, engineer findings, or carrier escalations used.\n\n',
+        'Also return these enrichment fields derived PRIMARILY from WORKLOG CONTENT ANALYSIS.\n',
         'The worklogs contain all technical communications: internal engineer notes, carrier escalations,\n',
-        'vendor responses, testing results, and customer emails. Read them carefully before answering.\n',
-        'Fault_Cause and Fault_Cause_Detail are secondary hints only — trust worklog evidence over metadata.\n\n',
+        'vendor responses, testing results, and customer emails. These are your PRIMARY sources.\n',
+        'Fault_Cause and Fault_Cause_Detail are secondary metadata only — trust worklog technical evidence above all.\n\n',
         '- AI_FaultDomain: choose EXACTLY ONE label from this fixed set only:\n',
         '  Access (last-mile, access port, DSL, optical access), Core (backbone, routing, switching, IP/MPLS),\n',
         '  CPE (customer premises equipment, router, ONT, NTU), Power (power failure, UPS, generator),\n',
         '  Security (DDoS, BGP hijack, firewall), External (carrier/provider/peering partner fault outside PCCW),\n',
         '  Unknown (insufficient evidence).\n',
         '  Do NOT output free text or combined labels in this field.\n',
-        '  Base this on device names, interfaces, symptoms, and what the internal/carrier worklogs say.\n',
+        '  Base this PRIMARILY on worklog evidence of device type, symptoms, and engineer/carrier findings.\n',
+        '- AI_PrimarySymptom: concise description (max 150 chars) of the main symptom observed.\n',
+        '  E.g. "complete loss of BGP session", "high packet loss on customer port", "intermittent flaps".\n',
+        '  Extract what engineers, customers, or carriers described as the observable fault in the worklogs.\n',
+        '  Do NOT invent symptoms; only cite what is explicitly mentioned in the worklogs.\n',
+        '- AI_LikelyRootCause: concise technical root cause hypothesis (max 200 chars) grounded ONLY in worklog evidence.\n',
+        '  Examples: "fiber cut on access segment confirmed by Tata", "BGP misconfiguration by carrier per escalation", "power failure at remote site confirmed by on-site tech".\n',
+        '  If root cause was explicitly confirmed by engineer findings or carrier response in worklogs, state it as confirmed.\n',
+        '  If not confirmed, derive the most likely cause from available evidence (engineer observations, test results, symptoms).\n',
+        '  CRITICAL: Use strong evidence (not guesses). Do not default to vague causes like "needs investigation" or "unknown cause".\n',
+        '- AI_ConfidenceScore: numeric 0.0 to 1.0 reflecting how certain you are based on WORKLOG evidence quality:\n',
+        '  1.0 = explicitly confirmed in worklogs by engineer or carrier with clear findings.\n',
+        '  0.7 = strong technical evidence from symptoms and engineer notes but not fully confirmed.\n',
+        '  0.5 = partial evidence; reasonable inference from limited data.\n',
+        '  0.2 = very limited info; only metadata or vague descriptions available.\n',
+        '  Never use 0.0; always provide best-effort classification if ANY evidence exists.\n',
+        '- AI_EvidenceSummary: one sentence (max 200 chars) citing the single strongest piece of evidence from the worklogs.\n',
+        '  Quote key worklog phrases, carrier confirmations, engineer findings, or test results that most support your classification.\n',
+        '  Example: "Carrier confirmed fiber cut on access segment per escalation on 2025-05-01".\n',
+        '  Do not cite Fault_Cause field; cite actual worklog text instead.\n',
         '- AI_CarrierVendor: extract involved carrier/vendor company name(s) from worklogs.\n',
         '  Return telco/provider/vendor entity names only (comma-separated if multiple, max 3 names). PCCW is also an allowed value when PCCW is the relevant network/operator entity referenced in the worklogs.\n',
         '  Examples: "Tata Communications", "NTT", "HKT", "China Telecom", "AT&T", "PCCW".\n',
         '  Look hard for carrier/vendor names in salutations, recipient mailboxes, signatures, domains, quoted emails, escalation targets, subject lines, and internal notes.\n',
         '  Normalize obvious variants and aliases (e.g. "TATA" -> "Tata Communications", "PCCWG" -> "PCCW").\n',
         '  Only return "Unknown" when no carrier/vendor/operator entity is named or can be inferred from the worklogs.\n',
-        '- AI_PrimarySymptom: concise description (max 150 chars) of the main symptom observed.\n',
-        '  E.g. "complete loss of BGP session", "high packet loss on customer port", "intermittent flaps".\n',
-        '  Read what engineers and customers described as the observable fault.\n',
-        '- AI_LikelyRootCause: concise technical root cause hypothesis (max 200 chars) grounded in evidence.\n',
-        '  E.g. "fiber cut on access segment", "BGP misconfiguration by carrier", "power failure at remote site".\n',
-        '  If root cause was confirmed in worklogs, use that. If not, use best evidence.\n',
-        '- AI_ConfidenceScore: numeric 0.0 to 1.0 reflecting how certain you are based on evidence quality.\n',
-        '  1.0 = explicitly confirmed in worklogs. 0.5 = inferred from partial evidence. 0.2 = very limited info.\n',
-        '- AI_EvidenceSummary: one sentence (max 200 chars) citing the single strongest piece of evidence.\n',
-        '  Quote key worklog phrases or data points that most support your classification.\n',
         '- AI_CircuitReference: interface IDs, circuit IDs, service references, path references, VLANs, ports, or routing path details (max 300 chars).\n',
-        '  Do not return device names in this field unless needed as part of the circuit/path reference.\n',
+        '  Extract from worklogs only. Do not return device names in this field unless needed as part of the circuit/path reference.\n',
         '  If no valid circuit/interface/path reference exists, return null.\n',
         '  Regex-extracted device-name candidates from worklogs for separate AI_DeviceName field: ', COALESCE(dn.DeviceNamesExtracted, 'None'), '\n\n',
         'Worklogs (chronological order):\n',
@@ -280,6 +294,7 @@ USING (
       OR lc.PayloadHash != b.PayloadHash
       OR lc.AIAtFault IS NULL
       OR lc.AIAtFault_Audit IS NULL
+      OR lc.AIFault_Audit IS NULL
       OR lc.AI_FaultDomain IS NULL
       OR lc.AI_CarrierVendor IS NULL
       OR lc.AI_PrimarySymptom IS NULL
@@ -314,8 +329,7 @@ USING (
       THEN NULL
       ELSE SAFE.PARSE_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', ai.AIFirstResponseTimestamp)
     END AS AIFirstResponseTimestamp,
-    ai.AIFirstResponse_Audit,
-    CASE
+    ai.AIFirstResponse_Audit,    ai.AIFault_Audit,    CASE
       WHEN LOWER(TRIM(COALESCE(ai.AIAtFault, ''))) IN ('customer') THEN 'Customer'
       WHEN LOWER(TRIM(COALESCE(ai.AIAtFault, ''))) IN ('carrier/vendor', 'carrier', 'vendor', 'carrier vendor') THEN 'Carrier/Vendor'
       WHEN LOWER(TRIM(COALESCE(ai.AIAtFault, ''))) IN ('pccw') THEN 'PCCW'
@@ -344,7 +358,7 @@ USING (
     NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_CircuitReference, '')), 1, 500), '') AS AI_CircuitReference,
     run_ts AS ClassifiedAt,
     'gemini-2.5-flash-via-AI.GENERATE' AS ModelName,
-    'hdwl-firstresponse-v17-device-circuit-planned' AS PromptVersion
+    'hdwl-firstresponse-v18-worklog-first-nff-minimize' AS PromptVersion
   FROM (
     SELECT
       d.Incident_Number,
@@ -358,6 +372,7 @@ USING (
           AIFirstResponse_Audit STRING OPTIONS(description="One sentence max 200 chars explaining derivation"),
           AIAtFault STRING OPTIONS(description="One value only: Customer, Carrier/Vendor, PCCW, or Nobody"),
           AIAtFault_Audit STRING OPTIONS(description="One sentence max 200 chars justifying the AIAtFault classification"),
+          AIFault_Audit STRING OPTIONS(description="Multi-line full audit trail explaining why each AI field (AIFaultDomain, AIAtFault, AI_LikelyRootCause, AI_ConfidenceScore, AI_PrimarySymptom, AI_CarrierVendor, AI_CircuitReference) was chosen. Include worklog evidence, engineering findings, and decision logic for each field."),
           AI_FaultDomain STRING OPTIONS(description="One value only: Access, Core, CPE, Power, Security, External, Unknown"),
           AI_CarrierVendor STRING OPTIONS(description="Carrier/vendor company name(s) from worklogs, comma-separated max 3, or Unknown"),
           AI_PrimarySymptom STRING OPTIONS(description="Primary observed symptom"),
@@ -379,6 +394,7 @@ WHEN MATCHED THEN UPDATE SET
   target.AIFirstResponse_Audit = src.AIFirstResponse_Audit,
   target.AIAtFault = src.AIAtFault,
   target.AIAtFault_Audit = src.AIAtFault_Audit,
+  target.AIFault_Audit = src.AIFault_Audit,
   target.AI_FaultDomain = src.AI_FaultDomain,
   target.AI_CarrierVendor = src.AI_CarrierVendor,
   target.AI_PrimarySymptom = src.AI_PrimarySymptom,
@@ -398,6 +414,7 @@ WHEN NOT MATCHED THEN INSERT (
   AIFirstResponse_Audit,
   AIAtFault,
   AIAtFault_Audit,
+  AIFault_Audit,
   AI_FaultDomain,
   AI_CarrierVendor,
   AI_PrimarySymptom,
@@ -417,6 +434,7 @@ WHEN NOT MATCHED THEN INSERT (
   src.AIFirstResponse_Audit,
   src.AIAtFault,
   src.AIAtFault_Audit,
+  src.AIFault_Audit,
   src.AI_FaultDomain,
   src.AI_CarrierVendor,
   src.AI_PrimarySymptom,
