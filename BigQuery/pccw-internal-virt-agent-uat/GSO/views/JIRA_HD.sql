@@ -532,6 +532,7 @@ SELECT
   st.T AS Type,
   st.Key,
   st.Summary,
+  st.Labels AS JiraLabels,
   st.Status AS JiraStatus,
   st.Created,
   st.Updated,
