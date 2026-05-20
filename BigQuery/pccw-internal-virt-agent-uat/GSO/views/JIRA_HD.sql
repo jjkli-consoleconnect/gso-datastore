@@ -1012,3 +1012,4 @@ LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
 LEFT JOIN LatestAI AS ai
   ON ai.Incident_Number = hd.Incident_Number
 
+

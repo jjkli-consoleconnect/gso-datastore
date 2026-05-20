@@ -1,6 +1,6 @@
 # Helix Trouble Ticket API UAT Runbook
 
-Last updated: 2026-05-18
+Last updated: 2026-05-19
 Scope: UAT tenant testing for auth, list, and create on internal Helix endpoint.
 
 ## 1) Final Outcome (Validated)
@@ -8,6 +8,7 @@ Scope: UAT tenant testing for auth, list, and create on internal Helix endpoint.
 - Auth endpoint works.
 - List endpoint works when `relatedEntity.customerId` is provided.
 - Create endpoint works with the exact payload shape below.
+- Current Jira-to-Helix function reads Helix `customerId` directly from Jira MSS field `customfield_11247` (`MSS customer`).
 - New ticket was created and returned by API:
   - `INC000006741116`
 
@@ -28,6 +29,8 @@ Required headers for API calls:
 - `Content-Type: application/json` (POST only)
 
 ## 3) Known Working Values from UAT
+
+These were validated during manual API testing and are examples, not a lookup source for the current function.
 
 - `customerId`: `TES037`
 - `serviceId`: `S0000001`
@@ -164,3 +167,51 @@ curl.exe -s -k -X POST `
 - List query includes `relatedEntity.customerId`.
 - POST body sent from file, not fragile inline escaped JSON.
 - Notes array uses `category/item/type` with `faultsymptom` and accepted values.
+
+## 10) Cloud Function Integration Findings (2026-05-19)
+
+These findings are specific to deploying Jira-to-Helix from Cloud Functions in UAT over VPC.
+
+### A) OAuth audience must be exact (no scheme)
+
+- Working value:
+  - `api.stage.corp.consoleconnect.com`
+- Non-working values:
+  - `https://api.stage.corp.consoleconnect.com`
+  - `https://api.stage.corp.consoleconnect.com/cs-helix-ticketing/internalHelix`
+
+### B) Cloud Function network path must match UAT webhook pattern
+
+- Region: `europe-west2`
+- VPC connector: `eu-uat-wanda-vpc-conn`
+- Egress: `ALL_TRAFFIC`
+- Runtime service account should align with working UAT webhook functions.
+
+### C) Internal host routing behavior
+
+- `jira-to-helix-uat-host-name` currently resolves to private IP `10.15.0.3`.
+- Helix cert does not match raw private IP hostname validation.
+- For private IP route, preserve:
+  - URL target via host from `jira-to-helix-uat-host-name`
+  - HTTP `Host` header as `api.stage.corp.consoleconnect.com`
+- If TLS hostname mismatch appears (`certificate verify failed: IP address mismatch`), route/SSL handling must account for this internal IP path.
+
+### D) Create vs list request differences
+
+- List requires query parameter:
+  - `relatedEntity.customerId=<customerId>`
+- Create should post directly to `/troubleTicket` with payload body and must not depend on list-only query parameters.
+
+### E) Known good end-to-end synthetic result
+
+- Cloud Function synthetic webhook test created Helix incident:
+  - `INC000006741118`
+- BigQuery idempotency row recorded `success` for synthetic key.
+- Jira backlink update can fail with `404` for synthetic/non-existent Jira keys; this is expected in synthetic tests.
+
+### F) Secret hygiene for UAT Helix credentials
+
+- Store credentials in Secret Manager only (no plaintext in repo).
+- Keep only one enabled version for:
+  - `jira-to-helix-uat-helix-auth0-client-id`
+  - `jira-to-helix-uat-helix-auth0-client-secret`

@@ -1,0 +1,16 @@
+{
+  "configurations": [
+    {
+      "name": "Deploy Cloud Function",
+      "type": "cloudcode.cloudfunctions",
+      "request": "launch",
+      "functionName": "remedy-api-for-webhook",
+      "region": "europe-west2",
+      "gen": "GEN_2",
+      "revision": "1",
+      "entryPoint": "remedyApiForWebhook",
+      "runtime": "nodejs22",
+      "testInput": ""
+    }
+  ]
+}
