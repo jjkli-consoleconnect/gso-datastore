@@ -9,6 +9,7 @@
   - `jira-to-helix-uat-host-name`
 
 - BigQuery table created: `Testing.jira_to_helix_sync` ✓
+- BigQuery table (comment idempotency): `Testing.jira_to_helix_comment_sync` (auto-created by function on first comment event)
 
 - VPC Connector ready: `eu-uat-wanda-vpc-conn` (READY, EU)
 
@@ -40,14 +41,24 @@ Trigger URL: https://europe-west2-pccw-internal-virt-agent-uat.cloudfunctions.ne
 1. Go: https://consoleconnect-sandbox-824.atlassian.net
 2. Settings → Automations (left sidebar)
 3. Create new rule:
-   - **Trigger**: Issue Created
+  - **Trigger**: Issue Created
    - **Filter**: `project = MSS`
    - **Action**: Send web request
      - **URL**: `https://europe-west2-pccw-internal-virt-agent-uat.cloudfunctions.net/jira-to-helix-create-uat`
      - **HTTP Method**: POST
      - **Headers**: `Content-Type: application/json`
      - **Body**: Leave as "Empty" (Jira auto-includes full webhook payload)
-   - **Save**
+  - **Save**
+
+4. Create second rule for worklog sync:
+  - **Trigger**: Issue Commented
+  - **Filter**: `project = MSS`
+  - **Action**: Send web request
+    - **URL**: `https://europe-west2-pccw-internal-virt-agent-uat.cloudfunctions.net/jira-to-helix-create-uat`
+    - **HTTP Method**: POST
+    - **Headers**: `Content-Type: application/json`
+    - **Body**: Leave as default Jira payload (must include `issue` and `comment`)
+  - **Save**
 
 ## Test Flow
 
@@ -57,6 +68,12 @@ Trigger URL: https://europe-west2-pccw-internal-virt-agent-uat.cloudfunctions.ne
 4. Helix sandbox should have new troubleTicket with externalId = MSS-XXX
 5. Jira issue customfield_10647 updated with Helix ID
 6. Email alert sent to `jjkli-consoleconnect-aaaat6e6tqjcdqmox62y2vcqfi@consoleconnect.org.slack.com`
+
+For comment sync test:
+1. Add comment to same MSS issue
+2. CloudFunction logs should show comment sync path
+3. Helix ticket should show a new worklog with type `JIRA Work Log`
+4. BigQuery `Testing.jira_to_helix_comment_sync` should record the comment ID with `success`
 
 ## Dry-Run Mode
 
@@ -72,7 +89,8 @@ Then toggle back to `DRY_RUN=false` when ready for live.
 ## Monitoring
 
 - Logs: `https://console.cloud.google.com/logs/query?project=pccw-internal-virt-agent-uat&resource=cloud_function&filter=resource.labels.function_name="jira-to-helix-create-uat"`
-- BigQuery: `SELECT * FROM pccw-internal-virt-agent-uat.Testing.jira_to_helix_sync ORDER BY created_timestamp DESC`
+- BigQuery ticket sync: `SELECT * FROM pccw-internal-virt-agent-uat.Testing.jira_to_helix_sync ORDER BY created_timestamp DESC`
+- BigQuery comment sync: `SELECT * FROM pccw-internal-virt-agent-uat.Testing.jira_to_helix_comment_sync ORDER BY created_timestamp DESC`
 
 ## Troubleshooting
 

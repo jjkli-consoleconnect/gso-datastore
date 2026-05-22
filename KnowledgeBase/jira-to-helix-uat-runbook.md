@@ -215,3 +215,280 @@ These findings are specific to deploying Jira-to-Helix from Cloud Functions in U
 - Keep only one enabled version for:
   - `jira-to-helix-uat-helix-auth0-client-id`
   - `jira-to-helix-uat-helix-auth0-client-secret`
+
+## 11) Jira Comment -> Helix Worklog Sync (Execution Guide)
+
+This section is the authoritative guide for syncing Jira comments to Helix worklogs in UAT.
+
+### 11.1 Objective and Scope
+
+- Trigger on Jira comment create and comment edit events.
+- Add one Helix worklog note per Jira comment version.
+- Worklog type in Helix must be `JIRA Work Log`.
+- Integration owner prefix convention: use `jira-to-helix` for all new GCP resources.
+
+### 11.2 Function and Runtime Contract
+
+- Cloud Function:
+  - `jira-to-helix-create-uat`
+- Trigger URL:
+  - `https://europe-west2-pccw-internal-virt-agent-uat.cloudfunctions.net/jira-to-helix-create-uat`
+- Region / network:
+  - `europe-west2`, VPC connector `eu-uat-wanda-vpc-conn`, egress `ALL_TRAFFIC`
+- Auth header toward Helix:
+  - `Authorization: Bearer <token>`
+  - `X-System-Id: jira`
+
+### 11.3 Jira Automation Rules Required
+
+Create two Jira Automation rules, both posting to the same URL:
+
+1. Rule A
+   - Trigger: `Issue commented`
+   - Condition: project filter (for example `MSS`)
+   - Action: `Send web request`
+
+2. Rule B
+   - Trigger: `Comment edited`
+   - Condition: same project filter
+   - Action: `Send web request`
+
+Both rules must use:
+
+- Method: `POST`
+- Header: `Content-Type: application/json`
+
+### 11.4 Jira Web Request Payload (Recommended)
+
+Use this payload template:
+
+```json
+{
+  "issue": {
+    "key": "{{issue.key}}"
+  },
+  "comment": {
+    "id": "{{comment.id}}",
+    "created": "{{comment.created}}",
+    "updated": "{{comment.updated}}",
+    "body": "{{comment.body}}",
+    "author": {
+      "displayName": "{{comment.author.displayName}}",
+      "accountId": "{{comment.author.accountId}}"
+    }
+  }
+}
+```
+
+Notes:
+
+- Jira can emit invalid JSON when comment body contains line breaks. The function includes a loose-parser fallback to recover required fields from raw payload text.
+- If Jira renders valid JSON reliably in your tenant, this also works for `body`:
+  - `"body": {{comment.body.jsonEncode}}`
+
+### 11.5 Required Jira->Helix Mapping Prerequisite
+
+For comment sync to work, the Jira issue must already contain the mapped Helix ticket ID in one of these fields:
+
+- `customfield_10647`
+- `customfield_14905`
+- `customfield_10161`
+- `customfield_15154`
+
+If none exists, comment sync fails with:
+
+- `No Remedy ticket number found on Jira issue`
+
+### 11.6 Helix PATCH Payload That Works
+
+The working PATCH contract for this tenant is:
+
+```json
+{
+  "@type": "troubleTicket",
+  "notes": [
+    {
+      "id": "JIRA Work Log",
+      "text": "Jens Li said:\n\nwhat if i reply to the customer?",
+      "@type": "worklog"
+    }
+  ]
+}
+```
+
+Critical rules:
+
+1. Root `@type` is mandatory for PATCH (`troubleTicket`).
+2. Notes entry for worklog uses:
+   - `id = JIRA Work Log`
+   - `@type = worklog`
+   - `text = message`
+3. Do not add custom/extra fields to worklog PATCH body unless revalidated.
+
+### 11.7 Known Non-Working Fields in This Flow
+
+In this UAT API route, adding note fields like `date` and custom `author` in PATCH requests led to API 400 errors in tests.
+
+Observed error patterns:
+
+- `[Invalid Trouble Ticket @type]` when root `@type` omitted.
+- `Malformed JSON request` for unsupported note field combinations.
+
+### 11.8 Display Format Implemented for Readability
+
+Current generated worklog text:
+
+- New comment:
+  - `Jens Li said:`
+  - blank line
+  - `<comment body>`
+- Edited comment:
+  - `Jens Li said (edited):`
+  - blank line
+  - `<comment body>`
+
+### 11.9 Idempotency and Edit Behavior
+
+- Ticket create idempotency table:
+  - `Testing.jira_to_helix_sync`
+- Comment sync idempotency table:
+  - `Testing.jira_to_helix_comment_sync`
+- Comment idempotency key:
+  - `<comment_id>:<effective_timestamp>`
+  - effective timestamp prefers `updated`, fallback to `created`
+
+Result:
+
+- Retries for same comment version are deduped.
+- Edits of existing comment IDs are treated as new versions and synced.
+
+### 11.10 API Verification Commands (Direct)
+
+Token:
+
+```powershell
+$t = curl.exe -s -k -X POST "https://auth.stage.consoleconnect.com/oauth/token" `
+  -d "client_id=<CLIENT_ID>" `
+  -d "client_secret=<CLIENT_SECRET>" `
+  -d "grant_type=client_credentials" `
+  -d "audience=api.stage.corp.consoleconnect.com"
+$token = ($t | ConvertFrom-Json).access_token
+```
+
+Patch one ticket worklog using file payload:
+
+```powershell
+$ticketId = "INC000006741120"
+$payload = @'
+{
+  "@type": "troubleTicket",
+  "notes": [
+    {
+      "id": "JIRA Work Log",
+      "text": "api test message",
+      "@type": "worklog"
+    }
+  ]
+}
+'@
+
+$payload | Out-File "$env:TEMP\helix_patch_worklog.json" -Encoding utf8 -NoNewline
+
+curl.exe -s -k -X PATCH `
+  -H "Authorization: Bearer $token" `
+  -H "Content-Type: application/json" `
+  -H "X-System-Id: jira" `
+  -d "@$env:TEMP\helix_patch_worklog.json" `
+  "https://api.stage.corp.consoleconnect.com/cs-helix-ticketing/internalHelix/troubleTicket/$ticketId"
+```
+
+Get ticket and inspect latest notes:
+
+```powershell
+$g = curl.exe -s -k `
+  -H "Authorization: Bearer $token" `
+  -H "X-System-Id: jira" `
+  "https://api.stage.corp.consoleconnect.com/cs-helix-ticketing/internalHelix/troubleTicket/$ticketId"
+
+$obj = $g | ConvertFrom-Json
+$obj.notes | Select-Object -Last 5 | ConvertTo-Json -Depth 6
+```
+
+### 11.11 Fast Failure Triage
+
+If Jira Automation fails with 400 `Invalid JSON payload`:
+
+1. Check if comment had multiline content.
+2. Confirm payload body mapping for `comment.body` in automation.
+3. Re-run and inspect function logs for raw payload snippet.
+
+If Jira Automation fails with 500 and Helix 400:
+
+1. Check function logs for Helix response body.
+2. Verify root `@type` exists in PATCH payload.
+3. Ensure note shape is exactly `id/text/@type`.
+
+If no worklog is posted and function says no ticket number:
+
+1. Confirm Jira issue contains Helix ID in one of mapped custom fields.
+2. Re-open ticket-create mapping or backlink update logic.
+
+## 12) Support Group Routing Findings (ASOC vs HKNOC)
+
+### 12.1 What We Proved Today
+
+- `relatedParty` in this Helix API is contact information, not support-group assignment.
+- Putting `ASOC` into `relatedParty` shows `ASOC` in Contact Name, which is wrong for this use case.
+- Top-level `assignedGroup`, `supportGroup`, and `relatedEntity` role values like `Assigned Group` are accepted or silently ignored by the API, but they do not change the Support Group shown in the UI.
+- The Support Group continues to resolve to `HKNOC` unless Helix routing/server-side config changes.
+
+### 12.2 Why the Earlier Theory Was Wrong
+
+- The spec section for create/update says `relatedParty` is the contact person structure.
+- The patch contract explicitly says `relatedParty` is only allowed when role is `Contact`.
+- Our earlier attempt to force `ASOC` through `relatedParty` was the reason `ASOC` appeared in Contact Name.
+
+### 12.3 Empirical Dummy Tickets Created Today
+
+- `INC000006741124` - tested top-level `assignedGroup = ASOC`
+- `INC000006741125` - tested top-level `supportGroup = ASOC`
+- `INC000006741126` - tested `relatedEntity` role `Assigned Group`
+- `INC000006741127` - tested `relatedParty` role `Assigned Group`
+- `INC000006741128` - tested clean create with `assignedGroup` only
+- `INC000006741129` - full-field probe with create, retrieve, list, and patch
+
+### 12.4 Final Mapping Result
+
+| Field tested | Observed result |
+| --- | --- |
+| `relatedParty.name = ASOC` | Populates Contact Name, not Support Group |
+| `assignedGroup = ASOC` | Ignored by API response / does not change UI Support Group |
+| `supportGroup = ASOC` | Ignored by API response / does not change UI Support Group |
+| `relatedEntity.role = Assigned Group` | Ignored by API response / no visible assignment change |
+| PATCH with same fields | Does not move Support Group away from `HKNOC` |
+
+### 12.5 Operational Conclusion
+
+- The Jira-to-Helix integration should **not** try to set Support Group via `relatedParty`.
+- The current create/patch contract does **not** expose a writable Support Group field that we can verify from the API.
+- If business requires `ASOC` instead of `HKNOC`, the fix is likely Helix-side routing / assignment rules, or an undocumented field/endpoint from the API owner.
+
+### 12.6 Code Notes
+
+- File: `CloudFunctions/jira-to-helix/jira-to-helix-create-uat/main.py`
+- Keep `relatedParty` reserved for actual contact info only.
+- Do not reintroduce `relatedParty` with `role = "Assigned Group"`.
+- Any future support-group change should be validated against Helix UI with a fresh dummy create before deploying.
+
+### 12.7 Deployment Record
+
+- Function: `jira-to-helix-create-uat`
+- Region: `europe-west2`
+- Current validated revision: `jira-to-helix-create-uat-00034-jaf`
+- Date of findings: `2026-05-22`
+
+### 12.8 Scope Note
+
+- Existing tickets already created under `HKNOC` require Helix-side reassignment if business wants `ASOC`.
+- For future changes, use the dummy tickets above as the evidence set before altering payload mapping again.
+
