@@ -113,6 +113,14 @@ def ensure_ticket_columns(client, dataset_id, table_id):
         ('FeatureTeam', 'STRING'),
         ('MaintenanceWindowStart', 'TIMESTAMP'),
         ('MaintenanceWindowEnd', 'TIMESTAMP'),
+        ('KnowledgeManagement', 'STRING'),
+        ('DirectoryInternal', 'STRING'),
+        ('ConfluenceURL', 'STRING'),
+        ('IncludeChildPages', 'STRING'),
+        ('Verifier', 'STRING'),
+        ('VerifierId', 'STRING'),
+        ('Approvers', 'STRING'),
+        ('ApproversId', 'STRING'),
     ]
     for col_name, col_type in simple_columns:
         if col_name not in existing_columns:
@@ -215,6 +223,63 @@ def get_field_value(field):
         return str(field)
     else:
         return str(field)
+
+
+def resolve_account_id_display_name(account_id, session, auth, cache):
+    """Resolve Jira accountId to display name with in-run caching."""
+    if not account_id:
+        return None
+    if account_id in cache:
+        return cache[account_id]
+
+    try:
+        user_url = "https://consoleconnect.atlassian.net/rest/api/3/user"
+        response = session.get(user_url, auth=auth, params={"accountId": account_id}, timeout=20)
+        if response.status_code == 429 and handle_429_backoff(response, attempt=1, max_attempts=2):
+            response = session.get(user_url, auth=auth, params={"accountId": account_id}, timeout=20)
+        response.raise_for_status()
+        display_name = (response.json() or {}).get('displayName')
+        cache[account_id] = display_name
+        return display_name
+    except Exception:
+        cache[account_id] = None
+        return None
+
+
+def extract_user_names_and_ids(field_value, session=None, auth=None, cache=None):
+    """Extract comma-separated user display names and account IDs from Jira user picker fields."""
+    if field_value is None:
+        return None, None
+
+    values = field_value if isinstance(field_value, list) else [field_value]
+    names = []
+    ids = []
+
+    for item in values:
+        account_id = None
+        display_name = None
+
+        if isinstance(item, dict):
+            account_id = item.get('accountId') or item.get('id')
+            display_name = item.get('displayName') or item.get('name')
+        elif isinstance(item, str):
+            text = item.strip()
+            if not text:
+                continue
+            account_id = text
+
+        if account_id and account_id not in ids:
+            ids.append(account_id)
+
+        if not display_name and account_id and session and auth and cache is not None:
+            display_name = resolve_account_id_display_name(account_id, session, auth, cache)
+
+        if display_name and display_name not in names:
+            names.append(display_name)
+
+    names_csv = ', '.join(names) if names else None
+    ids_csv = ', '.join(ids) if ids else None
+    return names_csv, ids_csv
 
 
 def extract_adf_text(adf_node):
@@ -321,6 +386,12 @@ def fetch_and_sync_jira_data():
     REMEDY_TICKET_MIGRATED_JIRA_ID = 'customfield_10647'
     MAINTENANCE_WINDOW_START_JIRA_ID = 'customfield_10514'
     MAINTENANCE_WINDOW_END_JIRA_ID = 'customfield_10515'
+    KNOWLEDGE_MANAGEMENT_JIRA_ID = 'customfield_15761'
+    DIRECTORY_INTERNAL_JIRA_ID = 'customfield_15827'
+    CONFLUENCE_URL_JIRA_ID = 'customfield_11184'
+    INCLUDE_CHILD_PAGES_JIRA_ID = 'customfield_15829'
+    VERIFIER_JIRA_ID = 'customfield_10674'
+    APPROVERS_JIRA_ID = 'customfield_10516'
 
     table_id = 'JiraTickets'
     temp_table_id = 'JiraTickets_temp'
@@ -420,6 +491,14 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("FeatureTeam", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("MaintenanceWindowStart", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("MaintenanceWindowEnd", "TIMESTAMP", mode="NULLABLE"),
+            bigquery.SchemaField("KnowledgeManagement", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("DirectoryInternal", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("ConfluenceURL", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("IncludeChildPages", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("Verifier", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("VerifierId", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("Approvers", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("ApproversId", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Description", "STRING", mode="NULLABLE"),
@@ -483,6 +562,7 @@ def fetch_and_sync_jira_data():
         rows_to_insert = []
         issue_keys_total = set()
         BULK_FETCH_SIZE = 50
+        account_name_cache = {}
 
         def extract_sla_metrics(sla_field):
             if not isinstance(sla_field, dict):
@@ -551,6 +631,18 @@ def fetch_and_sync_jira_data():
                 remedy_numbers = extract_incident_numbers(remedy_source)
 
                 labels = [label.strip() for label in fields.get('labels', []) if str(label).strip()]
+                verifier_name, verifier_id = extract_user_names_and_ids(
+                    fields.get(VERIFIER_JIRA_ID),
+                    session=session,
+                    auth=auth,
+                    cache=account_name_cache,
+                )
+                approver_names, approver_ids = extract_user_names_and_ids(
+                    fields.get(APPROVERS_JIRA_ID),
+                    session=session,
+                    auth=auth,
+                    cache=account_name_cache,
+                )
 
                 row = {
                     "T": issue_type,
@@ -571,6 +663,14 @@ def fetch_and_sync_jira_data():
                     "FeatureTeam": get_field_value(fields.get(FEATURE_TEAM_JIRA_ID)),
                     "MaintenanceWindowStart": convert_timestamp(fields.get(MAINTENANCE_WINDOW_START_JIRA_ID)),
                     "MaintenanceWindowEnd": convert_timestamp(fields.get(MAINTENANCE_WINDOW_END_JIRA_ID)),
+                    "KnowledgeManagement": get_field_value(fields.get(KNOWLEDGE_MANAGEMENT_JIRA_ID)),
+                    "DirectoryInternal": get_field_value(fields.get(DIRECTORY_INTERNAL_JIRA_ID)),
+                    "ConfluenceURL": get_field_value(fields.get(CONFLUENCE_URL_JIRA_ID)),
+                    "IncludeChildPages": get_field_value(fields.get(INCLUDE_CHILD_PAGES_JIRA_ID)),
+                    "Verifier": verifier_name,
+                    "VerifierId": verifier_id,
+                    "Approvers": approver_names,
+                    "ApproversId": approver_ids,
                     "RemedyTicketNumber": ', '.join(remedy_numbers) if remedy_numbers else None,
                     "Links": extract_issue_links(fields.get('issuelinks')),
                     "Description": extract_adf_text(fields.get('description')),
@@ -830,6 +930,14 @@ def fetch_and_sync_jira_data():
                     T.FeatureTeam = S.FeatureTeam,
                     T.MaintenanceWindowStart = S.MaintenanceWindowStart,
                     T.MaintenanceWindowEnd = S.MaintenanceWindowEnd,
+                    T.KnowledgeManagement = S.KnowledgeManagement,
+                    T.DirectoryInternal = S.DirectoryInternal,
+                    T.ConfluenceURL = S.ConfluenceURL,
+                    T.IncludeChildPages = S.IncludeChildPages,
+                    T.Verifier = S.Verifier,
+                    T.VerifierId = S.VerifierId,
+                    T.Approvers = S.Approvers,
+                    T.ApproversId = S.ApproversId,
                     T.RemedyTicketNumber = IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]),
                     T.Links = S.Links,
                     T.Description = S.Description,
@@ -887,7 +995,7 @@ def fetch_and_sync_jira_data():
                     T.ITHD_ISMSIncidentResolution_Breached = S.ITHD_ISMSIncidentResolution_Breached,
                     T.ITHD_ISMSIncidentResolution_Cycles = S.ITHD_ISMSIncidentResolution_Cycles,
                     T.ITHD_Resolution = S.ITHD_Resolution
-                WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, SyncTime, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, AppSupEscalation, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, StoryPoints, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution) VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.SyncTime, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.AppSupEscalation, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.StoryPoints, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution)
+                WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, KnowledgeManagement, DirectoryInternal, ConfluenceURL, IncludeChildPages, Verifier, VerifierId, Approvers, ApproversId, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, SyncTime, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, AppSupEscalation, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, StoryPoints, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution) VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, S.KnowledgeManagement, S.DirectoryInternal, S.ConfluenceURL, S.IncludeChildPages, S.Verifier, S.VerifierId, S.Approvers, S.ApproversId, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.SyncTime, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.AppSupEscalation, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.StoryPoints, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution)
             '''
             execute_bq_query_with_retry(client, merge_query, max_retries=5, initial_delay=10.0)
             logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")

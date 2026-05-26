@@ -336,6 +336,7 @@ SELECT
     WHEN 'Wanda Function Enquiries' THEN 'Wanda Enquiry'
     WHEN 'Person/ Contact' THEN NULL
     WHEN 'Cable Outage' THEN 'Cable Event Agent'
+    WHEN 'Document Handler' THEN 'Document Agent'
     WHEN 'Info Search' THEN 'KMS Agent'
     WHEN 'AUTHENTICATION_INFO' THEN 'AUTHENTICATION_INFO'
     WHEN 'Knowledge Query' THEN 'KMS Agent'
@@ -345,6 +346,7 @@ SELECT
     WHEN 'Cable Event Agent' THEN 'Cable Event Agent'
     WHEN 'Customer Incident Report' THEN 'Customer Incident Report'
     WHEN 'Document Agent' THEN 'Document Agent'
+    WHEN 'RFO Agent' THEN 'RFO'
     WHEN 'KMS Agent' THEN 'KMS Agent'
     WHEN 'Ticket Analysis' THEN 'Ticket Analysis Agent'
     WHEN 'Ticket Creation Agent' THEN 'Ticket Creation Agent'
@@ -470,3 +472,4 @@ LEFT JOIN
 
 
 ORDER BY b.requisitionStartTime DESC
+

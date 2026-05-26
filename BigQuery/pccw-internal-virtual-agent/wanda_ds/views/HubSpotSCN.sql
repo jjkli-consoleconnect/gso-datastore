@@ -1,0 +1,32 @@
+SELECT 
+  record_id, 
+  submission_timestamp, 
+  submission_month, 
+  survey_name, 
+  srno, 
+  email, 
+  company_name_normalized, 
+  customer_name_normalized, 
+  product_family_normalized, 
+  Circuit_Owner, 
+  account_team_process_rating, 
+  project_manager_interpersonal_rating, 
+  pmc_process_rating, 
+  implementation_process_rating, 
+  handover_process_rating, 
+  overall_delivery_rating, 
+  recommendation_likelihood, 
+  nps_score, 
+  delivery_index, 
+  nps_bucket, 
+  is_promoter, 
+  is_passive, 
+  is_detractor, 
+  survey_id, 
+  ingestion_id, 
+  survey_type, 
+  source_file_name, 
+  loaded_at 
+FROM 
+  `pccw-internal-virt-agent-uat.GSO.HubspotSCNFeedbackAgg` 
+

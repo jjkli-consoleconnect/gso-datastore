@@ -1,0 +1,26 @@
+SELECT 
+  event_id, 
+  activity_type, 
+  issue_key, 
+  reporter_display_name, 
+  reporter_email, 
+  reporter_account_id, 
+  assignee_display_name, 
+  assignee_email, 
+  assignee_account_id, 
+  requested_at, 
+  received_at, 
+  endpoint, 
+  outcome, 
+  success_count, 
+  fail_count, 
+  root_page_id, 
+  root_page_url, 
+  page_ids, 
+  page_urls, 
+  include_child_pages, 
+  km_field_raw, 
+  error_summary 
+FROM 
+  `pccw-internal-virtual-agent.wanda_ds.knowledge_activity_audit` 
+
