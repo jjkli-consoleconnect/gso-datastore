@@ -12,3 +12,4 @@
 - Docstrings: Generate JSDoc for every function.
 - Refactor: Identify code smells. Suggest performance fixes.
 - for any markdown files that is required for future llm to reference to, put them in the 'knowledgebase' foler, whereas for any scripts that are only one time use, put it in the 'Temp' folder. This way we can keep our repo organized and efficient. 'shared' folder is for reusable components and utilities.
+- if gcloud authentication is required, you can run gcloud auth login on chrome and user will authenticate there, then you can use the credentials for your operations.

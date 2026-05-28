@@ -15,6 +15,13 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "BigQuery: Pull (macOS)",
+			"type": "shell",
+			"command": "${workspaceFolder}/BigQuerySync/pull_macos.sh",
+			"args": [],
+			"problemMatcher": []
+		},
+		{
 			"label": "BigQuery: Push (DryRun)",
 			"type": "shell",
 			"command": "powershell",
