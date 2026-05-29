@@ -16,20 +16,16 @@ name_filter AS (
   SELECT name FROM UNNEST([
     'Bautista Kevin Bryan',
     'Carl Jeffrey De Guzman',
-    'Carpio Mae Rejoice',
     'Camille Quinto',
     'De Guzman Carl Jeffrey',
     'Evangelista John Darell',
     'Garcia Marvic',
     'John Darell Evangelista',
     'Lloyd Stoltz',
-    'Ma Lourdes Robledo',
-    'Mae Rejoice Carpio',
     'Marvic Garcia',
     'Nelson Irvin Realizo',
     'Paclibar Zacarias',
     'Realizo Nelson Irvin',
-    'Robledo Ma Lourdes',
     'Stoltz Lloyd',
     'Zacarias Paclibar'
   ]) AS name
@@ -58,6 +54,13 @@ FROM (
       WHEN EXTRACT(HOUR FROM p.Created) = 23 THEN FORMAT_TIMESTAMP('%a', DATE_ADD(p.Created, INTERVAL 1 DAY))
       ELSE FORMAT_TIMESTAMP('%a', DATE_ADD(p.Created, INTERVAL 1 DAY))
     END AS DoW,
+    CASE
+      WHEN EXTRACT(HOUR FROM DATETIME(p.Created, 'Asia/Hong_Kong')) >= 7
+           AND EXTRACT(HOUR FROM DATETIME(p.Created, 'Asia/Hong_Kong')) < 15 THEN 'APAC'
+      WHEN EXTRACT(HOUR FROM DATETIME(p.Created, 'Asia/Hong_Kong')) >= 15
+           AND EXTRACT(HOUR FROM DATETIME(p.Created, 'Asia/Hong_Kong')) < 23 THEN 'EMEA'
+      ELSE 'AMER'
+    END AS Region,
     'Created' AS ActionType
   FROM parsed_links p
 
@@ -84,6 +87,13 @@ FROM (
       WHEN EXTRACT(HOUR FROM p.Resolved) = 23 THEN FORMAT_TIMESTAMP('%a', DATE_ADD(p.Resolved, INTERVAL 1 DAY))
       ELSE FORMAT_TIMESTAMP('%a', DATE_ADD(p.Resolved, INTERVAL 1 DAY))
     END AS DoW,
+    CASE
+      WHEN EXTRACT(HOUR FROM DATETIME(p.Resolved, 'Asia/Hong_Kong')) >= 8
+           AND EXTRACT(HOUR FROM DATETIME(p.Resolved, 'Asia/Hong_Kong')) < 15 THEN 'APAC'
+      WHEN EXTRACT(HOUR FROM DATETIME(p.Resolved, 'Asia/Hong_Kong')) >= 15
+           AND EXTRACT(HOUR FROM DATETIME(p.Resolved, 'Asia/Hong_Kong')) < 23 THEN 'EMEA'
+      ELSE 'AMER'
+    END AS Region,
     'Resolved' AS ActionType
   FROM parsed_links p
 
@@ -110,6 +120,13 @@ FROM (
       WHEN EXTRACT(HOUR FROM c.Updated) = 23 THEN FORMAT_TIMESTAMP('%a', DATE_ADD(c.Updated, INTERVAL 1 DAY))
       ELSE FORMAT_TIMESTAMP('%a', DATE_ADD(c.Updated, INTERVAL 1 DAY))
     END AS DoW,
+    CASE
+      WHEN EXTRACT(HOUR FROM DATETIME(c.Updated, 'Asia/Hong_Kong')) >= 7
+           AND EXTRACT(HOUR FROM DATETIME(c.Updated, 'Asia/Hong_Kong')) < 15 THEN 'APAC'
+      WHEN EXTRACT(HOUR FROM DATETIME(c.Updated, 'Asia/Hong_Kong')) >= 15
+           AND EXTRACT(HOUR FROM DATETIME(c.Updated, 'Asia/Hong_Kong')) < 23 THEN 'EMEA'
+      ELSE 'AMER'
+    END AS Region,
     'Commented' AS ActionType
   FROM `pccw-internal-virt-agent-uat.GSO.JiraComments` c
   LEFT JOIN parsed_links p ON c.Issue_Key = p.`Key`

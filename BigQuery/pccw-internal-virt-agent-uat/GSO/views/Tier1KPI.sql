@@ -140,7 +140,7 @@ SELECT
   -- Row-Level Scoring
   -- Each metric earns its weight (8/7/15) on PASS, 0 on FAIL,
   -- NULL when out of scope.
-  -- Composite = earned_points / applicable_weight_total ╫ 100
+  -- Composite = earned_points / applicable_weight_total × 100
   -- ─────────────────────────────────────────────────────────
 
   -- FRT score points (weight 8)
@@ -176,7 +176,7 @@ SELECT
   END AS MTTR_ScorePoints,
 
   -- ─────────────────────────────────────────────────────────
-  -- MTTR Rating 1û7 (row-level, P1/P2 incidents only)
+  -- MTTR Rating 1–7 (row-level, P1/P2 incidents only)
   -- 7 = <45 min  |  6 = <60 min  |  5 = <75 min
   -- 4 = <90 min  |  3 = <105 min |  2 = <120 min
   -- 1 = ≥150 min (>2h30m)

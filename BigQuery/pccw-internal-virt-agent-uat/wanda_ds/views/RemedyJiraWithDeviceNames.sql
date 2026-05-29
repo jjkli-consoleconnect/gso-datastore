@@ -1,17 +1,33 @@
 SELECT
-  t1.*,
-  t2.Device_Names
+  remedy_jira.*, 
+  worklog_devices.Device_Names,
+  worklog.ExtractedDescription
 FROM
-  `pccw-internal-virt-agent-uat`.`wanda_ds`.`RemedyJira` AS t1
+  `pccw-internal-virt-agent-uat.wanda_ds.RemedyJira` AS remedy_jira
 LEFT JOIN (
   SELECT
-    Incident_Number,
-    ARRAY_AGG(DISTINCT device_name) AS Device_Names
+    worklog.Incident_Number,
+    ARRAY_AGG(DISTINCT ref.shorthand ORDER BY ref.shorthand) AS Device_Names
   FROM
-    `pccw-internal-virt-agent-uat`.`wanda_ds`.`RemedyWorkLog`
+    `pccw-internal-virt-agent-uat.wanda_ds.RemedyWorkLog` AS worklog
   CROSS JOIN
-    UNNEST( REGEXP_EXTRACT_ALL( ExtractedDescription, r'[A-Za-z]{2,3}[0-9]{2,3}\.[A-Za-z]{2,3}[0-9]{2,3}')) AS device_name
+    UNNEST(
+      REGEXP_EXTRACT_ALL(
+        LOWER(worklog.ExtractedDescription),
+        r'(?i)(?:^|[^a-z0-9])([a-z]{2,7}[0-9]{2,3}[.][a-z]{3}[0-9]{2})(?:[.]pccwbtn[.]net)?(?:$|[^a-z0-9.])'
+      )
+    ) AS device_name_candidate
+  JOIN
+    `pccw-internal-virt-agent-uat.wanda_ds.device_name_reference` AS ref
+  ON
+    ref.is_active
+    AND ref.shorthand = device_name_candidate
   GROUP BY
-    Incident_Number ) AS t2
+    worklog.Incident_Number
+) AS worklog_devices
 ON
-  t1.Incident_Number = t2.Incident_Number;
+  remedy_jira.Incident_Number = worklog_devices.Incident_Number
+LEFT JOIN
+  `pccw-internal-virt-agent-uat.wanda_ds.RemedyWorkLog` AS worklog
+ON
+  remedy_jira.Incident_Number = worklog.Incident_Number;

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` (
   AI_CarrierVendor STRING,
   AI_PrimarySymptom STRING,
   AI_LikelyRootCause STRING,
+  AI_FaultCause STRING,
   AI_ConfidenceScore FLOAT64,
   AI_EvidenceSummary STRING,
   AI_DeviceName STRING,
@@ -40,6 +41,7 @@ ADD COLUMN IF NOT EXISTS AI_FaultDomain STRING,
 ADD COLUMN IF NOT EXISTS AI_CarrierVendor STRING,
 ADD COLUMN IF NOT EXISTS AI_PrimarySymptom STRING,
 ADD COLUMN IF NOT EXISTS AI_LikelyRootCause STRING,
+ADD COLUMN IF NOT EXISTS AI_FaultCause STRING,
 ADD COLUMN IF NOT EXISTS AI_ConfidenceScore FLOAT64,
 ADD COLUMN IF NOT EXISTS AI_EvidenceSummary STRING,
 ADD COLUMN IF NOT EXISTS AI_DeviceName STRING,
@@ -177,6 +179,8 @@ USING (
         'hdwl-firstresponse-v18-worklog-first-nff-minimize'
       ))) AS PayloadHash,
       COALESCE(dn.DeviceNamesExtracted, '') AS DeviceNamesExtracted,
+      COALESCE(w.WorkLogs_Formatted, '') AS WorkLogs_Formatted,
+      COALESCE(h.Fault_Cause, '') AS Fault_Cause,
       CONCAT(
         'You are analyzing a helpdesk ticket worklog to identify the FIRST MEANINGFUL response to the customer.\n\n',
         'Ticket customer name: ', COALESCE(h.Customer_Name, 'Unknown'), '\n\n',
@@ -275,6 +279,24 @@ USING (
         '  Extract from worklogs only. Do not return device names in this field unless needed as part of the circuit/path reference.\n',
         '  If no valid circuit/interface/path reference exists, return null.\n',
         '  Regex-extracted device-name candidates from worklogs for separate AI_DeviceName field: ', COALESCE(dn.DeviceNamesExtracted, 'None'), '\n\n',
+        'Also determine AI_FaultCause. Return exactly one label from this list (use exact text):\n',
+        '- Planned Maintenance / Change\n',
+        '- Partner / Carrier / Far-End\n',
+        '- No Fault Found / Untraced\n',
+        '- Platform / API / Portal\n',
+        '- Unclassified\n',
+        '- Commercial / Billing\n',
+        '- Provisioning / Configuration\n',
+        '- Security / Policy Block\n',
+        '- Force Majeure / External Event\n',
+        '- Performance / Quality Degradation\n',
+        '- Physical Infrastructure / Hardware\n',
+        '- Core Network / IP Backbone\n',
+        '- International Transport\n',
+        '- Access Network / Local Loop\n',
+        '- Service Request / Operations\n',
+        '- Customer Side (CPE / Internal)\n\n',
+        'Choose AI_FaultCause by analyzing worklog content only. If worklogs contain no meaningful customer-facing entries, you may use the ticket Fault_Cause metadata as a fallback, but prefer worklogs whenever available. ONLY return one of the labels above — do NOT invent or return free text. If uncertain, return Unclassified.\n\n',
         'Worklogs (chronological order):\n',
         COALESCE(w.WorkLogs_Formatted, 'No worklogs for this ticket')
       ) AS PromptText
@@ -356,6 +378,48 @@ USING (
     NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_EvidenceSummary, '')), 1, 400), '') AS AI_EvidenceSummary,
     NULLIF(SUBSTR(TRIM(COALESCE(d.DeviceNamesExtracted, '')), 1, 500), '') AS AI_DeviceName,
     NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_CircuitReference, '')), 1, 500), '') AS AI_CircuitReference,
+    -- Prefer the LLM-provided `AI_FaultCause` (must be one of the exact labels). Only when worklogs are not meaningful may we fall back to Fault_Cause metadata.
+    CASE
+      WHEN LOWER(TRIM(COALESCE(ai.AI_FaultCause, ''))) IN (
+        'planned maintenance / change',
+        'partner / carrier / far-end',
+        'no fault found / untraced',
+        'platform / api / portal',
+        'unclassified',
+        'commercial / billing',
+        'provisioning / configuration',
+        'security / policy block',
+        'force majeure / external event',
+        'performance / quality degradation',
+        'physical infrastructure / hardware',
+        'core network / ip backbone',
+        'international transport',
+        'access network / local loop',
+        'service request / operations',
+        'customer side (cpe / internal)'
+      ) THEN INITCAP(ai.AI_FaultCause)
+      WHEN (TRIM(COALESCE(d.WorkLogs_Formatted, '')) = '' OR ai.AIFirstResponse IS NULL) THEN (
+        CASE
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'planned|maintenance|change|scheduled') THEN 'Planned Maintenance / Change'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'partner|carrier|vendor|upstream|third') THEN 'Partner / Carrier / Far-End'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'no fault|untraced|no issues') THEN 'No Fault Found / Untraced'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'platform|api|portal|dashboard') THEN 'Platform / API / Portal'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'commercial|billing|invoice|charge') THEN 'Commercial / Billing'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'provision|provisioning|configuration|config') THEN 'Provisioning / Configuration'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'security|policy|acl|firewall|blocked') THEN 'Security / Policy Block'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'force majeure|weather|earthquake|backhoe|external') THEN 'Force Majeure / External Event'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'performance|latency|packet loss|jitter') THEN 'Performance / Quality Degradation'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'hardware|fiber cut|cable cut|equipment failure|optic') THEN 'Physical Infrastructure / Hardware'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'core|backbone|mpls|ip backbone|transit') THEN 'Core Network / IP Backbone'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'international|transit|undersea|submarine') THEN 'International Transport'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'access|local loop|last.?mile|dsl|fttx|pon|olt|ont') THEN 'Access Network / Local Loop'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'service request|ops|operation') THEN 'Service Request / Operations'
+          WHEN REGEXP_CONTAINS(LOWER(COALESCE(d.Fault_Cause, '')), r'customer|cpe|customer premises|internal') THEN 'Customer Side (CPE / Internal)'
+          ELSE 'Unclassified'
+        END
+      )
+      ELSE NULL
+    END AS AI_FaultCause,
     run_ts AS ClassifiedAt,
     'gemini-2.5-flash-via-AI.GENERATE' AS ModelName,
     'hdwl-firstresponse-v18-worklog-first-nff-minimize' AS PromptVersion
@@ -364,6 +428,8 @@ USING (
       d.Incident_Number,
       d.PayloadHash,
       d.DeviceNamesExtracted,
+      d.WorkLogs_Formatted,
+      d.Fault_Cause,
       AI.GENERATE(
         d.PromptText,
         output_schema => '''
@@ -377,6 +443,7 @@ USING (
           AI_CarrierVendor STRING OPTIONS(description="Carrier/vendor company name(s) from worklogs, comma-separated max 3, or Unknown"),
           AI_PrimarySymptom STRING OPTIONS(description="Primary observed symptom"),
           AI_LikelyRootCause STRING OPTIONS(description="Most likely technical root cause"),
+          AI_FaultCause STRING OPTIONS(description="One of the fixed labels describing cause: Planned Maintenance / Change, Partner / Carrier / Far-End, No Fault Found / Untraced, Platform / API / Portal, Unclassified, Commercial / Billing, Provisioning / Configuration, Security / Policy Block, Force Majeure / External Event, Performance / Quality Degradation, Physical Infrastructure / Hardware, Core Network / IP Backbone, International Transport, Access Network / Local Loop, Service Request / Operations, Customer Side (CPE / Internal)"),
           AI_ConfidenceScore FLOAT64 OPTIONS(description="Confidence score between 0 and 1"),
           AI_EvidenceSummary STRING OPTIONS(description="One sentence citing strongest worklog evidence"),
           AI_CircuitReference STRING OPTIONS(description="Interface IDs, circuit IDs, service references, VLANs, ports, or path details extracted from worklogs")
@@ -403,6 +470,7 @@ WHEN MATCHED THEN UPDATE SET
   target.AI_EvidenceSummary = src.AI_EvidenceSummary,
   target.AI_DeviceName = src.AI_DeviceName,
   target.AI_CircuitReference = src.AI_CircuitReference,
+  target.AI_FaultCause = src.AI_FaultCause,
   target.ClassifiedAt = src.ClassifiedAt,
   target.ModelName = src.ModelName,
   target.PromptVersion = src.PromptVersion
@@ -419,6 +487,7 @@ WHEN NOT MATCHED THEN INSERT (
   AI_CarrierVendor,
   AI_PrimarySymptom,
   AI_LikelyRootCause,
+  AI_FaultCause,
   AI_ConfidenceScore,
   AI_EvidenceSummary,
   AI_DeviceName,
@@ -439,6 +508,7 @@ WHEN NOT MATCHED THEN INSERT (
   src.AI_CarrierVendor,
   src.AI_PrimarySymptom,
   src.AI_LikelyRootCause,
+  src.AI_FaultCause,
   src.AI_ConfidenceScore,
   src.AI_EvidenceSummary,
   src.AI_DeviceName,

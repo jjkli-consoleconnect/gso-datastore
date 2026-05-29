@@ -178,6 +178,29 @@ FlattenedJira AS (
   SELECT j.*, remedy_incident AS RemedyTicketNumber_flat
   FROM jira_combined j
   LEFT JOIN UNNEST(j.RemedyTicketNumber) AS remedy_incident
+),
+LatestAI AS (
+  SELECT * EXCEPT(rn)
+  FROM (
+    SELECT
+      Incident_Number,
+      AIFirstResponse,
+      AIFirstResponseTimestamp,
+      AIFirstResponse_Audit,
+      AIAtFault,
+      AIAtFault_Audit,
+      AI_FaultDomain,
+      AI_CarrierVendor,
+      AI_PrimarySymptom,
+      AI_LikelyRootCause,
+      AI_ConfidenceScore,
+      AI_EvidenceSummary,
+      AI_DeviceName,
+      AI_CircuitReference,
+      ROW_NUMBER() OVER (PARTITION BY Incident_Number ORDER BY ClassifiedAt DESC) AS rn
+    FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
+  )
+  WHERE rn = 1
 )
 
 SELECT
@@ -226,8 +249,8 @@ SELECT
     WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('TAC','CCAS','VOICECE','IOTCE','TXCE','SMSCE') THEN 'Customer Engineering'
     WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('MSS') THEN 'Center Operations'
     WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('CCPROV','GSDT') THEN 'Global Service Delivery'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'VIM' THEN 'Vendor Verification'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'ITOPS' THEN 'IT Operations'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('VIM','VVT') THEN 'Vendor Verification'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('ITOPS','ITHD') THEN 'IT Operations'
     ELSE NULL
   END AS GSOTeam,
 
@@ -500,7 +523,22 @@ SELECT
 
   -- Product enrichment from SHRPeople (fallbacks)
   CASE WHEN hd.ProductDescription IS NULL THEN CONCAT(shr.`Product ID`, ' ', shr.`ProductDescription`) ELSE hd.ProductDescription END AS ProductID,
-  CASE WHEN hd.Product_Family IS NULL THEN shr.`Product Family` ELSE hd.Product_Family END AS Product_Family
+  CASE WHEN hd.Product_Family IS NULL THEN shr.`Product Family` ELSE hd.Product_Family END AS Product_Family,
+
+  -- Latest AI enrichment fields
+  ai.AIFirstResponse,
+  ai.AIFirstResponseTimestamp,
+  ai.AIFirstResponse_Audit,
+  ai.AIAtFault,
+  ai.AIAtFault_Audit,
+  ai.AI_FaultDomain,
+  ai.AI_CarrierVendor,
+  ai.AI_PrimarySymptom,
+  ai.AI_LikelyRootCause,
+  ai.AI_ConfidenceScore,
+  ai.AI_EvidenceSummary,
+  ai.AI_DeviceName,
+  ai.AI_CircuitReference
 
 FROM (
   SELECT
@@ -531,6 +569,8 @@ FULL OUTER JOIN (
   ON hd.IncidentKey_norm = j.IncidentKey_norm
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON COALESCE(j.SRKey, hd.SRKey) = shr.SRNo
+LEFT JOIN LatestAI AS ai
+  ON ai.Incident_Number = COALESCE(hd.Incident_Number, j.RemedyTicketNumber_flat)
 LEFT JOIN (
   SELECT
     Team_Name,
@@ -551,18 +591,11 @@ ON se.Team_Name = (
 
     -- Fallback to ProjectCode (priority 2)
     WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('GDA','GTA','GKC','CCAI') THEN 'Automation & Analytics'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('TAC','CCAS') THEN 'Customer Engineering'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('VOICECE','IOTCE','TXCE','SMSCE','MSS') THEN 'Center Operations'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('TAC','CCAS','VOICECE','IOTCE','TXCE','SMSCE') THEN 'Customer Engineering'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('MSS') THEN 'Center Operations'
     WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('CCPROV','GSDT') THEN 'Global Service Delivery'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'VIM' THEN 'Vendor Verification'
-    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') = 'ITOPS' THEN 'IT Operations'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('VIM','VVT') THEN 'Vendor Verification'
+    WHEN REGEXP_EXTRACT(j.Key, r'^([A-Z]+)') IN ('ITOPS','ITHD') THEN 'IT Operations'
     ELSE NULL
   END
 )
-
-
-
-
-
-
-

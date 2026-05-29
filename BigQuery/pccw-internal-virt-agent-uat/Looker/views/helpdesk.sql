@@ -62,7 +62,7 @@ WITH FaultCauses AS (
     'Right When Test',
     'Satellite Interference',
     'Service Layer Issue(Console)',
-    'Speed config (ôno negotiateö) not aligned between Console and Cust router',
+    'Speed config (“no negotiate”) not aligned between Console and Cust router',
     'Support Service Outage',
     'Switch Data',
     'Untraced Fault',

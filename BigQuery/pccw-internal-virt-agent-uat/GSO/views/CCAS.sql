@@ -368,5 +368,7 @@ WHERE
     'Ydel Mary Grace',
     'Fregie Esguerra',
     'Esguerra Fregie'
+    'Ma Lourdes Robledo'
+    'Mae Rejoice Carpio'
   )
 
