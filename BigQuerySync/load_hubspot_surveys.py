@@ -24,11 +24,12 @@ class TableLoadConfig:
     timestamp_columns: tuple[str, ...]
     string_columns: tuple[str, ...]
     clustered_fields: tuple[str, ...]
+    file_extensions: tuple[str, ...] = (".xlsx", ".csv")
 
 
 SCN_CONFIG = TableLoadConfig(
     table_name="HubspotSCNFeedback",
-    file_pattern="hubspot-core-report-scn-feedback-submissions-report-*.xlsx",
+    file_pattern="hubspot-core-report-scn-feedback-submissions-report-*",
     column_map={
         "Record ID": "record_id",
         "Date": "submission_timestamp",
@@ -74,7 +75,7 @@ SCN_CONFIG = TableLoadConfig(
 
 REMEDY_CONFIG = TableLoadConfig(
     table_name="HubspotRemedyClosureSurvey",
-    file_pattern="hubspot-core-report-remedy-ticket-closure-survey-fe-*.xlsx",
+    file_pattern="hubspot-core-report-remedy-ticket-closure-survey-fe-*",
     column_map={
         "Record ID": "record_id",
         "Date": "submission_timestamp",
@@ -153,12 +154,14 @@ def resolve_input_files(
             raise FileNotFoundError(f"Workbook not found: {file_path}")
         return [file_path]
 
-    matches = sorted(temp_dir.glob(config.file_pattern))
+    matches = []
+    for extension in config.file_extensions:
+        matches.extend(sorted(temp_dir.glob(f"{config.file_pattern}{extension}")))
     if not matches:
         raise FileNotFoundError(
             f"No workbook matched {config.file_pattern!r} in {temp_dir}"
         )
-    return matches
+    return sorted(matches)
 
 
 def validate_columns(frame: pd.DataFrame, config: TableLoadConfig, workbook: Path) -> None:
@@ -187,7 +190,10 @@ def clean_string(value: object) -> str | None:
 def prepare_frame(workbook: Path, config: TableLoadConfig) -> pd.DataFrame:
     """Read, validate, type-cast, and annotate one HubSpot workbook."""
 
-    frame = pd.read_excel(workbook, dtype={"Record ID": "string"})
+    if workbook.suffix.lower() == ".csv":
+        frame = pd.read_csv(workbook, dtype={"Record ID": "string"})
+    else:
+        frame = pd.read_excel(workbook, dtype={"Record ID": "string"})
     validate_columns(frame, config, workbook)
     frame = frame.rename(columns=config.column_map)
 

@@ -134,3 +134,4 @@ FROM (
 )
 WHERE User_FullName IN (SELECT name FROM name_filter)
 
+

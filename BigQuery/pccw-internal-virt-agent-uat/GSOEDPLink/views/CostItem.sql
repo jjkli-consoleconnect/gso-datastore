@@ -67,7 +67,10 @@ WITH base AS (
 		WONum,
 		SRTerminationDate,
 		CTStatus, 
-		STMRequestDate
+		STMRequestDate,
+		STMID, 
+		STMAssignPerson AS STMAssignee,
+		OperationD AS OperationStartDate
 	FROM `edp-prod-lake-data-warehouse.Cost_Items.all_cost_items_report`
 	WHERE ItemCode = 'MRC'
 		AND MRC_USD > 0
@@ -85,9 +88,9 @@ enriched AS (
 			WHEN ItemCode = 'MRC' AND IFNULL(MRC_USD, 0) > 0 THEN 1
 			ELSE 0
 		END AS MRCActiveFlag,
-		(ServiceHandoverDate IS NOT NULL AND StartBillingDate IS NOT NULL) AS StartGapEligible,
+		(OperationStartDate IS NOT NULL AND StartBillingDate IS NOT NULL) AS StartGapEligible,
 		CASE
-			WHEN ServiceHandoverDate IS NOT NULL AND StartBillingDate IS NOT NULL THEN 1
+			WHEN OperationStartDate IS NOT NULL AND StartBillingDate IS NOT NULL THEN 1
 			ELSE 0
 		END AS StartGapEligibleFlag,
 		(SRTerminationDate IS NOT NULL AND StopBillingDate IS NOT NULL) AS StopGapEligible,
@@ -96,13 +99,17 @@ enriched AS (
 			ELSE 0
 		END AS StopGapEligibleFlag,
 		CASE
-			WHEN ServiceHandoverDate IS NOT NULL AND StartBillingDate IS NOT NULL THEN DATE_DIFF(ServiceHandoverDate, StartBillingDate, DAY)
+			WHEN StartBillingDate IS NULL THEN NULL
+			WHEN OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE() THEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY)
+			WHEN OperationStartDate IS NOT NULL THEN DATE_DIFF(OperationStartDate, StartBillingDate, DAY)
 		END AS StartGapDays,
 		CASE
 			WHEN SRTerminationDate IS NOT NULL AND StopBillingDate IS NOT NULL THEN DATE_DIFF(StopBillingDate, SRTerminationDate, DAY)
 		END AS StopGapDays,
 		CASE
-			WHEN ServiceHandoverDate IS NOT NULL AND StartBillingDate IS NOT NULL AND DATE_DIFF(ServiceHandoverDate, StartBillingDate, DAY) > 3 THEN 1
+			WHEN StartBillingDate IS NULL THEN 0
+			WHEN OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE() THEN CASE WHEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) > 3 THEN 1 ELSE 0 END
+			WHEN DATE_DIFF(OperationStartDate, StartBillingDate, DAY) > 3 THEN 1
 			ELSE 0
 		END AS LateStartFlag,
 		CASE
@@ -110,7 +117,9 @@ enriched AS (
 			ELSE 0
 		END AS LateStopFlag,
 		CASE
-			WHEN ServiceHandoverDate IS NOT NULL AND StartBillingDate IS NOT NULL AND DATE_DIFF(ServiceHandoverDate, StartBillingDate, DAY) > 30 THEN 1
+			WHEN StartBillingDate IS NULL THEN 0
+			WHEN OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE() THEN CASE WHEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) > 30 THEN 1 ELSE 0 END
+			WHEN DATE_DIFF(OperationStartDate, StartBillingDate, DAY) > 30 THEN 1
 			ELSE 0
 		END AS SevereLateStartFlag,
 		CASE
@@ -118,18 +127,18 @@ enriched AS (
 			ELSE 0
 		END AS SevereLateStopFlag,
 		CASE
-			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (ServiceHandoverDate IS NULL OR ServiceHandoverDate > CURRENT_DATE()) THEN 1
+			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE()) THEN 1
 			ELSE 0
 		END AS UnbilledDeliveredFlag,
 		CASE
-			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (ServiceHandoverDate IS NULL OR ServiceHandoverDate > CURRENT_DATE()) THEN 1
+			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE()) THEN 1
 			ELSE 0
 		END AS OpenStartGapFlag,
 		CASE
-			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (ServiceHandoverDate IS NULL OR ServiceHandoverDate > CURRENT_DATE()) THEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY)
+			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE()) THEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY)
 		END AS UnbilledDeliveredAgingDays,
 		CASE
-			WHEN StartBillingDate IS NULL OR StartBillingDate > CURRENT_DATE() OR (ServiceHandoverDate IS NOT NULL AND ServiceHandoverDate <= CURRENT_DATE()) THEN 'Not Open Start Gap'
+			WHEN StartBillingDate IS NULL OR StartBillingDate > CURRENT_DATE() OR (OperationStartDate IS NOT NULL AND OperationStartDate <= CURRENT_DATE()) THEN 'Not Open Start Gap'
 			WHEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) BETWEEN 0 AND 7 THEN '0-7 Days'
 			WHEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) BETWEEN 8 AND 30 THEN '8-30 Days'
 			WHEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) BETWEEN 31 AND 60 THEN '31-60 Days'
@@ -176,15 +185,23 @@ enriched AS (
 			ELSE 'Active'
 		END AS ExpiryStatus,
 		SAFE_DIVIDE(IFNULL(MRC_USD, 0), 30) AS DailyMRC_USD,
-		GREATEST(IFNULL(DATE_DIFF(ServiceHandoverDate, StartBillingDate, DAY), 0), 0) * SAFE_DIVIDE(IFNULL(MRC_USD, 0), 30) AS EstimatedStartGapCostUSD,
+		GREATEST(
+			IFNULL(
+				CASE
+					WHEN StartBillingDate IS NULL THEN NULL
+					WHEN OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE() THEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY)
+					ELSE DATE_DIFF(OperationStartDate, StartBillingDate, DAY)
+				END,
+			0),
+		0) * SAFE_DIVIDE(IFNULL(MRC_USD, 0), 30) AS EstimatedStartGapCostUSD,
 		GREATEST(IFNULL(DATE_DIFF(StopBillingDate, SRTerminationDate, DAY), 0), 0) * SAFE_DIVIDE(IFNULL(MRC_USD, 0), 30) AS EstimatedStopGapCostUSD,
 		GREATEST(IFNULL(DATE_DIFF(SRTerminationDate, StopBillingDate, DAY), 0), 0) * SAFE_DIVIDE(IFNULL(MRC_USD, 0), 30) AS EstimatedEarlyStopGapCostUSD,
 		CASE
-			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (ServiceHandoverDate IS NULL OR ServiceHandoverDate > CURRENT_DATE()) AND IFNULL(MRC_USD, 0) > 0 THEN MRC_USD
+			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE()) AND IFNULL(MRC_USD, 0) > 0 THEN MRC_USD
 			ELSE 0
 		END AS PotentialStartGapMonthlySavingsUSD,
 		CASE
-			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (ServiceHandoverDate IS NULL OR ServiceHandoverDate > CURRENT_DATE()) AND IFNULL(MRC_USD, 0) > 0 THEN MRC_USD * 12
+			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE()) AND IFNULL(MRC_USD, 0) > 0 THEN MRC_USD * 12
 			ELSE 0
 		END AS PotentialStartGapAnnualSavingsUSD,
 		CASE
@@ -196,18 +213,18 @@ enriched AS (
 			ELSE 0
 		END AS PotentialStopGapAnnualSavingsUSD,
 		CASE
-			WHEN ((StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (ServiceHandoverDate IS NULL OR ServiceHandoverDate > CURRENT_DATE())) OR (SRTerminationDate IS NOT NULL AND SRTerminationDate <= CURRENT_DATE() AND (StopBillingDate IS NULL OR StopBillingDate > CURRENT_DATE()))) AND IFNULL(MRC_USD, 0) > 0 THEN MRC_USD
+			WHEN ((StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE())) OR (SRTerminationDate IS NOT NULL AND SRTerminationDate <= CURRENT_DATE() AND (StopBillingDate IS NULL OR StopBillingDate > CURRENT_DATE()))) AND IFNULL(MRC_USD, 0) > 0 THEN MRC_USD
 			ELSE 0
 		END AS PotentialMonthlySavingsUSD,
 		CASE
-			WHEN ((StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (ServiceHandoverDate IS NULL OR ServiceHandoverDate > CURRENT_DATE())) OR (SRTerminationDate IS NOT NULL AND SRTerminationDate <= CURRENT_DATE() AND (StopBillingDate IS NULL OR StopBillingDate > CURRENT_DATE()))) AND IFNULL(MRC_USD, 0) > 0 THEN MRC_USD * 12
+			WHEN ((StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND (OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE())) OR (SRTerminationDate IS NOT NULL AND SRTerminationDate <= CURRENT_DATE() AND (StopBillingDate IS NULL OR StopBillingDate > CURRENT_DATE()))) AND IFNULL(MRC_USD, 0) > 0 THEN MRC_USD * 12
 			ELSE 0
 		END AS PotentialAnnualSavingsUSD,
 		CASE
-			WHEN ServiceHandoverDate IS NULL OR StartBillingDate IS NULL THEN 'Open/Incomplete'
-			WHEN DATE_DIFF(ServiceHandoverDate, StartBillingDate, DAY) > 30 THEN 'Early Billing (>30 days)'
-			WHEN DATE_DIFF(ServiceHandoverDate, StartBillingDate, DAY) BETWEEN 4 AND 30 THEN 'Early Billing (4-30 days)'
-			WHEN DATE_DIFF(ServiceHandoverDate, StartBillingDate, DAY) BETWEEN -3 AND 3 THEN 'On Time (-3 to 3)'
+			WHEN OperationStartDate IS NULL OR StartBillingDate IS NULL THEN 'Open/Incomplete'
+			WHEN DATE_DIFF(OperationStartDate, StartBillingDate, DAY) > 30 THEN 'Early Billing (>30 days)'
+			WHEN DATE_DIFF(OperationStartDate, StartBillingDate, DAY) BETWEEN 4 AND 30 THEN 'Early Billing (4-30 days)'
+			WHEN DATE_DIFF(OperationStartDate, StartBillingDate, DAY) BETWEEN -3 AND 3 THEN 'On Time (-3 to 3)'
 			ELSE 'Late Billing (>3 days after handover)'
 		END AS StartGapBand,
 		CASE
@@ -229,7 +246,15 @@ enriched AS (
 			WHEN SRTerminationDate IS NOT NULL AND SRTerminationDate <= CURRENT_DATE() AND StopBillingDate > CURRENT_DATE() THEN 'Confirm Stop Billing Date - SR Terminated'
 			WHEN SRTerminationDate IS NOT NULL AND SRTerminationDate > CURRENT_DATE() AND StopBillingDate IS NULL THEN 'Schedule Stop Billing - Termination Approaching'
 			ELSE 'Review Required'
-		END AS StopGapActionRequired
+		END AS StopGapActionRequired,
+		CASE
+			WHEN StartBillingDate IS NULL OR StartBillingDate > CURRENT_DATE() THEN 'Monitor - Start Billing Not Begun'
+			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND OperationStartDate IS NULL THEN 'Raise Operation Start Date Validation'
+			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND OperationStartDate > CURRENT_DATE() AND DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) > 30 THEN 'Expedite Go-Live Update - Overdue 30+ Days'
+			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND OperationStartDate > CURRENT_DATE() THEN 'Confirm Planned Go-Live Date'
+			WHEN StartBillingDate IS NOT NULL AND OperationStartDate IS NOT NULL AND DATE_DIFF(OperationStartDate, StartBillingDate, DAY) > 3 THEN 'Investigate Early Billing - Cost Before Revenue'
+			ELSE 'No Action Required'
+		END AS StartGapActionRequired
 	FROM base
 )
 SELECT

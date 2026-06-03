@@ -212,17 +212,17 @@ _Generated for Confluence paste: 2026-03-25 12:27:13_
 - Table: WorkLogAllNOC
 - Total fields: 9
 
-| Field Name | Type | Mode |
-|---|---|---|
-| Incident_Number | STRING | NULLABLE |
-| WorkLog_Type | STRING | NULLABLE |
-| WorkLog_ID | STRING | NULLABLE |
-| WorkLog_Submit_Date | TIMESTAMP | NULLABLE |
-| WorkLog_Submitter | STRING | NULLABLE |
-| Last_Modified_Date | TIMESTAMP | NULLABLE |
-| Last_Modified_By | STRING | NULLABLE |
-| ExtractedDescription | STRING | NULLABLE |
-| inserted_at | TIMESTAMP | NULLABLE |
+| Field Name | Type | Mode | Description |
+|---|---|---|---|
+| Incident_Number | STRING | NULLABLE | Incident number associated with the work log |
+| WorkLog_Type | STRING | NULLABLE | Work log entry type |
+| WorkLog_ID | STRING | NULLABLE | Unique work log identifier |
+| WorkLog_Submit_Date | TIMESTAMP | NULLABLE | Timestamp when the work log was submitted |
+| WorkLog_Submitter | STRING | NULLABLE | User who submitted the work log |
+| Last_Modified_Date | TIMESTAMP | NULLABLE | Timestamp when the work log was last modified |
+| Last_Modified_By | STRING | NULLABLE | User who last modified the work log |
+| ExtractedDescription | STRING | NULLABLE | Extracted free-text description from the work log |
+| inserted_at | TIMESTAMP | NULLABLE | Row ingestion timestamp |
 
 ## GSO.CenterOperationsShiftSnapshots
 

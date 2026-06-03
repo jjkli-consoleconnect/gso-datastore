@@ -13,3 +13,19 @@
 - Refactor: Identify code smells. Suggest performance fixes.
 - for any markdown files that is required for future llm to reference to, put them in the 'knowledgebase' foler, whereas for any scripts that are only one time use, put it in the 'Temp' folder. This way we can keep our repo organized and efficient. 'shared' folder is for reusable components and utilities.
 - if gcloud authentication is required, you can run gcloud auth login on chrome and user will authenticate there, then you can use the credentials for your operations.
+
+## BigQuery Push Playbook
+- Use `BigQuerySync/push.ps1` for repo-wide sync only.
+- Before push, confirm auth:
+	- `gcloud auth login`
+	- `gcloud auth application-default login`
+- If push fails with token refresh or reauthentication, fix auth first. Do not keep retrying blindly.
+- `push.ps1 -Force` updates every SQL-backed object in configured folders. One bad object can stop full push.
+- If batch push fails because of an unrelated object, do not re-run blindly.
+- For single view deploy, prefer direct BigQuery DDL:
+	- Read local `.sql` file.
+	- Run `CREATE OR REPLACE VIEW `project.dataset.view` AS <sql>` with BigQuery Python client.
+	- Use `location='europe'` when target dataset in EU.
+- For one-off view deploy, do not use `bq update --view` on raw SQL text if CLI cannot resolve object cleanly.
+- For validation, check only target object after deploy. Do not run full push unless all objects in sync set are ready.
+- If file is guide or reference only, update markdown in `KnowledgeBase/` before or after deploy so prompt context stays current.
