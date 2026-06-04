@@ -14,17 +14,19 @@ SELECT 7, 'AI_FaultDomain', 'Technical domain of the fault based on worklogs and
 UNION ALL
 SELECT 8, 'AI_FaultCause', 'High-level cause category derived from worklogs; use the exact controlled label set defined in HDWL_AIInfused.', 'Controlled', 'Planned Maintenance / Change | Partner / Carrier / Far-End | No Fault Found / Untraced | Platform / API / Portal | Unclassified | Commercial / Billing | Provisioning / Configuration | Security / Policy Block | Force Majeure / External Event | Performance / Quality Degradation | Physical Infrastructure / Hardware | Core Network / IP Backbone | International Transport | Access Network / Local Loop | Service Request / Operations | Customer Side (CPE / Internal)'
 UNION ALL
-SELECT 9, 'AI_CarrierVendor', 'Name of carrier, vendor, or operator entity extracted from worklogs. Returns up to 3 comma-separated names. PCCW is also allowed. Returns Unknown only when no entity can be identified.', 'Free text', NULL
+SELECT 9, 'AI_FaultCause_Audit', 'One-sentence justification for AI_FaultCause citing strongest worklog evidence, or explicit fallback reason when metadata fallback was used.', 'Free text', NULL
 UNION ALL
-SELECT 10, 'AI_PrimarySymptom', 'Concise description of the main observable fault symptom described in worklogs.', 'Free text', NULL
+SELECT 10, 'AI_CarrierVendor', 'Name of carrier, vendor, or operator entity extracted from worklogs. Returns up to 3 comma-separated names. PCCW is also allowed. Returns Unknown only when no entity can be identified.', 'Free text', NULL
 UNION ALL
-SELECT 11, 'AI_LikelyRootCause', 'Technical root cause hypothesis grounded in worklog evidence. Uses confirmed cause if stated; otherwise best inference.', 'Free text', NULL
+SELECT 11, 'AI_PrimarySymptom', 'Concise description of the main observable fault symptom described in worklogs.', 'Free text', NULL
 UNION ALL
-SELECT 12, 'AI_ConfidenceScore', 'Confidence score from 0.0 to 1.0 based on worklog evidence quality. Current guidance prefers 1.0, 0.7, 0.5, or 0.2; avoid 0.0.', 'Numeric', '0.0-1.0; 1.0 confirmed, 0.7 strong evidence, 0.5 partial evidence, 0.2 limited evidence'
+SELECT 12, 'AI_LikelyRootCause', 'Technical root cause hypothesis grounded in worklog evidence. Uses confirmed cause if stated; otherwise best inference.', 'Free text', NULL
 UNION ALL
-SELECT 13, 'AI_EvidenceSummary', 'Single strongest piece of evidence supporting the AI classifications.', 'Free text', NULL
+SELECT 13, 'AI_ConfidenceScore', 'Confidence score from 0.0 to 1.0 based on worklog evidence quality. Current guidance prefers 1.0, 0.7, 0.5, or 0.2; avoid 0.0.', 'Numeric', '0.0-1.0; 1.0 confirmed, 0.7 strong evidence, 0.5 partial evidence, 0.2 limited evidence'
 UNION ALL
-SELECT 14, 'AI_DeviceName', 'Device names extracted only from the configured regex pattern over worklogs. Null when no regex match is found.', 'Free text', NULL
+SELECT 14, 'AI_EvidenceSummary', 'Single strongest piece of evidence supporting the AI classifications.', 'Free text', NULL
 UNION ALL
-SELECT 15, 'AI_CircuitReference', 'Interface IDs, circuit IDs, service references, VLANs, ports, or path information extracted from worklogs. Null when no circuit or path reference is found.', 'Free text', NULL
+SELECT 15, 'AI_DeviceName', 'Device names extracted only from the configured regex pattern over worklogs. Null when no regex match is found.', 'Free text', NULL
+UNION ALL
+SELECT 16, 'AI_CircuitReference', 'Interface IDs, circuit IDs, service references, VLANs, ports, or path information extracted from worklogs. Null when no circuit or path reference is found.', 'Free text', NULL
 ORDER BY SortOrder

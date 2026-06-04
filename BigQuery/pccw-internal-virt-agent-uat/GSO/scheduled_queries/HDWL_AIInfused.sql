@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` (
   AI_PrimarySymptom STRING,
   AI_LikelyRootCause STRING,
   AI_FaultCause STRING,
+  AI_FaultCause_Audit STRING,
   AI_ConfidenceScore FLOAT64,
   AI_EvidenceSummary STRING,
   AI_DeviceName STRING,
@@ -42,6 +43,7 @@ ADD COLUMN IF NOT EXISTS AI_CarrierVendor STRING,
 ADD COLUMN IF NOT EXISTS AI_PrimarySymptom STRING,
 ADD COLUMN IF NOT EXISTS AI_LikelyRootCause STRING,
 ADD COLUMN IF NOT EXISTS AI_FaultCause STRING,
+ADD COLUMN IF NOT EXISTS AI_FaultCause_Audit STRING,
 ADD COLUMN IF NOT EXISTS AI_ConfidenceScore FLOAT64,
 ADD COLUMN IF NOT EXISTS AI_EvidenceSummary STRING,
 ADD COLUMN IF NOT EXISTS AI_DeviceName STRING,
@@ -56,50 +58,40 @@ DROP COLUMN IF EXISTS AI_DeviceInterfaceContext;
 
 MERGE `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` AS target
 USING (
-  WITH null_fault_cache AS (
-    SELECT DISTINCT Incident_Number
-    FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
-    WHERE AIAtFault IS NULL
-      OR AIAtFault_Audit IS NULL
-      OR AIFault_Audit IS NULL
-      OR AI_FaultDomain IS NULL
-      OR AI_CarrierVendor IS NULL
-      OR AI_PrimarySymptom IS NULL
-      OR AI_LikelyRootCause IS NULL
-      OR AI_ConfidenceScore IS NULL
-      OR AI_EvidenceSummary IS NULL
-      OR COALESCE(PromptVersion, '') != 'hdwl-firstresponse-v18-worklog-first-nff-minimize'
-      OR AI_FaultDomain NOT IN ('Access', 'Core', 'CPE', 'Power', 'Security', 'External', 'Unknown')
+  WITH candidate_keys AS (
+    -- Nightly scope only: tickets closed yesterday in Europe timezone.
+    SELECT DISTINCT h.Incident_Number
+    FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
+    WHERE h.Incident_Number IS NOT NULL
+      AND h.Fault_Cause IS NOT NULL
+      AND h.Assigned_Group IN (
+        'Bel NOC',
+        'Console Connect',
+        'FMC',
+        'GSOC',
+        'ICX',
+        'Planned Event Mgt',
+        'PHSOC',
+        'Soft Switch Management',
+        'USNOC',
+        'VAS NOC'
+      )
+      AND h.Status = 'Closed'
+      AND DATE(h.Closed_Date, 'Europe/Paris') = DATE_SUB(CURRENT_DATE('Europe/Paris'), INTERVAL 1 DAY)
   ),
-  candidate_keys AS (
-    SELECT DISTINCT Incident_Number
-    FROM (
-      -- Primary path: closed tickets in the last 24 hours
-      SELECT h.Incident_Number
-      FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
-      WHERE h.Incident_Number IS NOT NULL
-        AND h.Fault_Cause IS NOT NULL
-        AND h.Assigned_Group IN (
-          'Bel NOC',
-          'Console Connect',
-          'FMC',
-          'GSOC',
-          'ICX',
-          'Planned Event Mgt',
-          'PHSOC',
-          'Soft Switch Management',
-          'USNOC',
-          'VAS NOC'
-        )
-        AND h.Status = 'Closed'
-        AND h.Closed_Date >= TIMESTAMP_SUB(run_ts, INTERVAL 24 HOUR)
-
-      UNION DISTINCT
-
-      -- Backfill path: re-process existing cache rows with missing AI enrichment fields
-      SELECT Incident_Number FROM null_fault_cache
-    )
-    WHERE Incident_Number IS NOT NULL
+  w_ranked AS (
+    SELECT
+      w.Incident_Number,
+      w.WorkLog_Submit_Date,
+      w.WorkLog_Submitter,
+      w.WorkLog_Type,
+      w.ExtractedDescription,
+      ROW_NUMBER() OVER (
+        PARTITION BY w.Incident_Number
+        ORDER BY w.WorkLog_Submit_Date DESC
+      ) AS rn
+    FROM `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` w
+    JOIN candidate_keys ck ON ck.Incident_Number = w.Incident_Number
   ),
   w_all AS (
     SELECT
@@ -109,39 +101,28 @@ USING (
         CONCAT(
           '[', FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S', w.WorkLog_Submit_Date), '] ',
           COALESCE(w.WorkLog_Submitter, 'Unknown'), ' (', COALESCE(w.WorkLog_Type, ''), '):\n',
-          SUBSTR(COALESCE(w.ExtractedDescription, ''), 1, 900),
-          CASE
-            WHEN STRPOS(COALESCE(w.ExtractedDescription, ''), 'Ticket Progress Update') > 0 THEN CONCAT(
-              '\n[Progress Section]\n',
-              SUBSTR(
-                COALESCE(w.ExtractedDescription, ''),
-                GREATEST(1, STRPOS(COALESCE(w.ExtractedDescription, ''), 'Ticket Progress Update') - 120),
-                1400
-              )
-            )
-            ELSE ''
-          END,
+          SUBSTR(COALESCE(w.ExtractedDescription, ''), 1, 450),
           '\n'
         ),
         '---\n'
         ORDER BY w.WorkLog_Submit_Date
       ) AS WorkLogs_Formatted
-    FROM `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` w
-    JOIN candidate_keys ck ON ck.Incident_Number = w.Incident_Number
+    FROM w_ranked w
+    WHERE w.rn <= 20
     GROUP BY w.Incident_Number
   ),
   w_device_names AS (
     SELECT
       w.Incident_Number,
       ARRAY_TO_STRING(ARRAY_AGG(DISTINCT device_name ORDER BY device_name), ', ') AS DeviceNamesExtracted
-    FROM `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` w
-    JOIN candidate_keys ck ON ck.Incident_Number = w.Incident_Number
+    FROM w_ranked w
     CROSS JOIN UNNEST(
       REGEXP_EXTRACT_ALL(
         COALESCE(w.ExtractedDescription, ''),
         r'[A-Za-z]{2,3}[0-9]{2,3}\.[A-Za-z]{2,3}[0-9]{2,3}'
       )
     ) AS device_name
+    WHERE w.rn <= 50
     GROUP BY w.Incident_Number
   ),
   latest_cache AS (
@@ -150,10 +131,13 @@ USING (
       PayloadHash,
       AIAtFault,
       AIAtFault_Audit,
+      AIFault_Audit,
       AI_FaultDomain,
       AI_CarrierVendor,
       AI_PrimarySymptom,
       AI_LikelyRootCause,
+      AI_FaultCause,
+      AI_FaultCause_Audit,
       AI_ConfidenceScore,
       AI_EvidenceSummary,
       AI_DeviceName,
@@ -176,7 +160,7 @@ USING (
         COALESCE(h.Customer_Name, ''), '|',
         COALESCE(h.Fault_Cause, ''), '|',
         COALESCE(h.FaultCauseDetail, ''), '|',
-        'hdwl-firstresponse-v18-worklog-first-nff-minimize'
+        'hdwl-firstresponse-v19-nightly-bounded'
       ))) AS PayloadHash,
       COALESCE(dn.DeviceNamesExtracted, '') AS DeviceNamesExtracted,
       COALESCE(w.WorkLogs_Formatted, '') AS WorkLogs_Formatted,
@@ -314,15 +298,8 @@ USING (
      AND lc.rn = 1
     WHERE lc.Incident_Number IS NULL
       OR lc.PayloadHash != b.PayloadHash
-      OR lc.AIAtFault IS NULL
-      OR lc.AIAtFault_Audit IS NULL
-      OR lc.AIFault_Audit IS NULL
-      OR lc.AI_FaultDomain IS NULL
-      OR lc.AI_CarrierVendor IS NULL
-      OR lc.AI_PrimarySymptom IS NULL
-      OR lc.AI_LikelyRootCause IS NULL
-      OR lc.AI_ConfidenceScore IS NULL
-      OR lc.AI_EvidenceSummary IS NULL
+      OR lc.AI_FaultCause IS NULL
+      OR lc.AI_FaultCause_Audit IS NULL
   )
   SELECT
     d.Incident_Number,
@@ -420,9 +397,31 @@ USING (
       )
       ELSE NULL
     END AS AI_FaultCause,
+    CASE
+      WHEN LOWER(TRIM(COALESCE(ai.AI_FaultCause, ''))) IN (
+        'planned maintenance / change',
+        'partner / carrier / far-end',
+        'no fault found / untraced',
+        'platform / api / portal',
+        'unclassified',
+        'commercial / billing',
+        'provisioning / configuration',
+        'security / policy block',
+        'force majeure / external event',
+        'performance / quality degradation',
+        'physical infrastructure / hardware',
+        'core network / ip backbone',
+        'international transport',
+        'access network / local loop',
+        'service request / operations',
+        'customer side (cpe / internal)'
+      ) THEN NULLIF(SUBSTR(TRIM(COALESCE(ai.AI_FaultCause_Audit, '')), 1, 400), '')
+      WHEN (TRIM(COALESCE(d.WorkLogs_Formatted, '')) = '' OR ai.AIFirstResponse IS NULL) THEN 'Fallback from Fault_Cause metadata because no meaningful customer-facing worklog response was identified.'
+      ELSE NULL
+    END AS AI_FaultCause_Audit,
     run_ts AS ClassifiedAt,
     'gemini-2.5-flash-via-AI.GENERATE' AS ModelName,
-    'hdwl-firstresponse-v18-worklog-first-nff-minimize' AS PromptVersion
+    'hdwl-firstresponse-v19-nightly-bounded' AS PromptVersion
   FROM (
     SELECT
       d.Incident_Number,
@@ -444,6 +443,7 @@ USING (
           AI_PrimarySymptom STRING OPTIONS(description="Primary observed symptom"),
           AI_LikelyRootCause STRING OPTIONS(description="Most likely technical root cause"),
           AI_FaultCause STRING OPTIONS(description="One of the fixed labels describing cause: Planned Maintenance / Change, Partner / Carrier / Far-End, No Fault Found / Untraced, Platform / API / Portal, Unclassified, Commercial / Billing, Provisioning / Configuration, Security / Policy Block, Force Majeure / External Event, Performance / Quality Degradation, Physical Infrastructure / Hardware, Core Network / IP Backbone, International Transport, Access Network / Local Loop, Service Request / Operations, Customer Side (CPE / Internal)"),
+          AI_FaultCause_Audit STRING OPTIONS(description="One sentence max 200 chars justifying why AI_FaultCause was chosen, citing the strongest worklog evidence or fallback reason"),
           AI_ConfidenceScore FLOAT64 OPTIONS(description="Confidence score between 0 and 1"),
           AI_EvidenceSummary STRING OPTIONS(description="One sentence citing strongest worklog evidence"),
           AI_CircuitReference STRING OPTIONS(description="Interface IDs, circuit IDs, service references, VLANs, ports, or path details extracted from worklogs")
@@ -466,11 +466,12 @@ WHEN MATCHED THEN UPDATE SET
   target.AI_CarrierVendor = src.AI_CarrierVendor,
   target.AI_PrimarySymptom = src.AI_PrimarySymptom,
   target.AI_LikelyRootCause = src.AI_LikelyRootCause,
+  target.AI_FaultCause = src.AI_FaultCause,
+  target.AI_FaultCause_Audit = src.AI_FaultCause_Audit,
   target.AI_ConfidenceScore = src.AI_ConfidenceScore,
   target.AI_EvidenceSummary = src.AI_EvidenceSummary,
   target.AI_DeviceName = src.AI_DeviceName,
   target.AI_CircuitReference = src.AI_CircuitReference,
-  target.AI_FaultCause = src.AI_FaultCause,
   target.ClassifiedAt = src.ClassifiedAt,
   target.ModelName = src.ModelName,
   target.PromptVersion = src.PromptVersion
@@ -488,6 +489,7 @@ WHEN NOT MATCHED THEN INSERT (
   AI_PrimarySymptom,
   AI_LikelyRootCause,
   AI_FaultCause,
+  AI_FaultCause_Audit,
   AI_ConfidenceScore,
   AI_EvidenceSummary,
   AI_DeviceName,
@@ -509,6 +511,7 @@ WHEN NOT MATCHED THEN INSERT (
   src.AI_PrimarySymptom,
   src.AI_LikelyRootCause,
   src.AI_FaultCause,
+  src.AI_FaultCause_Audit,
   src.AI_ConfidenceScore,
   src.AI_EvidenceSummary,
   src.AI_DeviceName,
