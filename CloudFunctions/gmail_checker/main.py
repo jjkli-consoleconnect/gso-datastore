@@ -64,6 +64,13 @@ EMAIL_PATTERNS = [
         "subject": "TIP GCSC Region detail",
         "label": "pubsub",
         "pubsub_topic": "gmail-to-srinventory"
+    },
+    {
+        "name": "BMC User List",
+        "subject": "BQ - BMC User List",
+        "from": "noreply-bmchelix@onbmc.com",
+        "label": "pubsub",
+        "pubsub_topic": "gmail-to-bmc-user-list"
     }
 ]
 

@@ -11,6 +11,7 @@ import io
 import logging
 import os
 import re
+import time
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -33,6 +34,15 @@ ERROR_NOTIFICATION_EMAIL = "jens-vertexai-aaaan3dj2p4fdro72c3fa2l3km@consolecons
 # Global tracking for pipeline run timing
 _script_start_time = None
 _current_run_id = None
+_bq_client = None
+
+
+def get_bq_client() -> bigquery.Client:
+    """Reuse one BigQuery client per instance to reduce connection churn."""
+    global _bq_client
+    if _bq_client is None:
+        _bq_client = bigquery.Client(project=PROJECT_ID)
+    return _bq_client
 
 # CSV type configurations
 CSV_CONFIGURATIONS = [
@@ -501,7 +511,7 @@ def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, win
                 bigquery.ScalarQueryParameter("pipeline", "STRING", SCRIPT_NAME),
                 bigquery.ScalarQueryParameter("ws", "TIMESTAMP", window_start),
                 bigquery.ScalarQueryParameter("we", "TIMESTAMP", window_end),
-                bigquery.ScalarQueryParameter("rows", "INT64", str(rows_merged) if rows_merged is not None else None),
+                bigquery.ScalarQueryParameter("rows", "INT64", rows_merged),
                 bigquery.ScalarQueryParameter("level", "STRING", log_level),
                 bigquery.ScalarQueryParameter("msg", "STRING", message),
                 bigquery.ScalarQueryParameter("runid", "STRING", run_id),
@@ -511,11 +521,30 @@ def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, win
             ]
         )
 
-        bq_client = bigquery.Client(project=PROJECT_ID)
+        bq_client = get_bq_client()
         logger.info(f"Logging pipeline run: {status} - {message} (RunID: {run_id})")
-        query_job = bq_client.query(merge_query, job_config=job_config)
-        query_job.result()
-        logger.info(f"Pipeline run logged successfully. Job ID: {query_job.job_id}")
+
+        max_attempts = 4
+        delay_seconds = 1.0
+        for attempt in range(1, max_attempts + 1):
+            try:
+                query_job = bq_client.query(merge_query, job_config=job_config)
+                query_job.result(timeout=45)
+                logger.info(f"Pipeline run logged successfully. Job ID: {query_job.job_id}")
+                return
+            except Exception as attempt_error:
+                if attempt == max_attempts:
+                    raise
+                logger.warning(
+                    "Pipeline run logging attempt %s/%s failed for RunID %s (%s). Retrying in %.1fs.",
+                    attempt,
+                    max_attempts,
+                    run_id,
+                    attempt_error,
+                    delay_seconds,
+                )
+                time.sleep(delay_seconds)
+                delay_seconds = min(delay_seconds * 2, 8.0)
 
     except Exception as e:
         logger.warning(f"logPipelineRun failed: {e}")

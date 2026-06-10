@@ -190,7 +190,7 @@ USING (
         '- Agent asks targeted troubleshooting questions to the customer (e.g. current situation, ping test result, traceroute, specific validation checks), because this is active customer communication and troubleshooting in progress.\n\n',
         'A NON-MEANINGFUL response is one that ONLY:\n',
         '- Acknowledges receipt (e.g. "We have received your ticket", "Ticket acknowledged")\n',
-        '- States the team is looking into it with no further detail\n',
+        '- States the team is looking into it / investigating with no concrete finding or action (e.g. "we are investigating your reported issue")\n',
         '- Is a generic auto-response or templated acknowledgement\n',
         '- Simply shares a ticket/incident number with the customer (e.g. "Your incident has been created, reference INC0012345"), with no further context or update\n',
         '- Confirms that a new ticket has been created and a support engineer assigned, even if addressed to the customer and including a ticket reference (e.g. "PCCW Global has created a ticket for you. New Ticket. Reference INC0012345. A support engineer has been assigned.") â€” this is a ticket creation notification only, and is NON-MEANINGFUL.\n\n',
@@ -311,7 +311,7 @@ USING (
       )
       OR REGEXP_CONTAINS(
         LOWER(COALESCE(ai.AIFirstResponse, '')),
-        r'please refer to ticket|please refer to inc|incident has been created|ticket has been created|reference inc|has created a ticket for|new ticket'
+        r'please refer to ticket|please refer to inc|incident has been created|ticket has been created|reference inc|has created a ticket for|new ticket|we are investigating|investigating your reported issue|looking into the issue|currently investigating|under investigation'
       )
       THEN NULL
       ELSE ai.AIFirstResponse
@@ -323,7 +323,7 @@ USING (
       )
       OR REGEXP_CONTAINS(
         LOWER(COALESCE(ai.AIFirstResponse, '')),
-        r'please refer to ticket|please refer to inc|incident has been created|ticket has been created|reference inc|has created a ticket for|new ticket'
+        r'please refer to ticket|please refer to inc|incident has been created|ticket has been created|reference inc|has created a ticket for|new ticket|we are investigating|investigating your reported issue|looking into the issue|currently investigating|under investigation'
       )
       THEN NULL
       ELSE SAFE.PARSE_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', ai.AIFirstResponseTimestamp)

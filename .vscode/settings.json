@@ -17,6 +17,12 @@
     "**/.pytest_cache": true,
     "**/.venv": true
   },
+  "terminal.integrated.profiles.windows": {
+    "Command Prompt": {
+      "path": "C:\\Windows\\System32\\cmd.exe"
+    }
+  },
+  "terminal.integrated.defaultProfile.windows": "Command Prompt",
   "terminal.integrated.shellIntegration.enabled": true,
   "terminal.integrated.shellIntegration.suggestEnabled": true,
   "terminal.integrated.shellIntegration.decorationsEnabled": "both",
