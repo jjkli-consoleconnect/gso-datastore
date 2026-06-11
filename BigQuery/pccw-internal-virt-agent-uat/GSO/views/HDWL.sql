@@ -22,7 +22,10 @@ SELECT
   h.Fault_Cause,
   h.FaultCauseDetail as Fault_Cause_Detail,
   h.inserted_at,
-  CASE h.Fault_Cause
+  COALESCE(
+    NULLIF(ai.AI_FaultCause, ''),
+    NULLIF(h.Fault_Cause, ''),
+    CASE h.Fault_Cause
     -- Access Network / Local Loop
     WHEN 'Backhaul' THEN 'Access Network / Local Loop'
     WHEN 'iDirect line card issue' THEN 'Access Network / Local Loop'
@@ -333,7 +336,8 @@ SELECT
     WHEN 'VAS - Operation or Service Request' THEN 'Service Request / Operations'
     WHEN 'VAS - PCCW Fault Issues' THEN 'Service Request / Operations'
     ELSE 'Unclassified'
-  END AS AIFaultCause,
+    END
+  ) AS AIFaultCause,
   h.Priority,
   h.Urgency,
   h.SRno,

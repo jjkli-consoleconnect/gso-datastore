@@ -110,7 +110,10 @@ SELECT
   hd.Second_Response_Time,
   hd.Third_Response_Time,
   hd.Fault_Cause,
-  CASE
+  COALESCE(
+    NULLIF(ai.AI_FaultCause, ''),
+    NULLIF(hd.Fault_Cause, ''),
+    CASE
     WHEN REGEXP_CONTAINS(
       LOWER(CONCAT(
         COALESCE(ai.AI_LikelyRootCause, ''), ' ',
@@ -501,7 +504,8 @@ SELECT
     WHEN 'VAS - PCCW Fault Issues' THEN 'Service Request'
     ELSE 'Unclassified'
     END
-  END AS AIFaultCause,
+    END
+  ) AS AIFaultCause,
   hd.Closed_Date,
   hd.Submit_Date,
   hd.Assignee AS hdAssignee,

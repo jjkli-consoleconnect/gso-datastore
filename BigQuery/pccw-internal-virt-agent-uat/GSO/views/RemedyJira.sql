@@ -534,7 +534,11 @@ SELECT
   ai.AIAtFault,
   ai.AIAtFault_Audit,
   ai.AI_FaultDomain,
-  ai.AI_FaultCause,
+  COALESCE(
+    NULLIF(ai.AI_FaultCause, ''),
+    NULLIF(hd.Fault_Cause, ''),
+    'Unclassified'
+  ) AS AIFaultCause,
   ai.AI_FaultCause_Audit,
   ai.AI_CarrierVendor,
   ai.AI_PrimarySymptom,
