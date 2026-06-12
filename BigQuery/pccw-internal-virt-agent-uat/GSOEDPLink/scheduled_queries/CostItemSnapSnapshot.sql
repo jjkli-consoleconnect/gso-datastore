@@ -2,17 +2,19 @@
 -- Designed for BigQuery Scheduled Query destination table: GSOEDPLink.CostItemSnapSnapshot
 -- Schedule target: daily 08:00 HKT (deploy as 00:00 UTC).
 
-DECLARE run_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
-DECLARE run_date_hkt DATE DEFAULT CURRENT_DATE('Asia/Hong_Kong');
-DECLARE source_snapshot_date DATE DEFAULT (
-  SELECT MAX(snapshot_date)
-  FROM `pccw-internal-virt-agent-uat.GSOEDPLink.CostItem`
-);
-
-WITH base AS (
+WITH meta AS (
+  SELECT
+    CURRENT_TIMESTAMP() AS run_ts,
+    CURRENT_DATE('Asia/Hong_Kong') AS run_date_hkt,
+    (
+      SELECT MAX(snapshot_date)
+      FROM `pccw-internal-virt-agent-uat.GSOEDPLink.CostItem`
+    ) AS source_snapshot_date
+),
+base AS (
   SELECT *
   FROM `pccw-internal-virt-agent-uat.GSOEDPLink.CostItem`
-  WHERE snapshot_date = source_snapshot_date
+  WHERE snapshot_date = (SELECT source_snapshot_date FROM meta)
     AND ItemCode = 'MRC'
     AND BillingType IN ('Monthly', 'Half-yearly', 'Quarterly', 'Yearly')
     AND (
@@ -85,20 +87,24 @@ start_scope AS (
   FROM base
   WHERE SRStatus IN ('Pending', 'Provisioning')
     AND ItemStatus = 'Active'
+    AND StartBillingDate BETWEEN DATE_TRUNC((SELECT source_snapshot_date FROM meta), YEAR)
+      AND DATE_SUB(DATE_ADD(DATE_TRUNC((SELECT source_snapshot_date FROM meta), YEAR), INTERVAL 1 YEAR), INTERVAL 1 DAY)
 ),
 stop_scope AS (
   SELECT *
   FROM base
   WHERE SRStatus = 'Terminated'
     AND ItemStatus IN ('Active', 'Ordered')
+    AND SRTerminationDate BETWEEN DATE_TRUNC((SELECT source_snapshot_date FROM meta), YEAR)
+      AND DATE_SUB(DATE_ADD(DATE_TRUNC((SELECT source_snapshot_date FROM meta), YEAR), INTERVAL 1 YEAR), INTERVAL 1 DAY)
 ),
 result_rows AS (
   SELECT
-    run_date_hkt AS run_date,
-    run_ts AS run_ts,
-    source_snapshot_date AS source_snapshot_date,
-    DATE_TRUNC(source_snapshot_date, MONTH) AS source_snapshot_month,
-    'v1_2026_06_09' AS filter_version,
+    (SELECT run_date_hkt FROM meta) AS run_date,
+    (SELECT run_ts FROM meta) AS run_ts,
+    (SELECT source_snapshot_date FROM meta) AS source_snapshot_date,
+    DATE_TRUNC((SELECT source_snapshot_date FROM meta), MONTH) AS source_snapshot_month,
+    'v2_2026_06_12' AS filter_version,
     'MRC' AS filter_itemcode,
     'Monthly|Half-yearly|Quarterly|Yearly' AS filter_billing_type,
     'NULL_OR_BLANK_OR_[Awaiting Confirmation,Awaiting Processing,Awaiting Verification,Cancel,Denied,Saved]' AS filter_ctstatus,
@@ -117,11 +123,11 @@ result_rows AS (
   UNION ALL
 
   SELECT
-    run_date_hkt AS run_date,
-    run_ts AS run_ts,
-    source_snapshot_date AS source_snapshot_date,
-    DATE_TRUNC(source_snapshot_date, MONTH) AS source_snapshot_month,
-    'v1_2026_06_09' AS filter_version,
+    (SELECT run_date_hkt FROM meta) AS run_date,
+    (SELECT run_ts FROM meta) AS run_ts,
+    (SELECT source_snapshot_date FROM meta) AS source_snapshot_date,
+    DATE_TRUNC((SELECT source_snapshot_date FROM meta), MONTH) AS source_snapshot_month,
+    'v2_2026_06_12' AS filter_version,
     'MRC' AS filter_itemcode,
     'Monthly|Half-yearly|Quarterly|Yearly' AS filter_billing_type,
     'NULL_OR_BLANK_OR_[Awaiting Confirmation,Awaiting Processing,Awaiting Verification,Cancel,Denied,Saved]' AS filter_ctstatus,

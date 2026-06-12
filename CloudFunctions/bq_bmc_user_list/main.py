@@ -18,6 +18,7 @@ import functions_framework
 from google.cloud import bigquery, secretmanager
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from openpyxl import load_workbook
 
 from logging_config import setup_root_logging
 
@@ -103,14 +104,71 @@ def get_message_attachment(service, message_id: str, attachment_filename: str) -
 
 def robust_parse_csv(csv_data: bytes) -> List[List[str]]:
 	"""Parse CSV content with multiple encoding and delimiter attempts."""
-	encodings = ["utf-8", "utf-16", "latin-1", "cp1252"]
-	delimiters = [",", ";", "\t"]
+	encodings = [
+		"utf-8-sig",
+		"utf-8",
+		"utf-16",
+		"utf-16-le",
+		"utf-16-be",
+		"utf-32",
+		"utf-32-le",
+		"utf-32-be",
+		"latin-1",
+		"cp1252",
+		"cp932",
+		"shift_jis",
+		"euc_jp",
+	]
+	delimiters = [",", ";", "\t", "|", ":", "^", "~", "*", "\x1f", "\x1e", "\x01", "\x02"]
+
+	def choose_delimiter(text: str) -> Optional[str]:
+		header_line = ""
+		for line in text.splitlines():
+			if line.strip():
+				header_line = line
+				break
+		if not header_line:
+			return None
+
+		scored = []
+		for delimiter in delimiters:
+			score = header_line.count(delimiter)
+			scored.append((score, delimiter))
+
+		scored.sort(reverse=True)
+		best_score, best_delimiter = scored[0]
+		return best_delimiter if best_score > 0 else None
 
 	for encoding in encodings:
 		try:
-			text = csv_data.decode(encoding).lstrip("\ufeff")
+			text = csv_data.decode(encoding)
 		except Exception:
 			continue
+
+		text = text.lstrip("\ufeff").replace("\x00", "")
+		text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+		sample = text[:4096]
+
+		preferred_delimiter = choose_delimiter(text)
+		if preferred_delimiter:
+			try:
+				reader = csv.reader(io.StringIO(text), delimiter=preferred_delimiter)
+				rows = list(reader)
+				if len(rows) > 1 and any(h.strip() for h in rows[0]):
+					return rows
+			except Exception:
+				pass
+
+		# First try Sniffer because some report variants change delimiter.
+		try:
+			sniffed = csv.Sniffer().sniff(sample, delimiters=",;\t|:")
+			reader = csv.reader(io.StringIO(text), dialect=sniffed)
+			rows = list(reader)
+			if len(rows) > 1 and any(h.strip() for h in rows[0]):
+				return rows
+		except Exception:
+			pass
 
 		for delimiter in delimiters:
 			try:
@@ -121,7 +179,49 @@ def robust_parse_csv(csv_data: bytes) -> List[List[str]]:
 			except Exception:
 				continue
 
+		logger.warning(
+			"CSV parse failed. Preview=%r",
+			sample[:500],
+		)
 	raise ValueError("Could not parse CSV with supported encodings and delimiters")
+
+
+def parse_excel_rows(excel_data: bytes) -> List[List[str]]:
+	"""Parse the first worksheet from an Excel attachment into row arrays."""
+	workbook = load_workbook(filename=io.BytesIO(excel_data), read_only=True, data_only=True)
+	sheet = workbook.active
+	rows: List[List[str]] = []
+
+	for row in sheet.iter_rows(values_only=True):
+		rows.append(["" if value is None else str(value) for value in row])
+
+	if len(rows) <= 1 or not any(cell.strip() for cell in rows[0]):
+		raise ValueError("Excel attachment did not contain a usable header row")
+
+	return rows
+
+
+def parse_attachment_rows(attachment_name: str, attachment_data: bytes) -> List[List[str]]:
+	"""Parse report attachment rows, supporting CSV and Excel formats."""
+	try:
+		text_preview = attachment_data.decode("utf-8").strip()
+	except Exception:
+		try:
+			text_preview = attachment_data.decode("latin-1").strip()
+		except Exception:
+			text_preview = ""
+
+	if text_preview.lower() in {"no data", "no records", "no records found"}:
+		logger.info("Attachment %s contains a no-data marker; treating as an empty report.", attachment_name)
+		return [["No Data"]]
+
+	lower_name = attachment_name.lower()
+	if lower_name.endswith((".xlsx", ".xlsm", ".xltx", ".xltm")) or attachment_data.startswith(b"PK"):
+		logger.info("Detected Excel attachment format for %s", attachment_name)
+		return parse_excel_rows(attachment_data)
+
+	logger.info("Detected text attachment format for %s", attachment_name)
+	return robust_parse_csv(attachment_data)
 
 
 def sanitize_header(header: str) -> str:
@@ -363,7 +463,20 @@ def process_bq_bmc_user_list_email(cloud_event):
 		if not csv_data:
 			raise ValueError(f"Could not retrieve CSV attachment: {attachment_name}")
 
-		records = csv_to_records(csv_data)
+		rows = parse_attachment_rows(attachment_name, csv_data)
+		headers = [sanitize_header(h) for h in rows[0]]
+		records = []
+
+		for row in rows[1:]:
+			obj: Dict[str, Any] = {}
+			for idx, header in enumerate(headers):
+				value = row[idx] if idx < len(row) else None
+				if value is None:
+					obj[header] = None
+				else:
+					text = str(value).strip()
+					obj[header] = text if text else None
+			records.append(obj)
 		logger.info("Parsed %s records from %s", len(records), attachment_name)
 
 		total_rows = 0
