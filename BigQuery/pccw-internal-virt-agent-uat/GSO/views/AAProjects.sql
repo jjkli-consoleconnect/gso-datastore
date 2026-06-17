@@ -177,6 +177,20 @@ SELECT
   j.* EXCEPT(Status, Assignee),
   j.Status AS JiraStatus,
   j.Assignee AS SecondTierAssignee,
+  component_unnest AS component_unnest,
+  CASE
+    WHEN component_unnest IN ('Bug Fix') THEN 'Bug Fix'
+    WHEN component_unnest IN ('Documentation', 'Knowledge Management', 'Stakeholder Communication') THEN 'Documentation'
+    WHEN component_unnest IN ('Security & Compliance') THEN 'Compliance'
+    WHEN component_unnest IN ('Architecture') THEN 'Infrastructure Enablement'
+    WHEN component_unnest IN (
+      'Agent Creation', 'Agent Maintenance', 'Agent Update', 'Analytics & Metrics', 'Custom Report',
+      'Data Analysis', 'Data Integration', 'Data Studio', 'LookerStudio', 'Looker Studio',
+      'EventTriggered', 'Event Triggered', 'Exploration', 'Google Apps Script', 'Integration',
+      'New Function', 'New Feature', 'Project Planning', 'Testing'
+    ) THEN 'Feature Development/Enhancement'
+    ELSE COALESCE(component_unnest, '(No Component)')
+  END AS Allocation,
 
   -- Project code
   REGEXP_EXTRACT(COALESCE(j.Key, ''), r'^([A-Z]+)') AS ProjectCode,
@@ -215,6 +229,18 @@ SELECT
     ELSE NULL
   END AS TicketType
 FROM jira_combined AS j
+LEFT JOIN UNNEST(
+  IF(
+    IFNULL(ARRAY_LENGTH(j.Component), 0) = 0,
+    [CAST(NULL AS STRING)],
+    ARRAY(
+      SELECT TRIM(part)
+      FROM UNNEST(j.Component) AS component_item,
+           UNNEST(SPLIT(IFNULL(component_item, ''), ',')) AS part
+      WHERE NULLIF(TRIM(part), '') IS NOT NULL
+    )
+  )
+) AS component_unnest
 WHERE REGEXP_EXTRACT(COALESCE(j.Key, ''), r'^([A-Z]+)') IN ('CCAI','GTA','GDA','GKC')
 
 
