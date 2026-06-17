@@ -993,7 +993,7 @@ SELECT
     WHEN hd.Product_Family IS NULL THEN shr.`Product Family`
     ELSE hd.Product_Family
   END AS ProductFamily,
-  shr.`SR Status`,
+  shr.`SR Status` AS SR_Status,
   st.SR_Ref AS JiraSRNo,
   st.SyncTime,
   ai.AIFirstResponse,
