@@ -995,7 +995,7 @@ SELECT
   END AS ProductFamily,
   shr.`SR Status` AS SR_Status,
   st.SR_Ref AS JiraSRNo,
-  st.SyncTime,
+  COALESCE(st.SyncTime, hd.inserted_at) AS SyncTime,
   ai.AIFirstResponse,
   ai.AIFirstResponseTimestamp,
   ai.AIFirstResponse_Audit,
