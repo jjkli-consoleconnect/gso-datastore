@@ -400,6 +400,7 @@ def fetch_and_sync_jira_comments_nightly():
             total = float('inf')
             keys = []
             had_error = False
+            attempts = 0
             while start_at < total:
                 try:
                     params = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
@@ -416,12 +417,18 @@ def fetch_and_sync_jira_comments_nightly():
                     total = data.get('total', 0)
                     keys.extend([i.get('key') for i in issues if i.get('key')])
                     start_at += len(issues)
+                    attempts = 0  # Reset attempts on success
                     if not issues:
                         break
                 except Exception as e:
-                    logging.error(f"Issue search error: {e}")
-                    had_error = True
-                    break
+                    attempts += 1
+                    if attempts >= 5:
+                        logging.error(f"Issue search error: {e}")
+                        had_error = True
+                        break
+                    back = min(60, 2 ** attempts) + random.uniform(0, JITTER_MAX_SECONDS)
+                    logging.warning(f"Issue search error: {e}. Retrying ({attempts}/5) after {back:.1f}s")
+                    time.sleep(back)
             return keys, had_error
 
         def fetch_comments_for_issue(issue_key):

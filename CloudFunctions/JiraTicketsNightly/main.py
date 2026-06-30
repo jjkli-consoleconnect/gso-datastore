@@ -1023,6 +1023,7 @@ def fetch_and_sync_jira_tickets_nightly():
             all_issues = []
             had_error = False
             fields_param = ','.join(fields)
+            attempts = 0
 
             while True:
                 try:
@@ -1039,12 +1040,18 @@ def fetch_and_sync_jira_tickets_nightly():
                     total = data_local.get('total', 0)
                     all_issues.extend(issues_local)
                     start_at += len(issues_local)
+                    attempts = 0 # Reset attempts on success
                     if start_at >= total or not issues_local:
                         break
                 except Exception as e:
-                    had_error = True
-                    logging.error(f"{label} pass error: {e}")
-                    break
+                    attempts += 1
+                    if attempts >= 5:
+                        had_error = True
+                        logging.error(f"{label} pass error: {e}")
+                        break
+                    back = min(60, 2 ** attempts) + random.uniform(0, JITTER_MAX_SECONDS)
+                    logging.warning(f"{label} pass error: {e}. Retrying ({attempts}/5) after {back:.1f}s")
+                    time.sleep(back)
 
             logging.info(f"{label} pass fetched {len(all_issues)} issues")
             return all_issues, had_error

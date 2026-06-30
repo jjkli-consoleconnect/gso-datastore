@@ -5,6 +5,7 @@ WITH base AS (
   FROM `pccw-internal-virt-agent-uat.GSO.HDWL` h
   WHERE (h.WorkLog_Sequence = 1 OR h.WorkLog_Sequence IS NULL)
     AND h.Assigned_Group IN ('Console Connect', 'GSOC', 'PHSOC', 'VAS NOC')
+    AND h.Closed_Date IS NOT NULL
 ),
 jira_esc AS (
   SELECT
@@ -41,6 +42,9 @@ worklog_details AS (
   FROM `pccw-internal-virt-agent-uat.GSO.HDWL` h
   WHERE h.WorkLog_ID IS NOT NULL
     AND h.Assigned_Group IN ('Console Connect', 'GSOC', 'PHSOC', 'VAS NOC')
+    AND UPPER(h.WorkLog_Submitter) != 'AR_ESCALATOR'
+    AND UPPER(h.WorkLog_Submitter) NOT LIKE '%ADMIN%'
+    AND UPPER(h.WorkLog_Submitter) != 'REMEDY APPLICATION SERVICE'
   GROUP BY h.Incident_Number
 ),
 mttr_allowed_fault_causes AS (
@@ -187,19 +191,6 @@ SELECT
     WHEN base.CaseType = 'Incident'
      AND base.Status IN ('Resolved', 'Closed')
      AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-     AND base.GCSC_1st_Customer_Update IS NOT NULL
-     AND base.Submit_Date IS NOT NULL
-    THEN CASE
-      WHEN TIMESTAMP_DIFF(base.GCSC_1st_Customer_Update, base.Submit_Date, MINUTE) <= 30 THEN 7
-      ELSE 1
-    END
-    ELSE NULL
-  END AS FRT_Rating,
-
-  CASE
-    WHEN base.CaseType = 'Incident'
-     AND base.Status IN ('Resolved', 'Closed')
-     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
     THEN base.`2nd_Response_Minutes`
     ELSE NULL
   END AS SRT_Minutes,
@@ -211,14 +202,6 @@ SELECT
     THEN base.`2nd_Response_PassFail`
     ELSE NULL
   END AS SRT_PassFail,
-
-  CASE
-    WHEN base.CaseType = 'Incident'
-     AND base.Status IN ('Resolved', 'Closed')
-     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-    THEN CASE WHEN base.`2nd_Response_PassFail` = 'PASS' THEN 7 ELSE 1 END
-    ELSE NULL
-  END AS SRT_Rating,
 
   CASE
     WHEN base.CaseType = 'Incident'
@@ -259,7 +242,7 @@ SELECT
   CASE
     WHEN base.CaseType = 'Incident'
      AND base.Status IN ('Resolved', 'Closed')
-    THEN CASE WHEN jira_esc.Jira_Key IS NOT NULL THEN 1 ELSE 0 END
+    THEN CASE WHEN jira_esc.Jira_Key IS NOT NULL THEN base.Incident_Number ELSE null END
     ELSE NULL
   END AS LSR_Escalated,
 
@@ -273,9 +256,21 @@ SELECT
   CASE
     WHEN base.CaseType = 'Incident'
      AND base.Status IN ('Resolved', 'Closed')
-    THEN 1
+    THEN base.Incident_Number
     ELSE NULL
   END AS LSR_InScope,
+
+  CASE
+    WHEN worklog_details.Incident_Number IS NOT NULL THEN base.Incident_Number ELSE NULL
+  END AS Transaction_Handled,
+
+  CASE
+    WHEN base.CaseType = 'Incident' AND base.Status IN ('Resolved', 'Closed') THEN base.Incident_Number ELSE NULL
+  END AS Closed_Tickets,
+
+  CASE
+    WHEN base.Assignee IS NOT NULL THEN base.Incident_Number ELSE NULL
+  END AS Transaction_Assigned,
 
   CASE
     WHEN base.CaseType = 'Incident' AND base.Status IN ('Resolved', 'Closed')
