@@ -365,14 +365,23 @@ def fetch_and_sync_jira_changelog():
         session.close()
 
         transitions_count = 0
+        window_start_utc = (run_started - timedelta(minutes=lookback_minutes)).replace(tzinfo=timezone.utc)
+        
         for issue_key, issue in histories_by_issue.items():
             changelog = issue.get('changelog', {})
             histories = changelog.get('histories', [])
             
             for history in histories:
-                history_id = history.get('id')
                 created_str = history.get('created')
                 created_ts = convert_timestamp(created_str)
+                
+                # Discard history elements that didn't occur inside this run's specific window.
+                if created_ts:
+                    created_dt = datetime.strptime(created_ts, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                    if created_dt < window_start_utc:
+                        continue
+
+                history_id = history.get('id')
                 author = history.get('author', {})
                 
                 items = history.get('items', [])

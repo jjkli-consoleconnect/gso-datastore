@@ -304,7 +304,15 @@ def fetch_and_sync_jira_comments():
 
         def generate_rows(issue_key, comments):
             """Generator for comment rows."""
+            window_start_utc = (run_started - timedelta(minutes=lookback_minutes)).replace(tzinfo=timezone.utc)
             for comment in comments:
+                # Discard comments that haven't been touched in the current target window.
+                updated_str = convert_timestamp(comment.get('updated') or comment.get('created'))
+                if updated_str:
+                    updated_dt = datetime.strptime(updated_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                    if updated_dt < window_start_utc:
+                        continue
+                
                 visibility = comment.get('visibility', {})
                 row = {
                     "Issue_Key": issue_key,
