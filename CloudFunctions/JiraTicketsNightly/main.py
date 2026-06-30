@@ -67,6 +67,7 @@ DEFAULT_PROJECTS = [
     'Vendor Verification Team',
     'IPECR',
     'Internal Knowledge Management',
+    'ITOPS',
     'GS&O Strategic Initiatives'
 ]
 
@@ -167,6 +168,7 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
         ('Approvers', 'STRING'),
         ('ApproversId', 'STRING'),
         ('StoryPoints', 'INT64'),
+        ('TimeSpentSeconds', 'INT64'),
         ('TimeToFirstResponse_Elapsed_hrs', 'FLOAT64'),
         ('TimeToFirstResponse_Goal_hrs', 'FLOAT64'),
         ('TimeToFirstResponse_Breached', 'BOOL'),
@@ -758,6 +760,7 @@ def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name, auth=None, account_n
         "Symptoms": get_field_value(fields.get(SYMPTOMS_JIRA_ID)),
         "ATTCK": get_field_value(fields.get(ATTACK_JIRA_ID)),
         "StoryPoints": story_points,
+        "TimeSpentSeconds": fields.get('timetracking', {}).get('timeSpentSeconds') if isinstance(fields.get('timetracking'), dict) else fields.get('timespent'),
         "TimeToFirstResponse_Elapsed_hrs": sla_metrics['TimeToFirstResponse_Elapsed'],
         "TimeToFirstResponse_Goal_hrs": sla_metrics['TimeToFirstResponse_Goal'],
         "TimeToFirstResponse_Breached": sla_metrics['TimeToFirstResponse_Breached'],
@@ -817,7 +820,7 @@ def fetch_and_sync_jira_tickets_nightly():
         return
 
     jira_url = 'https://consoleconnect.atlassian.net/rest/api/3/search/jql'
-    username = config.get('jira_user')
+    username = config.get('jira_user') or config.get('jira_user_email') or 'jjkli@consoleconnect.com'
     api_token = config.get('jira_api_token')
 
     SR_REF_JIRA_ID = 'customfield_10382'
@@ -839,6 +842,7 @@ def fetch_and_sync_jira_tickets_nightly():
     final_level = "ERROR"
     final_message = "Pipeline did not complete"
     final_error_code = None
+    run_had_errors = False
 
     try:
         run_started = datetime.now(timezone.utc)
@@ -904,6 +908,7 @@ def fetch_and_sync_jira_tickets_nightly():
             bigquery.SchemaField("Symptoms", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("ATTCK", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("StoryPoints", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField("TimeSpentSeconds", "INT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToFirstResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToFirstResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"),
@@ -1004,6 +1009,7 @@ def fetch_and_sync_jira_tickets_nightly():
             INCLUDE_CHILD_PAGES_JIRA_ID,
             VERIFIER_JIRA_ID,
             APPROVERS_JIRA_ID,
+            'timetracking',
         ]
 
         account_name_cache = {}
@@ -1011,10 +1017,10 @@ def fetch_and_sync_jira_tickets_nightly():
 
         def search_issues(jql: str, label: str, fields):
             headers_local = {'Accept': 'application/json'}
+            auth_local = (username, api_token)
             start_at = 0
             max_results = 100
             all_issues = []
-            auth_local = (username, api_token)
             had_error = False
             fields_param = ','.join(fields)
 
@@ -1214,6 +1220,7 @@ def fetch_and_sync_jira_tickets_nightly():
                 if combined_had_error:
                     logging.warning(f"Skipping window for project {proj} due to Jira search errors")
                     mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'degraded', row_count=0)
+                    run_had_errors = True
                     break
                 seen_keys = set()
                 for issue in combined_issues:
@@ -1292,6 +1299,7 @@ def fetch_and_sync_jira_tickets_nightly():
                             T.Symptoms = COALESCE(S.Symptoms, T.Symptoms),
                             T.ATTCK = COALESCE(S.ATTCK, T.ATTCK),
                             T.StoryPoints = COALESCE(S.StoryPoints, T.StoryPoints),
+                            T.TimeSpentSeconds = COALESCE(S.TimeSpentSeconds, T.TimeSpentSeconds),
                             T.TimeToFirstResponse_Elapsed_hrs = COALESCE(S.TimeToFirstResponse_Elapsed_hrs, T.TimeToFirstResponse_Elapsed_hrs),
                             T.TimeToFirstResponse_Goal_hrs = COALESCE(S.TimeToFirstResponse_Goal_hrs, T.TimeToFirstResponse_Goal_hrs),
                             T.TimeToFirstResponse_Breached = COALESCE(S.TimeToFirstResponse_Breached, T.TimeToFirstResponse_Breached),
@@ -1337,8 +1345,8 @@ def fetch_and_sync_jira_tickets_nightly():
                             T.SyncTime = COALESCE(S.SyncTime, T.SyncTime),
                             T.IsDeleted = FALSE,
                             T.DeletedAt = NULL
-                        WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, KnowledgeManagement, DirectoryInternal, ConfluenceURL, IncludeChildPages, Verifier, VerifierId, Approvers, ApproversId, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, StoryPoints, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution, AppSupEscalation, SyncTime, IsDeleted, DeletedAt)
-                        VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, S.KnowledgeManagement, S.DirectoryInternal, S.ConfluenceURL, S.IncludeChildPages, S.Verifier, S.VerifierId, S.Approvers, S.ApproversId, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.StoryPoints, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution, S.AppSupEscalation, S.SyncTime, FALSE, NULL)
+                        WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, KnowledgeManagement, DirectoryInternal, ConfluenceURL, IncludeChildPages, Verifier, VerifierId, Approvers, ApproversId, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, StoryPoints, TimeSpentSeconds, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution, AppSupEscalation, SyncTime, IsDeleted, DeletedAt)
+                        VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, S.KnowledgeManagement, S.DirectoryInternal, S.ConfluenceURL, S.IncludeChildPages, S.Verifier, S.VerifierId, S.Approvers, S.ApproversId, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.StoryPoints, S.TimeSpentSeconds, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution, S.AppSupEscalation, S.SyncTime, FALSE, NULL)
                     '''
                     execute_bq_query_with_retry(client, merge_query, max_retries=5, initial_delay=10.0)
                     logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")
@@ -1378,6 +1386,7 @@ def fetch_and_sync_jira_tickets_nightly():
                     catchup_keys, catchup_had_error = search_issue_keys(proj_clause, f'catchup_keyset:{proj}')
                     if catchup_had_error:
                         logging.warning(f"[{proj}] Catch-up skipped due to Jira key search errors")
+                        run_had_errors = True
                         continue
                     project_current_keys = {k for k in catchup_keys if k}
                     known_keys = get_known_project_keys(client, dataset_id, table_id, proj)
@@ -1452,6 +1461,7 @@ def fetch_and_sync_jira_tickets_nightly():
                                     T.Symptoms = COALESCE(S.Symptoms, T.Symptoms),
                                     T.ATTCK = COALESCE(S.ATTCK, T.ATTCK),
                                     T.StoryPoints = COALESCE(S.StoryPoints, T.StoryPoints),
+                                    T.TimeSpentSeconds = COALESCE(S.TimeSpentSeconds, T.TimeSpentSeconds),
                                     T.TimeToFirstResponse_Elapsed_hrs = COALESCE(S.TimeToFirstResponse_Elapsed_hrs, T.TimeToFirstResponse_Elapsed_hrs),
                                     T.TimeToFirstResponse_Goal_hrs = COALESCE(S.TimeToFirstResponse_Goal_hrs, T.TimeToFirstResponse_Goal_hrs),
                                     T.TimeToFirstResponse_Breached = COALESCE(S.TimeToFirstResponse_Breached, T.TimeToFirstResponse_Breached),
@@ -1497,14 +1507,15 @@ def fetch_and_sync_jira_tickets_nightly():
                                     T.SyncTime = COALESCE(S.SyncTime, T.SyncTime),
                                     T.IsDeleted = FALSE,
                                     T.DeletedAt = NULL
-                                WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, KnowledgeManagement, DirectoryInternal, ConfluenceURL, IncludeChildPages, Verifier, VerifierId, Approvers, ApproversId, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, StoryPoints, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution, AppSupEscalation, SyncTime, IsDeleted, DeletedAt)
-                                VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, S.KnowledgeManagement, S.DirectoryInternal, S.ConfluenceURL, S.IncludeChildPages, S.Verifier, S.VerifierId, S.Approvers, S.ApproversId, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.StoryPoints, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution, S.AppSupEscalation, S.SyncTime, FALSE, NULL)
+                                WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, KnowledgeManagement, DirectoryInternal, ConfluenceURL, IncludeChildPages, Verifier, VerifierId, Approvers, ApproversId, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, StoryPoints, TimeSpentSeconds, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution, AppSupEscalation, SyncTime, IsDeleted, DeletedAt)
+                                VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, S.KnowledgeManagement, S.DirectoryInternal, S.ConfluenceURL, S.IncludeChildPages, S.Verifier, S.VerifierId, S.Approvers, S.ApproversId, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.StoryPoints, S.TimeSpentSeconds, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution, S.AppSupEscalation, S.SyncTime, FALSE, NULL)
                             '''
                             execute_bq_query_with_retry(client, merge_query, max_retries=5, initial_delay=10.0)
                             total_rows_merged += catchup_rows_count
                             logging.info(f"[{proj}] Catch-up merged {catchup_rows_count} missing key rows")
                 except Exception as catchup_exc:
                     logging.warning(f"[{proj}] Missing-key catch-up skipped due to error: {catchup_exc}")
+                    run_had_errors = True
 
             if budget_reached:
                 break
@@ -1517,9 +1528,14 @@ def fetch_and_sync_jira_tickets_nightly():
 
         if not ENABLE_SOFT_DELETE_RECONCILIATION:
             logging.warning("Soft-delete reconciliation disabled; skipping nightly delete-marking")
-            final_status = "SUCCESS"
-            final_level = "INFO"
-            final_message = "Pipeline finished"
+            if run_had_errors:
+                final_status = "ERROR"
+                final_level = "ERROR"
+                final_message = "Pipeline finished with one or more errors"
+            else:
+                final_status = "SUCCESS"
+                final_level = "INFO"
+                final_message = "Pipeline finished"
             return
 
         # Reconciliation step: mark rows as soft-deleted if key no longer exists in Jira.
@@ -1545,9 +1561,10 @@ def fetch_and_sync_jira_tickets_nightly():
                 message=f"Soft-delete reconciliation skipped due to Jira key fetch errors for: {failed_projects_str}",
                 status="SUCCESS",
             )
-            final_status = "SUCCESS"
-            final_level = "INFO"
-            final_message = "Pipeline finished"
+            run_had_errors = True
+            final_status = "ERROR"
+            final_level = "ERROR"
+            final_message = "Pipeline finished with one or more errors"
             return
 
         keys_table_id = f"JiraTickets_active_keys_{run_id.replace('-', '_')[:8]}"
@@ -1597,9 +1614,14 @@ def fetch_and_sync_jira_tickets_nightly():
 
         delete_temp_table(client, dataset_id, keys_table_id)
 
-        final_status = "SUCCESS"
-        final_level = "INFO"
-        final_message = "Pipeline finished"
+        if run_had_errors:
+            final_status = "ERROR"
+            final_level = "ERROR"
+            final_message = "Pipeline finished with one or more errors"
+        else:
+            final_status = "SUCCESS"
+            final_level = "INFO"
+            final_message = "Pipeline finished"
     except Exception as e:
         final_status = "ERROR"
         final_level = "ERROR"

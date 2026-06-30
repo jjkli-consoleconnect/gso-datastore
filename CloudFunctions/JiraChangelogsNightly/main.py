@@ -59,6 +59,7 @@ DEFAULT_PROJECTS = [
     'Vendor Verification Team',
     'IPECR',
     'Internal Knowledge Management',
+    'ITOPS',
     'GS&O Strategic Initiatives'
 ]
 
@@ -298,7 +299,7 @@ def fetch_and_sync_jira_changelogs_nightly():
 
     jira_base_url = 'https://consoleconnect.atlassian.net'
     search_url = f"{jira_base_url}/rest/api/3/search/jql"
-    username = config.get('jira_user')
+    username = config.get('jira_user') or config.get('jira_user_email') or 'jjkli@consoleconnect.com'
     api_token = config.get('jira_api_token')
 
     run_id = str(uuid.uuid4())
@@ -315,6 +316,7 @@ def fetch_and_sync_jira_changelogs_nightly():
     final_level = "ERROR"
     final_message = "Pipeline did not complete"
     final_error_code = None
+    run_had_errors = False
 
     try:
         run_started = datetime.now(timezone.utc)
@@ -354,16 +356,18 @@ def fetch_and_sync_jira_changelogs_nightly():
         ]
 
         headers = {'Accept': 'application/json'}
+        auth = (username, api_token)
 
         def fetch_issue_keys_paginated(jql):
             start_at = 0
             max_results = 100
             total = float('inf')
             keys = []
+            had_error = False
             while start_at < total:
                 try:
                     params = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
-                    resp = requests.get(search_url, headers=headers, auth=(username, api_token), params=params, timeout=30)
+                    resp = requests.get(search_url, headers=headers, auth=auth, params=params, timeout=30)
                     if resp.status_code == 429:
                         ra = int(resp.headers.get('Retry-After', 30) or 30)
                         sleep_for = ra + random.uniform(0, JITTER_MAX_SECONDS)
@@ -380,8 +384,9 @@ def fetch_and_sync_jira_changelogs_nightly():
                         break
                 except Exception as e:
                     logging.error(f"Issue search error: {e}")
+                    had_error = True
                     break
-            return keys
+            return keys, had_error
 
         def fetch_issue_history(issue_key):
             """Fetch changelog history for an issue with expand=changelog."""
@@ -390,7 +395,7 @@ def fetch_and_sync_jira_changelogs_nightly():
             while attempts < 5:
                 try:
                     params = {'expand': 'changelog'}
-                    r = requests.get(url, auth=(username, api_token), params=params, timeout=30)
+                    r = requests.get(url, headers=headers, auth=auth, params=params, timeout=30)
                     if r.status_code == 429:
                         ra = int(r.headers.get('Retry-After', 10) or 10)
                         sleep_for = ra + random.uniform(0, JITTER_MAX_SECONDS)
@@ -515,8 +520,13 @@ def fetch_and_sync_jira_changelogs_nightly():
 
                 window_failed = False
 
-                issue_keys = fetch_issue_keys_paginated(jql_window)
+                issue_keys, issue_keys_had_error = fetch_issue_keys_paginated(jql_window)
                 logging.info(f"Issue keys fetched for changelogs: {len(issue_keys)}")
+
+                if issue_keys_had_error:
+                    run_had_errors = True
+                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=0)
+                    break
 
                 rows_to_insert = []
                 rows_this_window = 0
@@ -526,6 +536,7 @@ def fetch_and_sync_jira_changelogs_nightly():
                     if len(rows_to_insert) >= batch:
                         if not insert_rows_resilient(client, dataset_id, temp_table_id_run, rows_to_insert, bq_schema):
                             mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=len(rows_to_insert))
+                            run_had_errors = True
                             window_failed = True
                             break
                         rows_this_window += len(rows_to_insert)
@@ -536,6 +547,7 @@ def fetch_and_sync_jira_changelogs_nightly():
                 if rows_to_insert:
                     if not insert_rows_resilient(client, dataset_id, temp_table_id_run, rows_to_insert, bq_schema):
                         mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=len(rows_to_insert))
+                        run_had_errors = True
                         window_failed = True
                     if window_failed:
                         break
@@ -566,6 +578,7 @@ def fetch_and_sync_jira_changelogs_nightly():
                         logging.warning(f"Failed to truncate temp table after merge: {truncate_err}")
                 except Exception as e:
                     logging.error(f"Merge failed: {e}")
+                    run_had_errors = True
                     mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=rows_this_window)
 
                 run_ended = datetime.now(timezone.utc)
@@ -607,9 +620,14 @@ def fetch_and_sync_jira_changelogs_nightly():
                 else:
                         logging.warning("Soft-delete reconciliation disabled; skipping changelogs nightly delete-marking")
 
-        final_status = "SUCCESS"
-        final_level = "INFO"
-        final_message = "Pipeline finished"
+        if run_had_errors:
+            final_status = "ERROR"
+            final_level = "ERROR"
+            final_message = "Pipeline finished with one or more errors"
+        else:
+            final_status = "SUCCESS"
+            final_level = "INFO"
+            final_message = "Pipeline finished"
     except Exception as e:
         final_status = "ERROR"
         final_level = "ERROR"

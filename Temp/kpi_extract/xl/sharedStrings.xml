@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="162" uniqueCount="125"><si><t>KPIs</t></si><si><t>Rating</t></si><si><t>Weight</t></si><si><t>Remarks</t></si><si><t xml:space="preserve"> Formula</t></si><si><t>Sample Computation</t></si><si><t>Metrics</t></si><si><t>Definition</t></si><si><t>Indvidual</t></si><si><t>Team 1</t></si><si><t>Team 2</t></si><si><t>Business 80%</t></si><si><t>Response Time</t></si><si><t>Progress Update Compliance: ● 1st customer update within 30 minutes of ticket creation — Target: 95% ●</t></si><si><t>&lt;92</t></si><si><t>&gt;98</t></si><si><t>Automated</t></si><si><t>First Response Time (FRT):
+FRT = Time of 1st Customer Update − Time of Ticket Creation
+SLA Target: FRT ≤ 30 minutes
+
+First Response Compliance %:
+FRT Compliance % = (Number of tickets with FRT ≤ 30 minutes / Total number of tickets) × 100</t></si><si><t xml:space="preserve">You had 20 incidents.
+First Response Time (FRT) was measured from ticket creation to first customer update.
+
+Total tickets = 20
+19 tickets were updated within 30 minutes of ticket creation.
+
+FRT Compliance % = (19 ÷ 20) × 100 = 95%.
+SLA Target = 95%.
+Target met. </t></si><si><t>Enrg 1</t></si><si><t>Engr 2</t></si><si><t>Engr 3</t></si><si><t>Engr 4</t></si><si><t>Engr 5</t></si><si><t>Engr 6</t></si><si><t>Engr 7</t></si><si><t>Engr 8</t></si><si><t>Enrg 9</t></si><si><t>Engr1</t></si><si><t>2nd customer update within the next 90 minutes — Target: 95% 2nd response time subtract 1st response time</t></si><si><t>Second Response Time (SRT):
+SRT = Time of 2nd Customer Update − Time of 1st Customer Update
+SLA Target: SRT ≤ 90 minutes
+
+Second Response Compliance %:
+SRT Compliance % = (Number of tickets with SRT ≤ 90 minutes / Total number of tickets) × 100</t></si><si><t xml:space="preserve">Second Response Time (SRT) was measured from first customer update to second customer update.
+
+Total tickets = 20.
+20 tickets had second updates within 90 minutes after the first update.
+
+SRT Compliance % = (20 ÷ 20) × 100 = 100%.
+SLA Target = 95%.
+Target met. </t></si><si><t xml:space="preserve">Weight </t></si><si><t>Result</t></si><si><t>Engr2</t></si><si><t>Engr5</t></si><si><t>MTTR/OLA</t></si><si><r><t>Mean Time to Restore (MTTR): Incident fixed within</t></r><r><rPr><sz val="11"/><color rgb="FFFF0000"/><rFont val="Calibri"/><family val="2"/><scheme val="minor"/></rPr><t xml:space="preserve"> 1hr.30 mins</t></r><r><rPr><sz val="11"/><color theme="1"/><rFont val="Calibri"/><family val="2"/><scheme val="minor"/></rPr><t xml:space="preserve"> — Target: 80% (for Priority 1 and 2 incidents).</t></r></si><si><t>&gt;2hrs.30mins</t></si><si><t>2hrs</t></si><si><t>1hr. 45mins</t></si><si><t>1hr. 30 min</t></si><si><t>1hr. 15 mins</t></si><si><t>1hr</t></si><si><t>&lt;45min</t></si><si><t>Automated/  In the future will use the Field in remedy</t></si><si><t>Resolution Time = Incident Closed Time – Incident Created Time.
+KPI: Mean Time to Restore (MTTR)
+Formula:
+MTTR = Sum of all resolution times / Total incidents
+Compliance Percentage:
+Compliance % = (Incidents ≤ 90 mins / Total incidents) × 100</t></si><si><t>You had 10 incidents. Total time spent fixing all = 900 minutes. MTTR = 900 ÷ 10 = 90 minutes. 8 incidents were fixed in 90 minutes or less. Compliance % = (8 ÷ 10) × 100 = 80%. SLA Target = 80 % Result Target met</t></si><si><t>Engr3</t></si><si><t>Engr6</t></si><si><t>LSR</t></si><si><t>Level Solvable Rate (LSR): Target: ≥ 80% of incidents resolved at the assigned internal support level.</t></si><si><t>&lt;65%</t></si><si><t>&lt;95%</t></si><si><t>LSR = (Number of incidents resolved at 
+assigned support level ÷ Total number of incidents) × 100</t></si><si><t>You had 10 incidents.
+Level Solvable Rate (LSR) measures how many incidents were resolved at the assigned support level.
+
+Total incidents = 10.
+8 incidents were resolved at the assigned support level.
+
+LSR = (8 ÷ 10) × 100 = 80%.
+SLA Target = ≥ 80%.
+Target met.</t></si><si><t>Average</t></si><si><t>Ticket Handling</t></si><si><t>Misroute</t></si><si><t>&gt;8%</t></si><si><t>&lt;2%</t></si><si><t>Jira Tagging/ Possible automated</t></si><si><t>Misroute Rate % = (Number of misrouted tickets ÷ Total tickets) × 100</t></si><si><t xml:space="preserve">Escalation Internal </t></si><si><t>&gt;45%</t></si><si><t>&lt;15%</t></si><si><t>Manual</t></si><si><t>Internal Escalation Rate % 
+= (Number of internally escalated tickets ÷ Total number of tickets) × 100</t></si><si><t>You had 10 incidents.
+Internal escalation happens when a ticket is transferred from one support level (L1) to a higher level (L2/L3) for resolution.
+
+Total incidents = 10.
+3 incidents were escalated internally to a higher support level.
+
+Internal Escalation Rate % = (3 ÷ 10) × 100 = 30%</t></si><si><t>RTO</t></si><si><t>Closed Tickets</t></si><si><t>&lt;100</t></si><si><t>&gt;350</t></si><si><t>Closed Tickets % = (Number of closed tickets ÷ Total tickets) × 100</t></si><si><t>You had 10 incidents.
+
+3 tickets are still open
+7 tickets have been closedClosed Tickets %
+
+Closed Tickets % = (7 ÷ 10) × 100 = 70%</t></si><si><t>Full RTO</t></si><si><t>Hybrid</t></si><si><t>Transaction Handle</t></si><si><t>&lt;35</t></si><si><t>&gt;65</t></si><si><t>Manual/Long term Automation</t></si><si><t>Individual</t></si><si><t>Personal
+20%</t></si><si><t>QMS</t></si><si><t>Achieve a 95% completion rate for all mandatory staff training related to the QMS.</t></si><si><t>QMS Completion Rate % = (Number of completed mandatory trainings ÷ Total required trainings) × 100</t></si><si><t>have 20 mandatory trainings required for staff.
+
+19 trainings were completed
+1 training is still incomplete
+
+QMS Completion Rate % = (19 ÷ 20) × 100 = 95%
+
+SLA Target = 95%
+Target met.</t></si><si><t>Team Score</t></si><si><t>Late</t></si><si><t>Total Hrs of Late</t></si><si><t>&gt;4.5 hrs</t></si><si><t>4 hrs</t></si><si><t>3.5hrs</t></si><si><t>3hrs</t></si><si><t>2.5 hrs</t></si><si><t>2 hrs</t></si><si><t>&lt;1.5hrs</t></si><si><t>THL =  (Actual Check-in Time − Scheduled Start Time)</t></si><si><t>THL = (T1 Late Minutes + T2 Late Minutes + T3 Late Minutes + …)
+
+Sample Computation
+
+You had 3 late incidents in a week:
+
+Day 1: 30 minutes late  
+Day 2: 60 minutes late  
+Day 3: 120 minutes late  
+
+Total Late Minutes = 30 + 60 + 120 = 210 minutes  
+
+THL = 210 ÷ 60 = 3.5 hours</t></si><si><t>Abensences</t></si><si><t>No of Abscensces</t></si><si><t>&gt;1</t></si><si><t>&lt;0</t></si><si><t>Frequent RTO</t></si><si><t>&lt;9</t></si><si><t>&gt;16</t></si><si><t>Weekly Target  Base line the ticket Target 
+Transaction Handle Rate = (Tickets Handled / Total Assigned Tickets) × 100</t></si><si><t>Transaction Handle Rate = (15 / 20) × 100
+Transaction Handle Rate = 0.75 × 100
+Transaction Handle Rate = 75%</t></si><si><t>You had 20 incidents.
+1 incident were initially assigned to the wrong department and later re-routed to the correct team.
+
+Misroute Rate % = (1 ÷ 20) × 100 = 5%</t></si><si><t>Absences = Number of days absent</t></si><si><t>RTO Compliance = Actual RTO Days − Required RTO Days</t></si><si><t xml:space="preserve">Actual = 10 days
+Required = 12 days
+
+RTO Compliance = 10 − 12 = -2 days </t></si><si><t>Depends of Bracket Hybrid or Full RTO Target Change base Performance</t></si><si><t>Modification Remedy</t></si><si><t>Individaual</t></si><si><t>No</t></si><si><t>100% Need Signature stamp</t></si><si><t xml:space="preserve">Need to Add StatusCode 
+We need time stamp when ticket go back or closed ticket
+</t></si><si><t>all good</t></si><si><t>Identify label and also the department</t></si><si><t xml:space="preserve">Need to reachout to Training team
+</t></si><si><t>Share data</t></si><si><t>Indiacate per person the target</t></si><si><t>Discuss with Josephine</t></si><si><t>Use label in Jira 
+Tier1 - Misroute Will discuss with Eric</t></si></sst>

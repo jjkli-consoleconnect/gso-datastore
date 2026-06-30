@@ -1,344 +1,332 @@
-SELECT
-  -- Identity
-  h.Incident_Number,
-  h.SRno,
-  h.Cust_ID,
-  h.Customer_Name,
-  h.Carrier,
-
-  -- Ticket Classification
-  h.CaseType,
-  h.Status,
-  h.TicketProcess,
-  h.Priority,
-  h.Urgency,
-  h.Assigned_Group,
-  h.Assignee,
-
-  -- Categorization
-  h.Categorization_Tier_1,
-  h.Categorization_Tier_2,
-  h.Categorization_Tier_3,
-  h.Prod_ID,
-  h.Product_Family,
-  h.ProductDescription,
-  h.Fault_Cause,
-  h.AIFaultCause,
-
-  -- Timestamps
-  h.Reported_Date,
-  h.Submit_Date,
-  h.LastResolvedDate,
-  h.Closed_Date,
-  h.WorkLog_Type,
-  h.WorkLog_Submitter,
-  email_wl.EmailProgressUpdate_Count,
-  email_wl.EmailProgressUpdate_First_Submitter,
-  email_wl.EmailProgressUpdate_First_Submit_Date,
-  h.GCSC_1st_Customer_Update,
-  h.GCSC_2nd_Customer_Update,
-
-  -- ─────────────────────────────────────────────────────────
-  -- KPI 1: First Response Time (FRT)
-  -- Scope : Incidents | Closed or Resolved | has Email Progress Update worklog
-  -- SLA   : FRT ≤ 30 min → PASS  |  Target: 95%
-  -- Weight: 8%
-  -- ─────────────────────────────────────────────────────────
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Status IN ('Resolved', 'Closed')
-     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-     AND h.GCSC_1st_Customer_Update IS NOT NULL
-     AND h.Submit_Date IS NOT NULL
-    THEN TIMESTAMP_DIFF(h.GCSC_1st_Customer_Update, h.Submit_Date, MINUTE)
-    ELSE NULL
-  END AS FRT_Minutes,
-
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Status IN ('Resolved', 'Closed')
-     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-     AND h.GCSC_1st_Customer_Update IS NOT NULL
-     AND h.Submit_Date IS NOT NULL
-    THEN CASE
-      WHEN TIMESTAMP_DIFF(h.GCSC_1st_Customer_Update, h.Submit_Date, MINUTE) <= 30 THEN 'PASS'
-      ELSE 'FAIL'
-    END
-    ELSE NULL
-  END AS FRT_PassFail,
-
-  -- 1 for in-scope tickets (denominator in Looker Studio)
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Status IN ('Resolved', 'Closed')
-     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-    THEN 1
-    ELSE NULL
-  END AS FRT_InScope,
-
-  -- ─────────────────────────────────────────────────────────
-  -- KPI 2: Second Response Time (SRT)
-  -- Scope : Incidents | Closed or Resolved | has Email Progress Update worklog
-  -- SLA   : SRT ≤ 90 min → PASS  |  Target: 95%
-  -- Weight: 7%
-  -- ─────────────────────────────────────────────────────────
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Status IN ('Resolved', 'Closed')
-     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-    THEN h.`2nd_Response_Minutes`
-    ELSE NULL
-  END AS SRT_Minutes,
-
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Status IN ('Resolved', 'Closed')
-     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-    THEN h.`2nd_Response_PassFail`
-    ELSE NULL
-  END AS SRT_PassFail,
-
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Status IN ('Resolved', 'Closed')
-     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-    THEN 1
-    ELSE NULL
-  END AS SRT_InScope,
-
-  -- ─────────────────────────────────────────────────────────
-  -- KPI 3: MTTR (Mean Time to Restore)
-  -- Scope : Incidents | P1/P2 (Critical, High) | Closed or Resolved
-  -- SLA   : MTTR ≤ 90 min → PASS  |  Target: 60%
-  -- Weight: 15%
-  -- ─────────────────────────────────────────────────────────
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Priority IN ('Critical', 'High')
-     AND h.Status IN ('Resolved', 'Closed')
-    THEN h.TrueMTTR_mins
-    ELSE NULL
-  END AS MTTR_Minutes,
-
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Priority IN ('Critical', 'High')
-     AND h.Status IN ('Resolved', 'Closed')
-    THEN CASE WHEN h.TrueMTTR_mins <= 90 THEN 'PASS' ELSE 'FAIL' END
-    ELSE NULL
-  END AS MTTR_PassFail,
-
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Priority IN ('Critical', 'High')
-     AND h.Status IN ('Resolved', 'Closed')
-    THEN 1
-    ELSE NULL
-  END AS MTTR_InScope,
-
-  -- ─────────────────────────────────────────────────────────
-  -- Row-Level Scoring
-  -- Each metric earns its weight (8/7/15) on PASS, 0 on FAIL,
-  -- NULL when out of scope.
-  -- Composite = earned_points / applicable_weight_total × 100
-  -- ─────────────────────────────────────────────────────────
-
-  -- FRT score points (weight 8)
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Status IN ('Resolved', 'Closed')
-     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-     AND h.GCSC_1st_Customer_Update IS NOT NULL
-     AND h.Submit_Date IS NOT NULL
-    THEN CASE
-      WHEN TIMESTAMP_DIFF(h.GCSC_1st_Customer_Update, h.Submit_Date, MINUTE) <= 30 THEN 8
-      ELSE 0
-    END
-    ELSE NULL
-  END AS FRT_ScorePoints,
-
-  -- SRT score points (weight 7)
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Status IN ('Resolved', 'Closed')
-     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-    THEN CASE WHEN h.`2nd_Response_PassFail` = 'PASS' THEN 7 ELSE 0 END
-    ELSE NULL
-  END AS SRT_ScorePoints,
-
-  -- MTTR score points (weight 15, P1+P2 only)
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Priority IN ('Critical', 'High')
-     AND h.Status IN ('Resolved', 'Closed')
-    THEN CASE WHEN h.TrueMTTR_mins <= 90 THEN 15 ELSE 0 END
-    ELSE NULL
-  END AS MTTR_ScorePoints,
-
-  -- ─────────────────────────────────────────────────────────
-  -- MTTR Rating 1–7 (row-level, P1/P2 incidents only)
-  -- 7 = <45 min  |  6 = <60 min  |  5 = <75 min
-  -- 4 = <90 min  |  3 = <105 min |  2 = <120 min
-  -- 1 = ≥150 min (>2h30m)
-  -- ─────────────────────────────────────────────────────────
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Priority IN ('Critical', 'High')
-     AND h.Status IN ('Resolved', 'Closed')
-     AND h.TrueMTTR_mins IS NOT NULL
-    THEN CASE
-      WHEN h.TrueMTTR_mins <  45  THEN 7
-      WHEN h.TrueMTTR_mins <  60  THEN 6
-      WHEN h.TrueMTTR_mins <  75  THEN 5
-      WHEN h.TrueMTTR_mins <  90  THEN 4
-      WHEN h.TrueMTTR_mins < 105  THEN 3
-      WHEN h.TrueMTTR_mins < 150  THEN 2
-      ELSE 1
-    END
-    ELSE NULL
-  END AS MTTR_Rating,
-
-  -- ─────────────────────────────────────────────────────────
-  -- KPI 4: Level Solvable Rate (LSR)
-  -- Scope : Incidents | Closed or Resolved
-  -- SLA   : ≥80% resolved at assigned level (no Jira escalation)
-  -- Weight: 10%
-  -- Escalated = Remedy ticket has a linked Jira key in JIRA_HD
-  -- ─────────────────────────────────────────────────────────
-
-  -- Jira key(s) for escalated incidents
-  jira_esc.Jira_Key AS Escalated_Jira_Key,
-  jira_esc.Jira_Keys AS Escalated_Jira_Keys,
-
-  -- Flag: 1 = escalated (Jira linked), 0 = not escalated
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Status IN ('Resolved', 'Closed')
-    THEN CASE WHEN jira_esc.Jira_Key IS NOT NULL THEN 1 ELSE 0 END
-    ELSE NULL
-  END AS LSR_Escalated,
-
-  -- PASS = resolved at level (not escalated)
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Status IN ('Resolved', 'Closed')
-    THEN CASE WHEN jira_esc.Jira_Key IS NULL THEN 'PASS' ELSE 'FAIL' END
-    ELSE NULL
-  END AS LSR_PassFail,
-
-  CASE
-    WHEN h.CaseType = 'Incident'
-     AND h.Status IN ('Resolved', 'Closed')
-    THEN 1
-    ELSE NULL
-  END AS LSR_InScope,
-
-  -- LSR score points (weight 10)
-  CASE
-    WHEN h.CaseType = 'Incident' AND h.Status IN ('Resolved', 'Closed')
-    THEN CASE WHEN jira_esc.Jira_Key IS NULL THEN 10 ELSE 0 END
-    ELSE NULL
-  END AS LSR_ScorePoints,
-
-  -- Composite weighted score % for this row
-  -- Denominator = sum of weights for KPIs applicable to this ticket
-  -- FRT/SRT weights apply only when incident has Email Progress Update worklog
-  -- P1/P2: (FRT/SRT optional) + MTTR(15) + LSR(10)
-  -- Other: (FRT/SRT optional) + LSR(10)
-  CASE
-    WHEN h.CaseType = 'Incident' AND h.Status IN ('Resolved', 'Closed')
-      AND h.Priority IN ('Critical', 'High')
-    THEN ROUND(
-      (
-        CASE
-          WHEN COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-           AND h.GCSC_1st_Customer_Update IS NOT NULL
-           AND h.Submit_Date IS NOT NULL
-           AND TIMESTAMP_DIFF(h.GCSC_1st_Customer_Update, h.Submit_Date, MINUTE) <= 30
-          THEN 8 ELSE 0 END
-        + CASE
-          WHEN COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-           AND h.`2nd_Response_PassFail` = 'PASS'
-          THEN 7 ELSE 0 END
-        + CASE WHEN h.TrueMTTR_mins <= 90 THEN 15 ELSE 0 END
-        + CASE WHEN jira_esc.Jira_Key IS NULL THEN 10 ELSE 0 END
-      ) /
-      (
-        CASE WHEN COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0 THEN 15 ELSE 0 END
-        + 15
-        + 10
-      ) * 100, 2)
-    WHEN h.CaseType = 'Incident' AND h.Status IN ('Resolved', 'Closed')
-    THEN ROUND(
-      (
-        CASE
-          WHEN COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-           AND h.GCSC_1st_Customer_Update IS NOT NULL
-           AND h.Submit_Date IS NOT NULL
-           AND TIMESTAMP_DIFF(h.GCSC_1st_Customer_Update, h.Submit_Date, MINUTE) <= 30
-          THEN 8 ELSE 0 END
-        + CASE
-          WHEN COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
-           AND h.`2nd_Response_PassFail` = 'PASS'
-          THEN 7 ELSE 0 END
-        + CASE WHEN jira_esc.Jira_Key IS NULL THEN 10 ELSE 0 END
-      ) /
-      (
-        CASE WHEN COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0 THEN 15 ELSE 0 END
-        + 10
-      ) * 100, 2)
-    ELSE NULL
-  END AS KPI_CompositeScore,
-
-  -- WorkLog Analytics
-  h.WorkLog_Count,
-
-  -- AI Fields
-  h.AIFirstResponse,
-  h.AIFirstResponseTimestamp,
-  h.AIAtFault,
-  h.AI_FaultDomain,
-  h.AI_PrimarySymptom,
-  h.AI_LikelyRootCause,
-  h.AI_ConfidenceScore
-
-FROM
-  `pccw-internal-virt-agent-uat.GSO.HDWL` h
-
--- ─────────────────────────────────────────────────────────
--- LSR: detect escalation via linked Jira ticket
--- Any Remedy incident with a matching Jira ticket mapping
--- (i.e. Jira key exists) = escalated
--- ─────────────────────────────────────────────────────────
-LEFT JOIN (
+WITH base AS (
+  SELECT
+    h.*,
+    REGEXP_REPLACE(UPPER(TRIM(h.Fault_Cause)), r'[^A-Z0-9]+', ' ') AS Normalized_Fault_Cause
+  FROM `pccw-internal-virt-agent-uat.GSO.HDWL` h
+  WHERE (h.WorkLog_Sequence = 1 OR h.WorkLog_Sequence IS NULL)
+    AND h.Assigned_Group IN ('Console Connect', 'GSOC', 'PHSOC', 'VAS NOC')
+),
+jira_esc AS (
   SELECT
     remedy_incident AS Incident_Number,
-    MIN(Key) AS Jira_Key,
-    STRING_AGG(DISTINCT Key, ', ' ORDER BY Key) AS Jira_Keys
+    MIN(Key) AS Jira_Key
   FROM `pccw-internal-virt-agent-uat.GSO.JiraTickets` jt
   LEFT JOIN UNNEST(jt.RemedyTicketNumber) AS remedy_incident
   WHERE remedy_incident IS NOT NULL
     AND Key IS NOT NULL
     AND COALESCE(jt.IsDeleted, FALSE) = FALSE
   GROUP BY remedy_incident
-) jira_esc
-  ON jira_esc.Incident_Number = h.Incident_Number
-
-LEFT JOIN (
+),
+email_wl AS (
   SELECT
     Incident_Number,
-    COUNT(1) AS EmailProgressUpdate_Count,
-    ARRAY_AGG(WorkLog_Submitter IGNORE NULLS ORDER BY WorkLog_Submit_Date ASC LIMIT 1)[SAFE_OFFSET(0)] AS EmailProgressUpdate_First_Submitter,
-    ARRAY_AGG(WorkLog_Submit_Date IGNORE NULLS ORDER BY WorkLog_Submit_Date ASC LIMIT 1)[SAFE_OFFSET(0)] AS EmailProgressUpdate_First_Submit_Date
+    COUNT(1) AS EmailProgressUpdate_Count
   FROM `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC`
   WHERE REGEXP_REPLACE(UPPER(TRIM(WorkLog_Type)), r'[^A-Z0-9]+', '') = 'EMAILPROGRESSUPDATE'
   GROUP BY Incident_Number
-) email_wl
-  ON email_wl.Incident_Number = h.Incident_Number
+),
+worklog_details AS (
+  SELECT
+    h.Incident_Number,
+    ARRAY_AGG(
+      STRUCT(
+        h.WorkLog_ID,
+        h.WorkLog_Type,
+        h.WorkLog_Submitter,
+        h.WorkLog_Submit_Date,
+        h.WorkLog_Sequence
+      )
+      ORDER BY h.WorkLog_Sequence, h.WorkLog_Submit_Date, h.WorkLog_ID
+    ) AS WorkLog_Details
+  FROM `pccw-internal-virt-agent-uat.GSO.HDWL` h
+  WHERE h.WorkLog_ID IS NOT NULL
+    AND h.Assigned_Group IN ('Console Connect', 'GSOC', 'PHSOC', 'VAS NOC')
+  GROUP BY h.Incident_Number
+),
+mttr_allowed_fault_causes AS (
+  SELECT cause
+  FROM UNNEST([
+    'ANYTHING INTERNAL NETWORK RELATED',
+    'API FAILED REQUEST',
+    'API ISSUE',
+    'BACKHAUL',
+    'BEST ROUTE',
+    'CALLED NUMBER BLOCKED BY CARRIER LOCAL',
+    'CALLING NUMBER BLOCKED BY CARRIER LOCAL',
+    'CDR OR FILE TRANSFER ISSUE',
+    'COMMERCIAL ISSUE',
+    'CONFIG ISSUE RELATED',
+    'CONFIGURATION PROBLEM',
+    'CONNECTIVITY OUTAGE',
+    'CONSOLE API ISSUE',
+    'CONSOLE CONNECT CONNECTIVITY ISSUE',
+    'CONSOLE CONNECT PLATFORM ISSUE',
+    'CONSOLE CONNECT PORTAL ISSUE',
+    'CONSOLE PLATFORM CODE ISSUE',
+    'CONSOLE SECURITY ATTACK',
+    'CONSOLE SERVICE LAYER ISSUE',
+    'CODE BUG IN CONSOLE SERVICE LAYER',
+    'CODE ERROR IN CONSOLE WORKFLOW',
+    'CORE NETWORK HARDWARE ISSUE',
+    'CORE PLATFORM NETWORK',
+    'COVERAGE OR MOBILE NETWORK PROBLEM IN HONG KONG',
+    'COVERAGE OR MOBILE NETWORK PROBLEM IN ROAMING COUNTRY',
+    'CUSTOMER CONFIGURATION PROBLEM',
+    'CUSTOMER EQUIPMENT',
+    'DUPLICATE TICKET',
+    'FAR END FAULT',
+    'FIBER CUT',
+    'FRONTIER STATION',
+    'GENERAL SERVICE ENQUIRY',
+    'HARDWARE ISSUE',
+    'IOT API ISSUE',
+    'IOT CDR OR FILE TRANSFER ISSUE',
+    'IOT CONSOLE CONNECT CONNECTIVITY ISSUE',
+    'IOT CONSOLE CONNECT PLATFORM ISSUE',
+    'IOT CONSOLE CONNECT PORTAL ISSUE',
+    'IOT COVERAGE OR MOBILE NETWORK PROBLEM IN HONG KONG',
+    'IOT COVERAGE OR MOBILE NETWORK PROBLEM IN ROAMING COUNTRY',
+    'IOT CUSTOMER CONFIGURATION PROBLEM',
+    'IOT GENERAL SERVICE ENQUIRY',
+    'IOT NETWORK CONNECTIVITY PROBLEM',
+    'IOT NETWORK OR APN CONFIGURATION PROBLEM',
+    'IOT PROVISIONING',
+    'IOT SIM MANAGEMENT PORTAL ISSUE',
+    'IOT SIM OR E SIM PLATFORM ISSUE',
+    'IOT SIM PROVISIONING OR CONFIGURATION',
+    'IOT SMS PLATFORM',
+    'INC PCCW GLOBAL NETWORK INFRASTRUTURE',
+    'INCIDENT API ISSUE',
+    'INCIDENT CONFIG MISMATCH DUE TO INFLIGHT CHANGE',
+    'INCIDENT CONSOLE FEATURE DEFICIENCY',
+    'INCIDENT DIRTY FIBRE',
+    'INCIDENT FAULTY EQUIPMENT EG PORT',
+    'INCIDENT IP ADDRESS S GEO BLOCKED',
+    'INCIDENT INTERFACE WAS UNPLUGGED',
+    'INCIDENT LIGHT LEVELS LOW NOT WITHIN SPEC',
+    'INCIDENT PLATFORM ISSUE CODE ERROR FUNCTIONALITY DEFICIENCY',
+    'INCIDENT SECURITY ATTACK',
+    'INCIDENT UNSTABLE CONNECTION',
+    'INCIDENT WEB PAGE NOT REACHABLE',
+    'INCOMPATIBLE MEDIA CONVERTER',
+    'INTERNATIONAL LINK TRUNK OR SUBMARINE CABLE',
+    'INTERNATIONAL PORTION FAULT BETWEEN TWO CABLE STATIONS COUNTRIES',
+    'INTERNET CONNECTIVITY DOWN',
+    'IPVPN BACKHAUL',
+    'IPVPN CORE PLATFORM NETWORK',
+    'IPVPN INTERNATIONAL LINK TRUNK OR SUBMARINE CABLE',
+    'IPVPN LOCAL ITMC LOCAL TERRITORIAL LINK',
+    'IPVPN LOCAL LOOP',
+    'IPVPN RIGHT WHEN TEST',
+    'IPVPN UNTRACED FAULT',
+    'LOCAL ITMC LOCAL TERRITORIAL LINK',
+    'LOCAL LOOP',
+    'MAINTENANCE NOTIFICATION ERROR INTERNAL',
+    'MAINTENANCE NOTIFICATION ERROR PARTNER',
+    'MOBILITY CONFIGURATION PROBLEM',
+    'MOBILITY NETWORK ISSUE',
+    'NETWORK',
+    'NETWORK CONNECTIVITY DOWN',
+    'NETWORK CONNECTIVITY PROBLEM',
+    'NETWORK ISSUE',
+    'NETWORK OR APN CONFIGURATION PROBLEM',
+    'NON CUSTOMER APPLICATION',
+    'NON CUSTOMER EQUIPMENT FAILURE',
+    'NON CUSTOMER FAULT ISSUES',
+    'OTHERS INTERNAL HUMAN ERROR',
+    'PARTNER NETWORK',
+    'PCCW EQUIPMENT',
+    'PEERING PARTNER',
+    'PERFORMANCE',
+    'PROLONGED MAINTENANCE',
+    'PROVISIONING',
+    'RIGHT WHEN TEST',
+    'SCHEDULED MAINTENANCE NOT COMMUNICATED',
+    'SIM MANAGEMENT PORTAL ISSUE',
+    'SIM OR E SIM PLATFORM ISSUE',
+    'SIM PROVISIONING OR CONFIGURATION',
+    'SMS PLATFORM',
+    'SPECIFIC DATA CENTER POP OUTAGE'
+  ]) AS cause
+)
 
-WHERE
-  -- One row per ticket
-  (h.WorkLog_Sequence = 1 OR h.WorkLog_Sequence IS NULL)
-  -- Assigned Group filter
-  AND h.Assigned_Group IN ('Console Connect', 'GSOC', 'PHSOC', 'VAS NOC')
+SELECT
+  base.Incident_Number,
+  base.Assigned_Group,
+  base.Assignee,
+  base.Submitter AS Ticket_Submitter,
+  base.Submit_Date,
+  base.Closed_Date,
+  base.Closed_By,
+  worklog_details.WorkLog_Details,
 
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Status IN ('Resolved', 'Closed')
+     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
+     AND base.GCSC_1st_Customer_Update IS NOT NULL
+     AND base.Submit_Date IS NOT NULL
+    THEN TIMESTAMP_DIFF(base.GCSC_1st_Customer_Update, base.Submit_Date, MINUTE)
+    ELSE NULL
+  END AS FRT_Minutes,
+
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Status IN ('Resolved', 'Closed')
+     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
+     AND base.GCSC_1st_Customer_Update IS NOT NULL
+     AND base.Submit_Date IS NOT NULL
+    THEN CASE
+      WHEN TIMESTAMP_DIFF(base.GCSC_1st_Customer_Update, base.Submit_Date, MINUTE) <= 30 THEN 'PASS'
+      ELSE 'FAIL'
+    END
+    ELSE NULL
+  END AS FRT_PassFail,
+
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Status IN ('Resolved', 'Closed')
+     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
+     AND base.GCSC_1st_Customer_Update IS NOT NULL
+     AND base.Submit_Date IS NOT NULL
+    THEN CASE
+      WHEN TIMESTAMP_DIFF(base.GCSC_1st_Customer_Update, base.Submit_Date, MINUTE) <= 30 THEN 7
+      ELSE 1
+    END
+    ELSE NULL
+  END AS FRT_Rating,
+
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Status IN ('Resolved', 'Closed')
+     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
+    THEN base.`2nd_Response_Minutes`
+    ELSE NULL
+  END AS SRT_Minutes,
+
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Status IN ('Resolved', 'Closed')
+     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
+    THEN base.`2nd_Response_PassFail`
+    ELSE NULL
+  END AS SRT_PassFail,
+
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Status IN ('Resolved', 'Closed')
+     AND COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
+    THEN CASE WHEN base.`2nd_Response_PassFail` = 'PASS' THEN 7 ELSE 1 END
+    ELSE NULL
+  END AS SRT_Rating,
+
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Priority IN ('Critical', 'High')
+     AND base.Status IN ('Resolved', 'Closed')
+     AND base.Normalized_Fault_Cause IN (SELECT cause FROM mttr_allowed_fault_causes)
+    THEN base.TrueMTTR_mins
+    ELSE NULL
+  END AS MTTR_Minutes,
+
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Priority IN ('Critical', 'High')
+     AND base.Status IN ('Resolved', 'Closed')
+     AND base.Normalized_Fault_Cause IN (SELECT cause FROM mttr_allowed_fault_causes)
+    THEN CASE WHEN base.TrueMTTR_mins <= 90 THEN 'PASS' ELSE 'FAIL' END
+    ELSE NULL
+  END AS MTTR_PassFail,
+
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Priority IN ('Critical', 'High')
+     AND base.Status IN ('Resolved', 'Closed')
+     AND base.Normalized_Fault_Cause IN (SELECT cause FROM mttr_allowed_fault_causes)
+     AND base.TrueMTTR_mins IS NOT NULL
+    THEN CASE
+      WHEN base.TrueMTTR_mins < 45 THEN 7
+      WHEN base.TrueMTTR_mins < 60 THEN 6
+      WHEN base.TrueMTTR_mins < 75 THEN 5
+      WHEN base.TrueMTTR_mins < 90 THEN 4
+      WHEN base.TrueMTTR_mins < 105 THEN 3
+      WHEN base.TrueMTTR_mins < 150 THEN 2
+      ELSE 1
+    END
+    ELSE NULL
+  END AS MTTR_Rating,
+
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Status IN ('Resolved', 'Closed')
+    THEN CASE WHEN jira_esc.Jira_Key IS NOT NULL THEN 1 ELSE 0 END
+    ELSE NULL
+  END AS LSR_Escalated,
+
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Status IN ('Resolved', 'Closed')
+    THEN CASE WHEN jira_esc.Jira_Key IS NULL THEN 'PASS' ELSE 'FAIL' END
+    ELSE NULL
+  END AS LSR_PassFail,
+
+  CASE
+    WHEN base.CaseType = 'Incident'
+     AND base.Status IN ('Resolved', 'Closed')
+    THEN 1
+    ELSE NULL
+  END AS LSR_InScope,
+
+  CASE
+    WHEN base.CaseType = 'Incident' AND base.Status IN ('Resolved', 'Closed')
+    THEN ROUND(
+      (
+        CASE
+          WHEN COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
+           AND base.GCSC_1st_Customer_Update IS NOT NULL
+           AND base.Submit_Date IS NOT NULL
+           AND TIMESTAMP_DIFF(base.GCSC_1st_Customer_Update, base.Submit_Date, MINUTE) <= 30
+          THEN 8 ELSE 0 END
+        + CASE
+          WHEN COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0
+           AND base.`2nd_Response_PassFail` = 'PASS'
+          THEN 7 ELSE 0 END
+        + CASE
+          WHEN base.Priority IN ('Critical', 'High')
+           AND base.Normalized_Fault_Cause IN (SELECT cause FROM mttr_allowed_fault_causes)
+           AND base.TrueMTTR_mins <= 90
+          THEN 15 ELSE 0 END
+        + CASE WHEN jira_esc.Jira_Key IS NULL THEN 10 ELSE 0 END
+      ) /
+      (
+        CASE WHEN COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0 THEN 8 ELSE 0 END
+        + CASE WHEN COALESCE(email_wl.EmailProgressUpdate_Count, 0) > 0 THEN 7 ELSE 0 END
+        + CASE
+          WHEN base.Priority IN ('Critical', 'High')
+           AND base.Normalized_Fault_Cause IN (SELECT cause FROM mttr_allowed_fault_causes)
+          THEN 15 ELSE 0 END
+        + 10
+      ) * 100,
+      2
+    )
+    ELSE NULL
+  END AS KPI_CompositeScore,
+
+  base.CaseType,
+  base.Status,
+  base.TicketProcess,
+  base.Priority,
+  base.Urgency,
+  base.Categorization_Tier_1,
+  base.Categorization_Tier_2,
+  base.Categorization_Tier_3,
+  base.Fault_Cause,
+  base.AIFaultCause
+
+FROM base
+LEFT JOIN jira_esc
+  ON jira_esc.Incident_Number = base.Incident_Number
+LEFT JOIN email_wl
+  ON email_wl.Incident_Number = base.Incident_Number
+LEFT JOIN worklog_details
+  ON worklog_details.Incident_Number = base.Incident_Number
