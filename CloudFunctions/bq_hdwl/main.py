@@ -12,10 +12,11 @@ import logging
 import os
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 
 import functions_framework
+from google.api_core.exceptions import NotFound
 from google.oauth2.credentials import Credentials
 from google.cloud import secretmanager, pubsub_v1, bigquery
 from googleapiclient.discovery import build
@@ -162,7 +163,42 @@ def get_table_columns(bq_client: bigquery.Client, dataset_id: str, table_id: str
         raise
 
 
-def ensure_target_table_columns(bq_client: bigquery.Client, config: Dict[str, Any], staging_columns: List[str]):
+def get_table_columns_by_ref(bq_client: bigquery.Client, table_ref: str) -> List[str]:
+    """Get all column names from a fully-qualified BigQuery table reference."""
+    try:
+        table = bq_client.get_table(table_ref)
+        return [field.name for field in table.schema]
+    except Exception as e:
+        logger.error(f"Error getting columns from {table_ref}: {e}")
+        raise
+
+
+def build_run_scoped_staging_table_id(config: Dict[str, Any], message_id: str) -> str:
+    """Create a run-scoped staging table ID to avoid cross-run WRITE_TRUNCATE races."""
+    run_suffix = (_current_run_id or os.urandom(8).hex())[:12]
+    clean_message_id = re.sub(r'[^a-zA-Z0-9_]', '_', message_id)[-24:]
+    if not clean_message_id:
+        clean_message_id = os.urandom(4).hex()
+    table_name = f"{config['staging_table']}_run_{run_suffix}_{clean_message_id}"
+    return f"{PROJECT_ID}.{config['staging_dataset']}.{table_name}"
+
+
+def set_temp_table_expiration(bq_client: bigquery.Client, table_ref: str, hours: int = 24) -> None:
+    """Set a short expiration on run-scoped staging tables for automatic cleanup."""
+    try:
+        table = bq_client.get_table(table_ref)
+        table.expires = datetime.utcnow() + timedelta(hours=hours)
+        bq_client.update_table(table, ["expires"])
+    except Exception as e:
+        logger.warning(f"Failed to set expiration for {table_ref}: {e}")
+
+
+def ensure_target_table_columns(
+    bq_client: bigquery.Client,
+    config: Dict[str, Any],
+    staging_columns: List[str],
+    staging_table_ref: str,
+):
     """Ensure target table has all columns that exist in staging table. Adds columns one at a time for partial success."""
     try:
         target_table_ref = f"{PROJECT_ID}.{config['target_dataset']}.{config['target_table']}"
@@ -180,7 +216,6 @@ def ensure_target_table_columns(bq_client: bigquery.Client, config: Dict[str, An
         logger.info(f"Found {len(missing_columns)} new columns to add: {', '.join(missing_columns)}")
         
         # Get staging table schema to copy field types
-        staging_table_ref = f"{PROJECT_ID}.{config['staging_dataset']}.{config['staging_table']}"
         staging_table = bq_client.get_table(staging_table_ref)
         staging_fields = {field.name: field for field in staging_table.schema}
         
@@ -239,6 +274,48 @@ def ensure_target_table_columns(bq_client: bigquery.Client, config: Dict[str, An
     except Exception as e:
         logger.error(f"Error ensuring target table columns: {e}")
         raise
+
+
+def reconcile_merged_primary_keys(
+        bq_client: bigquery.Client,
+        primary_key: str,
+        staging_table_ref: str,
+        target_table_ref: str,
+) -> Tuple[int, int, int, List[str]]:
+        """Verify every distinct source key from staging exists in target after MERGE."""
+        sql = f"""
+        WITH src AS (
+            SELECT DISTINCT {primary_key} AS pk
+            FROM `{staging_table_ref}`
+            WHERE {primary_key} IS NOT NULL
+        ),
+        tgt AS (
+            SELECT DISTINCT t.{primary_key} AS pk
+            FROM `{target_table_ref}` t
+            JOIN src s ON t.{primary_key} = s.pk
+        ),
+        missing AS (
+            SELECT pk FROM src
+            EXCEPT DISTINCT
+            SELECT pk FROM tgt
+        )
+        SELECT
+            (SELECT COUNT(*) FROM src) AS source_key_count,
+            (SELECT COUNT(*) FROM tgt) AS target_key_count,
+            (SELECT COUNT(*) FROM missing) AS missing_key_count,
+            ARRAY(SELECT CAST(pk AS STRING) FROM missing ORDER BY CAST(pk AS STRING) LIMIT 20) AS missing_sample
+        """
+
+        job = bq_client.query(sql, job_config=bigquery.QueryJobConfig(use_legacy_sql=False))
+        row = next(iter(job.result()), None)
+        if row is None:
+                return 0, 0, 0, []
+
+        source_key_count = int(row.source_key_count or 0)
+        target_key_count = int(row.target_key_count or 0)
+        missing_key_count = int(row.missing_key_count or 0)
+        missing_sample = list(row.missing_sample or [])
+        return source_key_count, target_key_count, missing_key_count, missing_sample
 
 
 def manage_gmail_labels(service, message_id: str, remove_label_name: str, add_label_name: str):
@@ -362,6 +439,9 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
         logger.warning(f"Could not retrieve attachment {attachment_filename}")
         return False, 0
     
+    bq_client = get_bq_client()
+    staging_table_id = build_run_scoped_staging_table_id(config, message_id)
+
     try:
         # Parse CSV
         rows = robust_parse_csv(csv_data)
@@ -385,10 +465,7 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
         
         ndjson_content = '\n'.join(ndjson_lines)
         
-        # Load to BigQuery staging
-        bq_client = bigquery.Client(project=PROJECT_ID)
-        staging_table_id = f"{PROJECT_ID}.{config['staging_dataset']}.{config['staging_table']}"
-        
+        # Load to run-scoped staging table to avoid concurrent run collisions.
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
             write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
@@ -402,13 +479,14 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
         )
         load_job.result()
         logger.info(f"Loaded data to {staging_table_id}")
+        set_temp_table_expiration(bq_client, staging_table_id)
         
         # Get actual columns from staging table after load (dynamic column detection)
-        staging_columns = get_table_columns(bq_client, config['staging_dataset'], config['staging_table'])
+        staging_columns = get_table_columns_by_ref(bq_client, staging_table_id)
         logger.info(f"Detected {len(staging_columns)} columns in staging table.")
         
         # Ensure target table has all columns from staging
-        ensure_target_table_columns(bq_client, config, staging_columns)
+        ensure_target_table_columns(bq_client, config, staging_columns, staging_table_id)
         
         # Merge into target table using dynamic staging columns with case-insensitive matching
         target_table_id = f"{PROJECT_ID}.{config['target_dataset']}.{config['target_table']}"
@@ -452,6 +530,25 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
         query_config = bigquery.QueryJobConfig(use_legacy_sql=False)
         merge_job = bq_client.query(merge_query, job_config=query_config)
         merge_job.result()
+
+        source_keys, target_keys, missing_keys, missing_sample = reconcile_merged_primary_keys(
+            bq_client,
+            primary_key,
+            staging_table_id,
+            target_table_id,
+        )
+        logger.info(
+            "Reconciliation for %s: source_keys=%s target_keys=%s missing=%s",
+            config['name'],
+            source_keys,
+            target_keys,
+            missing_keys,
+        )
+        if missing_keys > 0:
+            raise RuntimeError(
+                f"Reconciliation failed for {config['name']}: {missing_keys} keys missing after merge. "
+                f"Sample: {missing_sample}"
+            )
         
         # Extract DML affected rows from statistics (matching GAS script exactly)
         # GAS uses: completedJob.statistics.query.numDmlAffectedRows
@@ -464,6 +561,14 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
     except Exception as e:
         logger.error(f"Error processing CSV {attachment_filename}: {e}")
         return False, 0
+    finally:
+        try:
+            bq_client.delete_table(staging_table_id, not_found_ok=True)
+            logger.info(f"Deleted run-scoped staging table {staging_table_id}")
+        except NotFound:
+            pass
+        except Exception as cleanup_error:
+            logger.warning(f"Failed to delete staging table {staging_table_id}: {cleanup_error}")
 
 
 def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, window_start: Optional[str] = None, window_end: Optional[str] = None, rows_merged: Optional[int] = None, error_code: Optional[str] = None, context_obj: Optional[Dict] = None):
@@ -573,6 +678,8 @@ def process_bq_hdwl_email(cloud_event):
         service = get_gmail_service()
         total_rows_merged = 0
         success_count = 0
+        failed_attachments = []
+        unmatched_csv_attachments = []
         
         # Get message to find attachments
         message = service.users().messages().get(userId='me', id=message_id, format='full').execute()
@@ -587,18 +694,31 @@ def process_bq_hdwl_email(cloud_event):
                 csv_found = True
                 logger.info(f"Found CSV attachment: {filename}")
                 # Find matching config
+                matched_config = False
                 for config in CSV_CONFIGURATIONS:
                     if filename.startswith(config['filename_prefix']):
+                        matched_config = True
                         logger.info(f"Matched config: {config['name']}")
                         success, rows = process_csv_attachment(service, message_id, part['filename'], config)
                         logger.info(f"CSV processing result: success={success}, rows={rows}")
                         if success:
                             total_rows_merged += rows
                             success_count += 1
+                        else:
+                            failed_attachments.append(filename)
                         break
+                if not matched_config:
+                    logger.warning(f"No matching config for CSV attachment: {filename}")
+                    unmatched_csv_attachments.append(filename)
         
         if not csv_found:
             logger.info("No CSV attachments found in message")
+
+        if failed_attachments or unmatched_csv_attachments:
+            raise RuntimeError(
+                "Attachment processing incomplete. "
+                f"Failed: {failed_attachments}; Unmatched: {unmatched_csv_attachments}"
+            )
 
         # Manage labels: remove 'pubsub', add 'ArchivedReports'
         manage_gmail_labels(service, message_id, 'pubsub', 'ArchivedReports')

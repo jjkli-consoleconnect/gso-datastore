@@ -49,9 +49,17 @@ SELECT
 	b.srno,
 	b.email,
 	b.company_name,
-	COALESCE(NULLIF(TRIM(b.company_name), ''), 'Unknown') AS company_name_normalized,
+	COALESCE(
+		NULLIF(TRIM(b.company_name), ''),
+		NULLIF(LOWER(SPLIT(TRIM(b.email), '@')[SAFE_OFFSET(1)]), ''),
+		'Unknown'
+	) AS company_name_normalized,
 	b.Customer_Name,
-	COALESCE(NULLIF(TRIM(b.Customer_Name), ''), 'Unknown') AS customer_name_normalized,
+	COALESCE(
+		NULLIF(TRIM(b.Customer_Name), ''),
+		NULLIF(LOWER(SPLIT(TRIM(b.email), '@')[SAFE_OFFSET(1)]), ''),
+		'Unknown'
+	) AS customer_name_normalized,
 	b.Product_Family,
 	COALESCE(NULLIF(TRIM(b.Product_Family), ''), 'Unknown') AS product_family_normalized,
 	b.Circuit_Owner,
