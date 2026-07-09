@@ -5,6 +5,7 @@ loads to BigQuery, manages labels, and logs pipeline runs.
 """
 
 import base64
+import ast
 import json
 import csv
 import io
@@ -20,6 +21,7 @@ from google.api_core.exceptions import NotFound
 from google.oauth2.credentials import Credentials
 from google.cloud import secretmanager, pubsub_v1, bigquery
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -63,7 +65,7 @@ CSV_CONFIGURATIONS = [
             "Closed_Date", "Submit_Date", "Assignee", "Closed_By", "Submitter", "TrueMTTR_mins",
             "Cust_ID", "Carrier", "Customer_Name", "SRno", "LastResolvedDate", "ReportedDate",
             "RespondedDate", "FaultCauseDetail", "LastModifiedDate", "ReportedBy",
-            "Product_Family", "ProductDescription", "GSMP_Circuit_ID"
+            "Product_Family", "ProductDescription", "GSMP_Circuit_ID", "Urgency", "Priority"
         ],
         "field_map": {
             "IncidentNumber": "Incident_Number", "casetype": "CaseType", "Assigned Group": "Assigned_Group",
@@ -110,17 +112,31 @@ CSV_CONFIGURATIONS = [
 
 def load_oauth_credentials():
     """Load OAuth credentials from Secret Manager"""
-    try:
-        client = secretmanager.SecretManagerServiceClient()
-        secret_name = f"projects/{PROJECT_ID}/secrets/gmail-oauth-token/versions/latest"
-        response = client.access_secret_version(request={"name": secret_name})
-        token_json = response.payload.data.decode("UTF-8")
-        token_data = json.loads(token_json)
-        creds = Credentials.from_authorized_user_info(token_data)
-        return creds
-    except Exception as e:
-        logger.error(f"Failed to load OAuth credentials: {e}")
-        raise
+    max_attempts = 4
+    delay_seconds = 1.0
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            client = secretmanager.SecretManagerServiceClient()
+            secret_name = f"projects/{PROJECT_ID}/secrets/gmail-oauth-token/versions/latest"
+            response = client.access_secret_version(request={"name": secret_name})
+            token_json = response.payload.data.decode("UTF-8")
+            token_data = json.loads(token_json)
+            creds = Credentials.from_authorized_user_info(token_data)
+            return creds
+        except Exception as e:
+            if attempt == max_attempts:
+                logger.error(f"Failed to load OAuth credentials: {e}")
+                raise
+            logger.warning(
+                "Failed to load OAuth credentials (attempt %s/%s): %s. Retrying in %.1fs.",
+                attempt,
+                max_attempts,
+                e,
+                delay_seconds,
+            )
+            time.sleep(delay_seconds)
+            delay_seconds = min(delay_seconds * 2, 8.0)
 
 
 def get_gmail_service():
@@ -365,32 +381,69 @@ def manage_gmail_labels(service, message_id: str, remove_label_name: str, add_la
 def robust_parse_csv(csv_data: bytes) -> List[List[str]]:
     """Parse CSV with multiple encoding attempts"""
     encodings = ['utf-8', 'utf-16', 'latin-1', 'cp1252']
+    candidates: List[List[List[str]]] = []
+
+    def try_parse(text: str, delimiter: str, quote_none: bool = False) -> Optional[List[List[str]]]:
+        reader_kwargs = {"delimiter": delimiter}
+        if quote_none:
+            reader_kwargs.update({"quoting": csv.QUOTE_NONE, "escapechar": "\\"})
+        reader = csv.reader(io.StringIO(text), **reader_kwargs)
+        rows = list(reader)
+        if len(rows) > 1 and len(rows[0]) > 1 and any(h.strip() for h in rows[0]):
+            return rows
+        return None
     
     for encoding in encodings:
         try:
             text = csv_data.decode(encoding)
             text = text.lstrip('\ufeff')  # Remove BOM
-            
-            # Try with different delimiters
-            for delimiter in [',', ';', '\t']:
+
+            sample = text[:4096]
+            sniffer_delimiter = None
+            try:
+                sniffer_delimiter = csv.Sniffer().sniff(sample, delimiters=[',', ';', '\t']).delimiter
+            except Exception:
+                sniffer_delimiter = None
+
+            parse_order = []
+            if sniffer_delimiter:
+                parse_order.append((sniffer_delimiter, False))
+            parse_order.extend([
+                (',', False),
+                (';', False),
+                ('\t', False),
+                (',', True),
+                (';', True),
+                ('\t', True),
+            ])
+
+            seen_strategies = set()
+            for delimiter, quote_none in parse_order:
+                strategy_key = (delimiter, quote_none)
+                if strategy_key in seen_strategies:
+                    continue
+                seen_strategies.add(strategy_key)
                 try:
-                    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
-                    rows = list(reader)
-                    
-                    # Validate: at least 2 rows with non-empty headers
-                    if len(rows) > 1 and any(h.strip() for h in rows[0]):
-                        return rows
+                    rows = try_parse(text, delimiter, quote_none)
+                    if rows:
+                        candidates.append(rows)
                 except Exception:
                     continue
         except Exception:
             continue
     
-    raise ValueError(f"Could not parse CSV with any encoding/delimiter combination")
+    if candidates:
+        # Prefer the parse with the widest header, which is usually the correct delimiter.
+        candidates.sort(key=lambda candidate: len(candidate[0]), reverse=True)
+        return candidates[0]
+
+    raise ValueError("Could not parse CSV with any encoding/delimiter combination")
 
 
 def standardize_field_name(header: str, field_map: Dict[str, str]) -> str:
     """Standardize field name using field map"""
-    return field_map.get(header.strip(), header.strip().replace(' ', '_'))
+    normalized_header = header.strip().strip('"').strip("'")
+    return field_map.get(normalized_header, normalized_header.replace(' ', '_'))
 
 
 def handle_empty_values(value: Any, is_timestamp: bool, is_integer: bool) -> Any:
@@ -466,10 +519,27 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
         ndjson_content = '\n'.join(ndjson_lines)
         
         # Load to run-scoped staging table to avoid concurrent run collisions.
+        # Enforce schema types to stop autodetect from drifting timestamp fields to STRING.
+        schema_type_map = {col: "STRING" for col in config['all_columns']}
+        for ts_col in config['timestamp_fields']:
+            schema_type_map[ts_col] = "TIMESTAMP"
+        for int_col in config['integer_fields']:
+            schema_type_map[int_col] = "INT64"
+
+        schema_fields = [
+            bigquery.SchemaField(
+                name=col,
+                field_type=schema_type_map.get(col, "STRING"),
+                mode="NULLABLE",
+            )
+            for col in config['all_columns']
+        ]
+
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
             write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-            autodetect=True
+            autodetect=False,
+            schema=schema_fields,
         )
         
         load_job = bq_client.load_table_from_file(
@@ -509,15 +579,65 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
             logger.warning(f"Warning: {len(missing)} staging columns not in target: {', '.join(missing)}")
             logger.info(f"Will merge {len(merge_columns)} columns that exist in both tables.")
         
-        # Build merge query with dynamic columns from staging
+        duplicate_check_query = f"""
+        SELECT
+            COUNT(*) AS total_rows,
+            COUNT(DISTINCT {primary_key}) AS distinct_keys
+        FROM `{staging_table_id}`
+        WHERE {primary_key} IS NOT NULL
+        """
+        duplicate_check_job = bq_client.query(duplicate_check_query, job_config=bigquery.QueryJobConfig(use_legacy_sql=False))
+        duplicate_check_row = next(iter(duplicate_check_job.result()), None)
+        if duplicate_check_row:
+            total_rows = int(duplicate_check_row.total_rows or 0)
+            distinct_keys = int(duplicate_check_row.distinct_keys or 0)
+            duplicate_rows = max(total_rows - distinct_keys, 0)
+            if duplicate_rows > 0:
+                logger.warning(
+                    "Detected %s duplicate source row(s) on primary key %s in %s. Applying pre-merge deduplication.",
+                    duplicate_rows,
+                    primary_key,
+                    config['name'],
+                )
+
+        dedupe_order_col = next((c for c in config['timestamp_fields'] if c in merge_columns), None)
+        dedupe_order_expr = f"H.{dedupe_order_col} DESC" if dedupe_order_col else f"H.{primary_key}"
+
+        deduped_source_query = f"""
+        SELECT * EXCEPT(_rn)
+        FROM (
+            SELECT
+                H.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY H.{primary_key}
+                    ORDER BY {dedupe_order_expr}
+                ) AS _rn
+            FROM `{staging_table_id}` H
+            WHERE H.{primary_key} IS NOT NULL
+        )
+        WHERE _rn = 1
+        """
+
+        # Build merge query with dynamic columns from staging.
+        # Staging types are autodetected from NDJSON and can occasionally drift
+        # to STRING for date/time fields; cast defensively at merge time.
+        def source_expr(col: str) -> str:
+            if col in config['timestamp_fields']:
+                return f"SAFE_CAST(H.{col} AS TIMESTAMP)"
+            if col in config['integer_fields']:
+                return f"SAFE_CAST(H.{col} AS INT64)"
+            return f"H.{col}"
+
         update_cols = [col for col in merge_columns if col != primary_key]
-        update_set = ','.join([f'T.{col} = H.{col}' for col in update_cols])
+        update_set = ','.join([f'T.{col} = {source_expr(col)}' for col in update_cols])
         insert_cols = ','.join(merge_columns)
-        insert_vals = ','.join([f'H.{col}' for col in merge_columns])
+        insert_vals = ','.join([source_expr(col) for col in merge_columns])
         
         merge_query = f"""
         MERGE `{target_table_id}` T
-        USING `{staging_table_id}` H
+        USING (
+            {deduped_source_query}
+        ) H
         ON T.{primary_key} = H.{primary_key}
         WHEN MATCHED THEN
             UPDATE SET {update_set}
@@ -578,7 +698,9 @@ def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, win
         if (status in ('SUCCESS', 'ERROR')) and _script_start_time:
             duration_seconds = (datetime.utcnow() - _script_start_time).total_seconds()
 
-        # Build MERGE query matching GAS script exactly
+        context_json = json.dumps(context_obj) if context_obj is not None else None
+
+        # Build MERGE query matching GAS script behavior while preserving optional context payload.
         merge_query = f"""
         MERGE `{PROJECT_ID}.{DATASET_ID}.{PIPELINE_RUNS_TABLE}` T
         USING (
@@ -593,7 +715,7 @@ def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, win
                 @status AS Status,
                 @err AS ErrorCode,
                 @duration AS DurationSeconds,
-                CAST(NULL AS JSON) AS Context
+                SAFE.PARSE_JSON(@ctx) AS Context
         ) S
         ON T.PipelineName = S.PipelineName AND T.RunID = S.RunID
         WHEN MATCHED THEN UPDATE SET
@@ -623,6 +745,7 @@ def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, win
                 bigquery.ScalarQueryParameter("status", "STRING", status),
                 bigquery.ScalarQueryParameter("err", "STRING", error_code),
                 bigquery.ScalarQueryParameter("duration", "FLOAT64", duration_seconds),
+                bigquery.ScalarQueryParameter("ctx", "STRING", context_json),
             ]
         )
 
@@ -670,19 +793,69 @@ def process_bq_hdwl_email(cloud_event):
     try:
         # Decode Pub/Sub message
         pubsub_message = base64.b64decode(cloud_event.data["message"]["data"]).decode()
-        message_data = json.loads(pubsub_message)
+        try:
+            message_data = json.loads(pubsub_message)
+        except json.JSONDecodeError:
+            # Some manual publishers emit single-quoted or otherwise malformed dict payloads.
+            try:
+                parsed = ast.literal_eval(pubsub_message)
+                if not isinstance(parsed, dict):
+                    raise ValueError("Decoded Pub/Sub payload is not an object")
+                message_data = parsed
+            except Exception:
+                # Last-resort compatibility: extract messageId token from loosely formatted payloads.
+                msg_id_match = re.search(r"messageId\s*[:=]\s*['\"]?([A-Za-z0-9]+)", pubsub_message)
+                if not msg_id_match:
+                    raise ValueError(f"Unable to parse Pub/Sub payload: {pubsub_message[:200]}")
+                message_data = {"messageId": msg_id_match.group(1)}
         
         message_id = message_data.get('messageId')
+        if not message_id or str(message_id).upper() == 'PLACEHOLDER':
+            skip_message = f"Skipping run due to invalid messageId: {message_id}"
+            logger.warning(skip_message)
+            log_pipeline_run(
+                _current_run_id,
+                "SUCCESS",
+                "WARNING",
+                skip_message,
+                None,
+                None,
+                0,
+                None,
+                {"messageId": message_id, "skipped": True},
+            )
+            return
+
         logger.info(f"Processing email message: {message_id}")
         
         service = get_gmail_service()
         total_rows_merged = 0
-        success_count = 0
         failed_attachments = []
         unmatched_csv_attachments = []
+        matched_config_names = set()
+        expected_config_names = {cfg['name'] for cfg in CSV_CONFIGURATIONS}
+        rows_by_config = {cfg['name']: 0 for cfg in CSV_CONFIGURATIONS}
         
         # Get message to find attachments
-        message = service.users().messages().get(userId='me', id=message_id, format='full').execute()
+        try:
+            message = service.users().messages().get(userId='me', id=message_id, format='full').execute()
+        except HttpError as gmail_error:
+            if 'Invalid id value' in str(gmail_error):
+                skip_message = f"Skipping run due to Gmail invalid messageId: {message_id}"
+                logger.warning(skip_message)
+                log_pipeline_run(
+                    _current_run_id,
+                    "SUCCESS",
+                    "WARNING",
+                    skip_message,
+                    None,
+                    None,
+                    0,
+                    None,
+                    {"messageId": message_id, "skipped": True, "reason": "invalidMessageId"},
+                )
+                return
+            raise
         logger.info(f"Message retrieved. Payload parts count: {len(message['payload'].get('parts', []))}")
         
         # Process each CSV attachment
@@ -698,12 +871,13 @@ def process_bq_hdwl_email(cloud_event):
                 for config in CSV_CONFIGURATIONS:
                     if filename.startswith(config['filename_prefix']):
                         matched_config = True
+                        matched_config_names.add(config['name'])
                         logger.info(f"Matched config: {config['name']}")
                         success, rows = process_csv_attachment(service, message_id, part['filename'], config)
                         logger.info(f"CSV processing result: success={success}, rows={rows}")
                         if success:
                             total_rows_merged += rows
-                            success_count += 1
+                            rows_by_config[config['name']] += rows
                         else:
                             failed_attachments.append(filename)
                         break
@@ -712,7 +886,14 @@ def process_bq_hdwl_email(cloud_event):
                     unmatched_csv_attachments.append(filename)
         
         if not csv_found:
-            logger.info("No CSV attachments found in message")
+            raise RuntimeError("No CSV attachments found in message")
+
+        missing_expected_configs = sorted(expected_config_names - matched_config_names)
+        if missing_expected_configs:
+            raise RuntimeError(
+                "Missing expected CSV attachment(s): "
+                f"{missing_expected_configs}. Matched={sorted(matched_config_names)}"
+            )
 
         if failed_attachments or unmatched_csv_attachments:
             raise RuntimeError(
@@ -722,11 +903,48 @@ def process_bq_hdwl_email(cloud_event):
 
         # Manage labels: remove 'pubsub', add 'ArchivedReports'
         manage_gmail_labels(service, message_id, 'pubsub', 'ArchivedReports')
-        
-        log_pipeline_run(_current_run_id, "SUCCESS", "INFO", f"Pipeline finished", None, None, total_rows_merged, None, None)
+
+        success_message = (
+            "Pipeline finished. "
+            f"RowsMergedTotal={total_rows_merged}; "
+            f"RowsByTable={rows_by_config}; "
+            f"MatchedConfigs={sorted(matched_config_names)}"
+        )
+        log_pipeline_run(
+            _current_run_id,
+            "SUCCESS",
+            "INFO",
+            success_message,
+            None,
+            None,
+            total_rows_merged,
+            None,
+            {
+                "messageId": message_id,
+                "rowsByTable": rows_by_config,
+                "matchedConfigs": sorted(matched_config_names),
+                "failedAttachments": failed_attachments,
+                "unmatchedCsvAttachments": unmatched_csv_attachments,
+            },
+        )
         logger.info(f"Pipeline run {_current_run_id} completed successfully")
         
     except Exception as e:
         logger.error(f"Pipeline error: {e}")
-        log_pipeline_run(_current_run_id, "ERROR", "ERROR", str(e), None, None, None, None, None)
+        log_pipeline_run(
+            _current_run_id,
+            "ERROR",
+            "ERROR",
+            str(e),
+            None,
+            None,
+            None,
+            None,
+            {
+                "failedAttachments": failed_attachments if 'failed_attachments' in locals() else [],
+                "unmatchedCsvAttachments": unmatched_csv_attachments if 'unmatched_csv_attachments' in locals() else [],
+                "matchedConfigs": sorted(matched_config_names) if 'matched_config_names' in locals() else [],
+                "rowsByTable": rows_by_config if 'rows_by_config' in locals() else {},
+            },
+        )
         raise

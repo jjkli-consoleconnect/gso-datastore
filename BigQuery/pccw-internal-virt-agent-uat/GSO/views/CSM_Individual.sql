@@ -4,6 +4,7 @@ WITH CreationTable AS (
     CAST(Assignee AS STRING) AS FullName, 
     CAST(Status AS STRING) AS Status,
     CAST(T AS STRING) AS Type,
+    Component,
     CAST(Ticket_Key AS STRING) AS CreatedCount,
     CAST(NULL AS STRING) AS ResolvedCount
   FROM 
@@ -17,6 +18,7 @@ ClosureTable AS (
     CAST(Assignee AS STRING) AS FullName, 
     CAST(Status AS STRING) AS Status,
     CAST(T AS STRING) AS Type,
+    Component,
     CAST(NULL AS STRING) AS CreatedCount,
     CAST(Ticket_Key AS STRING) AS ResolvedCount
   FROM 
@@ -29,6 +31,7 @@ SELECT
   FullName, 
   Status,
   Type,
+  Component,
   CreatedCount,
   ResolvedCount
 FROM (
