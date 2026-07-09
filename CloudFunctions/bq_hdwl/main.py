@@ -440,6 +440,66 @@ def robust_parse_csv(csv_data: bytes) -> List[List[str]]:
     raise ValueError("Could not parse CSV with any encoding/delimiter combination")
 
 
+def detect_known_non_data_payload(csv_data: bytes) -> Optional[str]:
+    """Detect known Remedy outage/maintenance payloads mislabeled as CSV attachments."""
+    try:
+        preview_text = csv_data.decode("utf-8", errors="ignore").strip()
+    except Exception:
+        return None
+
+    if not preview_text:
+        return None
+
+    preview_lower = preview_text.lower()
+    maintenance_terms = [
+        "maintenance",
+        "under maintenance",
+        "service unavailable",
+        "temporarily unavailable",
+    ]
+    server_error_terms = [
+        "internal server error",
+        "server error",
+    ]
+
+    try:
+        payload = json.loads(preview_text)
+        if isinstance(payload, dict):
+            status_code = payload.get("statusCode")
+            status_code_int = None
+            try:
+                status_code_int = int(status_code) if status_code is not None else None
+            except Exception:
+                status_code_int = None
+
+            combined_text = " ".join(
+                [
+                    str(payload.get("error", "")),
+                    str(payload.get("message", "")),
+                ]
+            ).lower()
+
+            if status_code_int is not None and status_code_int >= 500:
+                return f"upstream_http_{status_code_int}"
+
+            if any(term in combined_text for term in maintenance_terms):
+                return "upstream_maintenance_payload"
+
+            if any(term in combined_text for term in server_error_terms):
+                return "upstream_server_error_payload"
+    except Exception:
+        # Non-JSON payloads can still contain recognizable outage text.
+        pass
+
+    if any(term in preview_lower for term in maintenance_terms):
+        return "upstream_maintenance_payload"
+
+    if any(term in preview_lower for term in server_error_terms):
+        return "upstream_server_error_payload"
+
+    return None
+
+
 def standardize_field_name(header: str, field_map: Dict[str, str]) -> str:
     """Standardize field name using field map"""
     normalized_header = header.strip().strip('"').strip("'")
@@ -482,7 +542,7 @@ def handle_empty_values(value: Any, is_timestamp: bool, is_integer: bool) -> Any
     return value_str
 
 
-def process_csv_attachment(service, message_id: str, attachment_filename: str, config: Dict[str, Any]) -> Tuple[bool, int]:
+def process_csv_attachment(service, message_id: str, attachment_filename: str, config: Dict[str, Any]) -> Tuple[bool, int, Optional[str]]:
     """Process a single CSV attachment"""
     logger.info(f"Processing attachment: {attachment_filename} for config: {config['name']}")
     
@@ -490,7 +550,16 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
     csv_data = get_message_attachment(service, message_id, attachment_filename)
     if not csv_data:
         logger.warning(f"Could not retrieve attachment {attachment_filename}")
-        return False, 0
+        return False, 0, None
+
+    non_data_reason = detect_known_non_data_payload(csv_data)
+    if non_data_reason:
+        logger.warning(
+            "Skipping attachment %s due to known non-data payload (%s)",
+            attachment_filename,
+            non_data_reason,
+        )
+        return True, 0, non_data_reason
     
     bq_client = get_bq_client()
     staging_table_id = build_run_scoped_staging_table_id(config, message_id)
@@ -501,7 +570,7 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
         
         if len(rows) <= 1:
             logger.info(f"CSV has no data rows: {attachment_filename}")
-            return False, 0
+            return False, 0, None
         
         # Convert to NDJSON
         headers = [standardize_field_name(h, config['field_map']) for h in rows[0]]
@@ -628,6 +697,31 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
                 return f"SAFE_CAST(H.{col} AS INT64)"
             return f"H.{col}"
 
+        # Prevent stale snapshots from overwriting newer target rows.
+        freshness_candidates = [
+            "LastModifiedDate",
+            "Last_Modified_Date",
+            "Submit_Date",
+            "WorkLog_Submit_Date",
+        ]
+        freshness_col = next((c for c in freshness_candidates if c in merge_columns and c in target_columns), None)
+        update_match_condition = "TRUE"
+        if freshness_col:
+            update_match_condition = (
+                f"(H.{freshness_col} IS NOT NULL AND "
+                f"(T.{freshness_col} IS NULL OR H.{freshness_col} >= T.{freshness_col}))"
+            )
+            logger.info(
+                "Applying recency guard on %s to avoid stale overwrite in %s.",
+                freshness_col,
+                config['name'],
+            )
+        else:
+            logger.warning(
+                "No freshness column found for %s. Falling back to unconditional updates.",
+                config['name'],
+            )
+
         update_cols = [col for col in merge_columns if col != primary_key]
         update_set = ','.join([f'T.{col} = {source_expr(col)}' for col in update_cols])
         insert_cols = ','.join(merge_columns)
@@ -639,7 +733,7 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
             {deduped_source_query}
         ) H
         ON T.{primary_key} = H.{primary_key}
-        WHEN MATCHED THEN
+        WHEN MATCHED AND {update_match_condition} THEN
             UPDATE SET {update_set}
         WHEN NOT MATCHED THEN
             INSERT ({insert_cols}) VALUES ({insert_vals})
@@ -676,11 +770,11 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
         rows_affected = merge_job.num_dml_affected_rows or 0
         logger.info(f"Merged data into {target_table_id}. Rows affected: {rows_affected}")
         
-        return True, int(rows_affected)
+        return True, int(rows_affected), None
         
     except Exception as e:
         logger.error(f"Error processing CSV {attachment_filename}: {e}")
-        return False, 0
+        return False, 0, None
     finally:
         try:
             bq_client.delete_table(staging_table_id, not_found_ok=True)
@@ -832,6 +926,7 @@ def process_bq_hdwl_email(cloud_event):
         total_rows_merged = 0
         failed_attachments = []
         unmatched_csv_attachments = []
+        skipped_attachments = []
         matched_config_names = set()
         expected_config_names = {cfg['name'] for cfg in CSV_CONFIGURATIONS}
         rows_by_config = {cfg['name']: 0 for cfg in CSV_CONFIGURATIONS}
@@ -873,11 +968,13 @@ def process_bq_hdwl_email(cloud_event):
                         matched_config = True
                         matched_config_names.add(config['name'])
                         logger.info(f"Matched config: {config['name']}")
-                        success, rows = process_csv_attachment(service, message_id, part['filename'], config)
-                        logger.info(f"CSV processing result: success={success}, rows={rows}")
+                        success, rows, skip_reason = process_csv_attachment(service, message_id, part['filename'], config)
+                        logger.info(f"CSV processing result: success={success}, rows={rows}, skip_reason={skip_reason}")
                         if success:
                             total_rows_merged += rows
                             rows_by_config[config['name']] += rows
+                            if skip_reason:
+                                skipped_attachments.append({"filename": filename, "reason": skip_reason})
                         else:
                             failed_attachments.append(filename)
                         break
@@ -908,12 +1005,14 @@ def process_bq_hdwl_email(cloud_event):
             "Pipeline finished. "
             f"RowsMergedTotal={total_rows_merged}; "
             f"RowsByTable={rows_by_config}; "
-            f"MatchedConfigs={sorted(matched_config_names)}"
+            f"MatchedConfigs={sorted(matched_config_names)}; "
+            f"SkippedAttachments={len(skipped_attachments)}"
         )
+        success_log_level = "WARNING" if skipped_attachments else "INFO"
         log_pipeline_run(
             _current_run_id,
             "SUCCESS",
-            "INFO",
+            success_log_level,
             success_message,
             None,
             None,
@@ -925,6 +1024,7 @@ def process_bq_hdwl_email(cloud_event):
                 "matchedConfigs": sorted(matched_config_names),
                 "failedAttachments": failed_attachments,
                 "unmatchedCsvAttachments": unmatched_csv_attachments,
+                "skippedAttachments": skipped_attachments,
             },
         )
         logger.info(f"Pipeline run {_current_run_id} completed successfully")
@@ -943,6 +1043,7 @@ def process_bq_hdwl_email(cloud_event):
             {
                 "failedAttachments": failed_attachments if 'failed_attachments' in locals() else [],
                 "unmatchedCsvAttachments": unmatched_csv_attachments if 'unmatched_csv_attachments' in locals() else [],
+                "skippedAttachments": skipped_attachments if 'skipped_attachments' in locals() else [],
                 "matchedConfigs": sorted(matched_config_names) if 'matched_config_names' in locals() else [],
                 "rowsByTable": rows_by_config if 'rows_by_config' in locals() else {},
             },
