@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 
 import functions_framework
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import NotFound, BadRequest
 from google.oauth2.credentials import Credentials
 from google.cloud import secretmanager, pubsub_v1, bigquery
 from googleapiclient.discovery import build
@@ -462,6 +462,12 @@ def detect_known_non_data_payload(csv_data: bytes) -> Optional[str]:
         "server error",
     ]
 
+    # Guard against false positives: valid exports are tabular (header + rows).
+    # Non-data maintenance payloads are expected to be single-row bodies.
+    lines = [line for line in preview_text.splitlines() if line.strip()]
+    if len(lines) > 1:
+        return None
+
     try:
         payload = json.loads(preview_text)
         if isinstance(payload, dict):
@@ -491,11 +497,13 @@ def detect_known_non_data_payload(csv_data: bytes) -> Optional[str]:
         # Non-JSON payloads can still contain recognizable outage text.
         pass
 
-    if any(term in preview_lower for term in maintenance_terms):
-        return "upstream_maintenance_payload"
+    # For plain-text single-row bodies, classify known outage phrases.
+    if len(lines) == 1:
+        if any(term in preview_lower for term in maintenance_terms):
+            return "upstream_maintenance_payload"
 
-    if any(term in preview_lower for term in server_error_terms):
-        return "upstream_server_error_payload"
+        if any(term in preview_lower for term in server_error_terms):
+            return "upstream_server_error_payload"
 
     return None
 
@@ -742,8 +750,37 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
         logger.info(f"Using {len(merge_columns)} columns from staging for merge into {target_table_id}.")
         
         query_config = bigquery.QueryJobConfig(use_legacy_sql=False)
-        merge_job = bq_client.query(merge_query, job_config=query_config)
-        merge_job.result()
+
+        merge_job = None
+        max_merge_attempts = 8
+        merge_delay_seconds = 1.0
+        for attempt in range(1, max_merge_attempts + 1):
+            try:
+                merge_job = bq_client.query(merge_query, job_config=query_config)
+                merge_job.result()
+                break
+            except BadRequest as merge_error:
+                err_text = str(merge_error).lower()
+                retryable_conflict = (
+                    "could not serialize access" in err_text
+                    or "concurrent update" in err_text
+                    or "aborted due to concurrent update" in err_text
+                    or "resources exceeded" in err_text
+                    or "too many dml statements outstanding" in err_text
+                )
+                if not retryable_conflict or attempt == max_merge_attempts:
+                    raise
+
+                logger.warning(
+                    "Retryable merge/write contention on %s (%s/%s): %s. Retrying in %.1fs.",
+                    config['name'],
+                    attempt,
+                    max_merge_attempts,
+                    merge_error,
+                    merge_delay_seconds,
+                )
+                time.sleep(merge_delay_seconds)
+                merge_delay_seconds = min(merge_delay_seconds * 2, 12.0)
 
         source_keys, target_keys, missing_keys, missing_sample = reconcile_merged_primary_keys(
             bq_client,
@@ -846,7 +883,7 @@ def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, win
         bq_client = get_bq_client()
         logger.info(f"Logging pipeline run: {status} - {message} (RunID: {run_id})")
 
-        max_attempts = 4
+        max_attempts = 8
         delay_seconds = 1.0
         for attempt in range(1, max_attempts + 1):
             try:
@@ -855,6 +892,15 @@ def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, win
                 logger.info(f"Pipeline run logged successfully. Job ID: {query_job.job_id}")
                 return
             except Exception as attempt_error:
+                err_text = str(attempt_error).lower()
+                retryable_logging_error = (
+                    "resources exceeded" in err_text
+                    or "too many dml statements outstanding" in err_text
+                    or "could not serialize access" in err_text
+                    or "concurrent update" in err_text
+                )
+                if not retryable_logging_error:
+                    raise
                 if attempt == max_attempts:
                     raise
                 logger.warning(
@@ -866,7 +912,7 @@ def log_pipeline_run(run_id: str, status: str, log_level: str, message: str, win
                     delay_seconds,
                 )
                 time.sleep(delay_seconds)
-                delay_seconds = min(delay_seconds * 2, 8.0)
+                delay_seconds = min(delay_seconds * 2, 12.0)
 
     except Exception as e:
         logger.warning(f"logPipelineRun failed: {e}")
@@ -1009,6 +1055,7 @@ def process_bq_hdwl_email(cloud_event):
             f"SkippedAttachments={len(skipped_attachments)}"
         )
         success_log_level = "WARNING" if skipped_attachments else "INFO"
+        success_error_code = "UPSTREAM_MAINTENANCE" if skipped_attachments else None
         log_pipeline_run(
             _current_run_id,
             "SUCCESS",
@@ -1017,7 +1064,7 @@ def process_bq_hdwl_email(cloud_event):
             None,
             None,
             total_rows_merged,
-            None,
+            success_error_code,
             {
                 "messageId": message_id,
                 "rowsByTable": rows_by_config,
@@ -1041,6 +1088,7 @@ def process_bq_hdwl_email(cloud_event):
             None,
             None,
             {
+                "messageId": message_id if 'message_id' in locals() else None,
                 "failedAttachments": failed_attachments if 'failed_attachments' in locals() else [],
                 "unmatchedCsvAttachments": unmatched_csv_attachments if 'unmatched_csv_attachments' in locals() else [],
                 "skippedAttachments": skipped_attachments if 'skipped_attachments' in locals() else [],

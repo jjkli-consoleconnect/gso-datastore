@@ -71,6 +71,11 @@ DEFAULT_PROJECTS = [
     'GS&O Strategic Initiatives'
 ]
 
+PROJECT_NAME_ALIASES = {
+    'ITOPS': ['IT Operations'],
+    'IPECR': ['IP Engineering Change Request Project'],
+}
+
 SERVICE_JIRA_ID = 'customfield_11350'
 ORIGIN_JIRA_ID = 'customfield_11351'
 ROOT_CAUSE_JIRA_ID = 'customfield_10775'
@@ -294,18 +299,31 @@ def _to_sql_string_list(values):
     return ", ".join(escaped)
 
 
+def get_project_name_variants(project):
+    variants = [project]
+    for alias in PROJECT_NAME_ALIASES.get(project, []):
+        if alias not in variants:
+            variants.append(alias)
+    return variants
+
+
+def get_project_filter_sql(project, column_name='Project'):
+    variants = get_project_name_variants(project)
+    return f"{column_name} IN ({_to_sql_string_list(variants)})"
+
+
 def get_known_project_keys(client, dataset_id, table_id, project):
     """Return known non-empty keys already present in BQ for a project."""
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
-            bigquery.ScalarQueryParameter('p', 'STRING', project),
+            bigquery.ArrayQueryParameter('project_names', 'STRING', get_project_name_variants(project)),
         ]
     )
     rows = client.query(
         f"""
         SELECT DISTINCT Key
         FROM `{dataset_id}.{table_id}`
-        WHERE Project = @p
+        WHERE Project IN UNNEST(@project_names)
           AND Key IS NOT NULL
           AND TRIM(Key) <> ''
         """,
@@ -1189,6 +1207,7 @@ def fetch_and_sync_jira_tickets_nightly():
             logging.info(f"Starting nightly window selection for project {proj}")
             project_current_keys = set()
             proj_clause = f'project = "{proj}"' if (' ' in proj or '&' in proj) else f'project = {proj}'
+            project_filter_sql = get_project_filter_sql(proj)
             
             while True:
                 if time_budget_reached():
@@ -1260,7 +1279,7 @@ def fetch_and_sync_jira_tickets_nightly():
                         USING (
                             SELECT * EXCEPT(rownum) FROM (
                                 SELECT *, ROW_NUMBER() OVER (PARTITION BY Key ORDER BY Updated DESC) AS rownum FROM `{dataset_id}.{temp_table_id_run}`
-                            ) WHERE rownum = 1 AND Project = '{proj}' AND Key IS NOT NULL AND TRIM(Key) <> ''
+                            ) WHERE rownum = 1 AND {project_filter_sql} AND Key IS NOT NULL AND TRIM(Key) <> ''
                         ) S
                         ON T.Key = S.Key
                         WHEN MATCHED THEN UPDATE SET
@@ -1422,7 +1441,7 @@ def fetch_and_sync_jira_tickets_nightly():
                                     SELECT * EXCEPT(rownum) FROM (
                                         SELECT *, ROW_NUMBER() OVER (PARTITION BY Key ORDER BY Updated DESC) AS rownum
                                         FROM `{dataset_id}.{temp_table_id_run}`
-                                    ) WHERE rownum = 1 AND Project = '{proj}' AND Key IS NOT NULL AND TRIM(Key) <> ''
+                                    ) WHERE rownum = 1 AND {project_filter_sql} AND Key IS NOT NULL AND TRIM(Key) <> ''
                                 ) S
                                 ON T.Key = S.Key
                                 WHEN MATCHED THEN UPDATE SET
