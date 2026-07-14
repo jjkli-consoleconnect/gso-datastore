@@ -240,19 +240,17 @@ enriched AS (
 			ELSE 'No Stop Date - Action Required'
 		END AS StopBillingStatus,
 		CASE
-			WHEN StopBillingDate IS NOT NULL AND StopBillingDate <= CURRENT_DATE() THEN 'No Action Required'
-			WHEN SRTerminationDate IS NOT NULL AND SRTerminationDate <= CURRENT_DATE() AND StopBillingDate IS NULL THEN 'Raise Stop Billing Request - SR Already Terminated'
-			WHEN SRTerminationDate IS NOT NULL AND SRTerminationDate <= CURRENT_DATE() AND StopBillingDate > CURRENT_DATE() AND DATE_DIFF(CURRENT_DATE(), SRTerminationDate, DAY) > 30 THEN 'Expedite Stop Billing - Overdue 30+ Days'
-			WHEN SRTerminationDate IS NOT NULL AND SRTerminationDate <= CURRENT_DATE() AND StopBillingDate > CURRENT_DATE() THEN 'Confirm Stop Billing Date - SR Terminated'
-			WHEN SRTerminationDate IS NOT NULL AND SRTerminationDate > CURRENT_DATE() AND StopBillingDate IS NULL THEN 'Schedule Stop Billing - Termination Approaching'
-			ELSE 'Review Required'
+			WHEN SRTerminationDate IS NULL AND StopBillingDate IS NULL THEN 'Manual Review Required'
+			WHEN StopBillingDate IS NULL THEN 'Vendor Billing Stop Date Missing'
+			WHEN SRTerminationDate IS NULL OR SRTerminationDate > CURRENT_DATE() THEN 'Monitor - Vendor Billing Stop Not Begun'
+			WHEN StopBillingDate > CURRENT_DATE() THEN 'Open Leakage - Vendor Billing Continues After Termination'
+			ELSE 'No Action Required'
 		END AS StopGapActionRequired,
 		CASE
-			WHEN StartBillingDate IS NULL OR StartBillingDate > CURRENT_DATE() THEN 'Monitor - Start Billing Not Begun'
-			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND OperationStartDate IS NULL THEN 'Raise Operation Start Date Validation'
-			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND OperationStartDate > CURRENT_DATE() AND DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) > 30 THEN 'Expedite Go-Live Update - Overdue 30+ Days'
-			WHEN StartBillingDate IS NOT NULL AND StartBillingDate <= CURRENT_DATE() AND OperationStartDate > CURRENT_DATE() THEN 'Confirm Planned Go-Live Date'
-			WHEN StartBillingDate IS NOT NULL AND OperationStartDate IS NOT NULL AND DATE_DIFF(OperationStartDate, StartBillingDate, DAY) > 3 THEN 'Investigate Early Billing - Cost Before Revenue'
+			WHEN StartBillingDate IS NULL AND OperationStartDate IS NULL THEN 'Manual Review Required'
+			WHEN StartBillingDate IS NULL THEN 'Vendor Billing Start Date Missing'
+			WHEN StartBillingDate > CURRENT_DATE() THEN 'Monitor - Vendor Billing Start Not Begun'
+			WHEN OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE() THEN 'Open Leakage - Vendor Billing Started Before Operation Start'
 			ELSE 'No Action Required'
 		END AS StartGapActionRequired
 	FROM base

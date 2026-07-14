@@ -24,6 +24,30 @@ Stop Gap scope:
 - `SRTerminationDate` within source snapshot year:
   - `SRTerminationDate BETWEEN DATE_TRUNC(source_snapshot_date, YEAR) AND DATE_SUB(DATE_ADD(DATE_TRUNC(source_snapshot_date, YEAR), INTERVAL 1 YEAR), INTERVAL 1 DAY)`
 
+## Start Gap Action Labels
+The `StartGapActionRequired` field is aligned to the dashboard legend and only surfaces open leakage that can still be acted on.
+
+Current labels:
+- `No Action Required`
+- `Monitor - Vendor Billing Start Not Begun`
+- `Vendor Billing Start Date Missing`
+- `Open Leakage - Vendor Billing Started Before Operation Start`
+- `Manual Review Required`
+
+`No Action Required` includes rows where the leakage is already in the past and no further action can be taken on that row.
+
+## Stop Gap Action Labels
+The `StopGapActionRequired` field follows the same simple pattern as Start Gap so the two legends are easy to compare.
+
+Current labels:
+- `No Action Required`
+- `Monitor - Vendor Billing Stop Not Begun`
+- `Vendor Billing Stop Date Missing`
+- `Open Leakage - Vendor Billing Continues After Termination`
+- `Manual Review Required`
+
+`No Action Required` includes rows where any leakage has already occurred and the row is no longer open to action.
+
 ## Why Mismatches Happen
 Most common cause is missing scorecard date-range filters:
 - Start card uses `StartBillingDate` year range

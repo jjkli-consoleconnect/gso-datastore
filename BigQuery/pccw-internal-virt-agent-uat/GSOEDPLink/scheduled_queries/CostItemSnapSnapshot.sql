@@ -1,6 +1,6 @@
 -- Snapshot query for Start Gap and Stop Gap scorecards.
 -- Designed for BigQuery Scheduled Query destination table: GSOEDPLink.CostItemSnapSnapshot
--- Schedule target: daily 08:00 HKT (deploy as 00:00 UTC).
+-- Schedule target: daily 15:15 HKT (07:15 UTC).
 
 WITH meta AS (
   SELECT
@@ -104,7 +104,7 @@ result_rows AS (
     (SELECT run_ts FROM meta) AS run_ts,
     (SELECT source_snapshot_date FROM meta) AS source_snapshot_date,
     DATE_TRUNC((SELECT source_snapshot_date FROM meta), MONTH) AS source_snapshot_month,
-    'v2_2026_06_12' AS filter_version,
+    'v3_2026_07_14' AS filter_version,
     'MRC' AS filter_itemcode,
     'Monthly|Half-yearly|Quarterly|Yearly' AS filter_billing_type,
     'NULL_OR_BLANK_OR_[Awaiting Confirmation,Awaiting Processing,Awaiting Verification,Cancel,Denied,Saved]' AS filter_ctstatus,
@@ -117,7 +117,24 @@ result_rows AS (
     COUNTIF(StartGapActionRequired <> 'No Action Required') AS action_required_non_no_count,
     ROUND(AVG(IF(OpenStartGapFlag = 1, CAST(StartGapDays AS FLOAT64), NULL)), 1) AS avg_gap_duration_days,
     ROUND(SUM(IF(OpenStartGapFlag = 1, MRC_USD, 0)), 1) AS mrc_usd,
-    ROUND(SUM(IF(OpenStartGapFlag = 1, EstimatedStartGapCostUSD, 0)), 1) AS estimated_gap_cost_usd
+    ROUND(
+      SUM(
+        IF(
+          OpenStartGapFlag = 1,
+          GREATEST(
+            IFNULL(
+              CASE
+                WHEN StartBillingDate IS NULL THEN NULL
+                WHEN OperationStartDate IS NULL OR OperationStartDate > (SELECT source_snapshot_date FROM meta) THEN DATE_DIFF((SELECT source_snapshot_date FROM meta), StartBillingDate, DAY)
+                ELSE DATE_DIFF(OperationStartDate, StartBillingDate, DAY)
+              END,
+            0),
+          0) * SAFE_DIVIDE(IFNULL(MRC_USD, 0), 30),
+          0
+        )
+      ),
+      1
+    ) AS estimated_gap_cost_usd
   FROM start_scope
 
   UNION ALL
@@ -127,7 +144,7 @@ result_rows AS (
     (SELECT run_ts FROM meta) AS run_ts,
     (SELECT source_snapshot_date FROM meta) AS source_snapshot_date,
     DATE_TRUNC((SELECT source_snapshot_date FROM meta), MONTH) AS source_snapshot_month,
-    'v2_2026_06_12' AS filter_version,
+    'v3_2026_07_14' AS filter_version,
     'MRC' AS filter_itemcode,
     'Monthly|Half-yearly|Quarterly|Yearly' AS filter_billing_type,
     'NULL_OR_BLANK_OR_[Awaiting Confirmation,Awaiting Processing,Awaiting Verification,Cancel,Denied,Saved]' AS filter_ctstatus,
