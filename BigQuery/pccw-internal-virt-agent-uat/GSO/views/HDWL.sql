@@ -345,6 +345,7 @@ SELECT
   h.Carrier,
   h.Customer_Name,
   h.GSMP_Circuit_ID,
+  ci.MRC_USD,
   h.TrueMTTR_mins,
   h.GCSC_1st_Customer_Update,
   h.GCSC_2nd_Customer_Update,
@@ -436,6 +437,19 @@ LEFT JOIN (
       THEN REGEXP_REPLACE(h.SRno, r'"', '')
     ELSE CONCAT('SR', REGEXP_REPLACE(h.SRno, r'"', ''))
   END = shr.SRNo
+
+LEFT JOIN (
+  SELECT
+    CONCAT('SR', CAST(SalesRecord AS STRING)) AS SalesRecordKey,
+    SUM(MRC_USD) AS MRC_USD
+  FROM `pccw-internal-virt-agent-uat.Mirror.all_cost_items_report`
+  GROUP BY SalesRecordKey
+) ci
+  ON CASE
+    WHEN REGEXP_REPLACE(h.SRno, r'"', '') LIKE 'SR%'
+      THEN REGEXP_REPLACE(h.SRno, r'"', '')
+    ELSE CONCAT('SR', REGEXP_REPLACE(h.SRno, r'"', ''))
+  END = ci.SalesRecordKey
 
 LEFT JOIN (
   SELECT

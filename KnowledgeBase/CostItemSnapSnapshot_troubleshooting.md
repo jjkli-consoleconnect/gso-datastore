@@ -25,19 +25,24 @@ Stop Gap scope:
   - `SRTerminationDate BETWEEN DATE_TRUNC(source_snapshot_date, YEAR) AND DATE_SUB(DATE_ADD(DATE_TRUNC(source_snapshot_date, YEAR), INTERVAL 1 YEAR), INTERVAL 1 DAY)`
 
 ## Start Gap Action Labels
-The `StartGapActionRequired` field is aligned to the dashboard legend and only surfaces open leakage that can still be acted on.
+The `StartGapActionRequired` field is aligned to the dashboard legend and uses the same labels shown on the report.
 
 Current labels:
 - `No Action Required`
-- `Monitor - Vendor Billing Start Not Begun`
-- `Vendor Billing Start Date Missing`
+- `Monitor - Start Billing Not Begun`
+- `Operation Start Date Missing`
 - `Open Leakage - Vendor Billing Started Before Operation Start`
+- `Vendor Billing Started After Operation Start`
 - `Manual Review Required`
 
-`No Action Required` includes rows where the leakage is already in the past and no further action can be taken on that row.
+`No Action Required` covers rows where the billing and operation dates are already aligned within the acceptable tolerance.
+
+`Open Leakage - Vendor Billing Started Before Operation Start` covers rows where vendor billing starts more than 3 days before operation start.
+
+`Vendor Billing Started After Operation Start` covers rows where vendor billing starts more than 3 days after operation start.
 
 ## Stop Gap Action Labels
-The `StopGapActionRequired` field follows the same simple pattern as Start Gap so the two legends are easy to compare.
+The `StopGapActionRequired` field is aligned to the dashboard legend and uses the same labels shown on the report.
 
 Current labels:
 - `No Action Required`
@@ -46,7 +51,9 @@ Current labels:
 - `Open Leakage - Vendor Billing Continues After Termination`
 - `Manual Review Required`
 
-`No Action Required` includes rows where any leakage has already occurred and the row is no longer open to action.
+`No Action Required` covers rows where vendor billing stop date and termination are already aligned, or the row is not currently considered an open stop-gap issue.
+
+`Open Leakage - Vendor Billing Continues After Termination` covers rows where termination has already happened but vendor billing has not stopped yet.
 
 ## Why Mismatches Happen
 Most common cause is missing scorecard date-range filters:

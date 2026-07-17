@@ -32,10 +32,10 @@ def main() -> None:
 
     query_value = dict(updated.params).get("query", "")
     print("UPDATED_NAME:", updated.name)
-    print("HAS_V3_MARKER:", "v3_2026_07_14" in query_value)
+    print("HAS_V4_MARKER:", "v4_2026_07_16" in query_value)
     print(
-        "HAS_SOURCE_SNAPSHOT_START_FORMULA:",
-        "OperationStartDate > (SELECT source_snapshot_date FROM meta)" in query_value,
+        "HAS_START_VIEW_ESTIMATED_COST_FORMULA:",
+        "ROUND(SUM(IF(OpenStartGapFlag = 1, EstimatedStartGapCostUSD, 0)), 1) AS estimated_gap_cost_usd" in query_value,
     )
 
 

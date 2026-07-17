@@ -74,6 +74,8 @@ WITH base AS (
 	FROM `edp-prod-lake-data-warehouse.Cost_Items.all_cost_items_report`
 	WHERE ItemCode = 'MRC'
 		AND MRC_USD > 0
+		AND IFNULL(CTStatus, '') != 'Confirmed'
+		AND IFNULL(CostType, '') != 'Direct Cost (Optify)'
 ),
 enriched AS (
 	SELECT
@@ -248,9 +250,10 @@ enriched AS (
 		END AS StopGapActionRequired,
 		CASE
 			WHEN StartBillingDate IS NULL AND OperationStartDate IS NULL THEN 'Manual Review Required'
-			WHEN StartBillingDate IS NULL THEN 'Vendor Billing Start Date Missing'
-			WHEN StartBillingDate > CURRENT_DATE() THEN 'Monitor - Vendor Billing Start Not Begun'
-			WHEN OperationStartDate IS NULL OR OperationStartDate > CURRENT_DATE() THEN 'Open Leakage - Vendor Billing Started Before Operation Start'
+			WHEN StartBillingDate IS NULL THEN 'Monitor - Start Billing Not Begun'
+			WHEN StartBillingDate > CURRENT_DATE() THEN 'Monitor - Start Billing Not Begun'
+			WHEN OperationStartDate IS NULL THEN 'Operation Start Date Missing'
+			WHEN DATE_DIFF(OperationStartDate, StartBillingDate, DAY) > 3 THEN 'Open Leakage - Vendor Billing Started Before Operation Start'
 			ELSE 'No Action Required'
 		END AS StartGapActionRequired
 	FROM base

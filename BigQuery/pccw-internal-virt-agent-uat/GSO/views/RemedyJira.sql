@@ -526,6 +526,7 @@ SELECT
   -- Product enrichment from SHRPeople (fallbacks)
   CASE WHEN hd.ProductDescription IS NULL THEN CONCAT(shr.`Product ID`, ' ', shr.`ProductDescription`) ELSE hd.ProductDescription END AS ProductID,
   CASE WHEN hd.Product_Family IS NULL THEN shr.`Product Family` ELSE hd.Product_Family END AS Product_Family,
+  ci.MRC_USD,
 
   -- Latest AI enrichment fields
   ai.AIFirstResponse,
@@ -577,6 +578,18 @@ FULL OUTER JOIN (
   ON hd.IncidentKey_norm = j.IncidentKey_norm
 LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON COALESCE(j.SRKey, hd.SRKey) = shr.SRNo
+LEFT JOIN (
+  SELECT
+    CONCAT('SR', CAST(SalesRecord AS STRING)) AS SalesRecordKey,
+    SUM(MRC_USD) AS MRC_USD
+  FROM `pccw-internal-virt-agent-uat.Mirror.all_cost_items_report`
+  GROUP BY SalesRecordKey
+) AS ci
+  ON CASE
+    WHEN REGEXP_REPLACE(COALESCE(hd.SRno, j.SRKey), r'"', '') LIKE 'SR%'
+      THEN REGEXP_REPLACE(COALESCE(hd.SRno, j.SRKey), r'"', '')
+    ELSE CONCAT('SR', REGEXP_REPLACE(COALESCE(hd.SRno, j.SRKey), r'"', ''))
+  END = ci.SalesRecordKey
 LEFT JOIN LatestAI AS ai
   ON ai.Incident_Number = COALESCE(hd.Incident_Number, j.RemedyTicketNumber_flat)
 LEFT JOIN (
