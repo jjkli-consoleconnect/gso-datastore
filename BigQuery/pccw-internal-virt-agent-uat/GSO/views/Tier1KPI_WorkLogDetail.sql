@@ -11,6 +11,8 @@ SELECT
   h.`1st_Response_PassFail` AS FRT_PassFail,
   h.`2nd_Response_Minutes` AS SRT_Minutes,
   h.`2nd_Response_PassFail` AS SRT_PassFail,
+  h.`3rd_Response_Minutes` AS TRT_Minutes,
+  h.`3rd_Response_PassFail` AS TRT_PassFail,
   h.TrueMTTR_mins AS MTTR_Minutes,
   CASE
     WHEN h.CaseType = 'Incident'

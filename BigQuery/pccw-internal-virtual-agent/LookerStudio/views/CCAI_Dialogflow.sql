@@ -364,11 +364,29 @@ SELECT
   ufu.first_use_source,
   DATE(ufu.first_use_timestamp) AS first_use_date,
   CASE
-    WHEN DATE(ufu.first_use_timestamp) = DATE(COALESCE(b.conversationStartTime, b.requisitionStartTime)) THEN TRUE
+    WHEN b.slack_user_id IS NOT NULL
+      AND ROW_NUMBER() OVER (
+        PARTITION BY b.slack_user_id
+        ORDER BY
+          COALESCE(b.conversationStartTime, b.requisitionStartTime),
+          b.requisitionStartTime,
+          b.conversation_id,
+          b.row_sequential_number
+      ) = 1
+    THEN TRUE
     ELSE FALSE
   END AS is_first_conversation_for_user,
   CASE
-    WHEN DATE(ufu.first_use_timestamp) = DATE(COALESCE(b.conversationStartTime, b.requisitionStartTime)) THEN 1
+    WHEN b.slack_user_id IS NOT NULL
+      AND ROW_NUMBER() OVER (
+        PARTITION BY b.slack_user_id
+        ORDER BY
+          COALESCE(b.conversationStartTime, b.requisitionStartTime),
+          b.requisitionStartTime,
+          b.conversation_id,
+          b.row_sequential_number
+      ) = 1
+    THEN 1
     ELSE 0
   END AS new_user_indicator,
     b.requisitionStartTime,

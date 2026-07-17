@@ -384,6 +384,19 @@ SELECT
     END
     ELSE 'No Response'
   END AS `2nd_Response_PassFail`,
+  CASE
+    WHEN h.GCSC_2nd_Customer_Update IS NOT NULL AND h.GCSC_3rd_Customer_Update IS NOT NULL
+    THEN TIMESTAMP_DIFF(h.GCSC_3rd_Customer_Update, h.GCSC_2nd_Customer_Update, MINUTE)
+    ELSE NULL
+  END AS `3rd_Response_Minutes`,
+  CASE
+    WHEN h.GCSC_2nd_Customer_Update IS NOT NULL AND h.GCSC_3rd_Customer_Update IS NOT NULL
+    THEN CASE
+      WHEN TIMESTAMP_DIFF(h.GCSC_3rd_Customer_Update, h.GCSC_2nd_Customer_Update, MINUTE) <= 90 THEN 'PASS'
+      ELSE 'FAIL'
+    END
+    ELSE 'No Response'
+  END AS `3rd_Response_PassFail`,
   h.LastModifiedDate as LastModifiedDateHD,
   
   -- WorkLogAllNOC fields
