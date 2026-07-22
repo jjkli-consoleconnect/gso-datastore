@@ -32,6 +32,7 @@ PROJECT_ID = "pccw-internal-virt-agent-uat"
 DATASET_ID = "Testing"
 TABLE_ID = "jira_to_helix_sync"
 COMMENT_TABLE_ID = "jira_to_helix_comment_sync"
+CLOSE_DUP_TABLE_ID = os.environ.get("JIRA_TO_HELIX_CLOSE_DUP_TABLE_ID", "jira_to_helix_close_dup_sync").strip()
 SLACK_EMAIL = "jjkli-consoleconnect-aaaat6e6tqjcdqmox62y2vcqfi@consoleconnect.org.slack.com"
 
 JIRA_TO_HELIX_JIRA_USER_EMAIL_SECRET = "jira-to-helix-jira-user-email"
@@ -75,6 +76,13 @@ JIRA_SP_SR_FIELD = "customfield_11510"        # SP # / SR #
 
 # Feature flags
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
+DUPLICATE_ON_CLOSE_ENABLED = os.environ.get("DUPLICATE_ON_CLOSE_ENABLED", "true").lower() == "true"
+ENABLE_HELIX_CLOSE_PATCH = os.environ.get("ENABLE_HELIX_CLOSE_PATCH", "true").lower() == "true"
+ENABLE_HELIX_BACKDATE_FIELDS = os.environ.get("ENABLE_HELIX_BACKDATE_FIELDS", "true").lower() == "true"
+
+
+CLOSE_DUP_PHASE_CREATE = "TICKET_CREATE"
+CLOSE_DUP_PHASE_CLOSE = "TICKET_CLOSE"
 
 
 # ===== SECRET MANAGEMENT =====
@@ -244,6 +252,67 @@ def create_helix_worklog(
         raise
 
 
+def patch_helix_ticket(
+    helix_id: str,
+    payload: Dict[str, Any],
+    token: str,
+    dry_run: bool = False,
+) -> bool:
+    """
+    PATCH an existing Helix ticket with provided payload.
+    """
+    host_name = get_secret(JIRA_TO_HELIX_HOST_NAME_SECRET)
+    if host_name:
+        host_name = host_name.strip()
+
+    verify_tls = True
+    if host_name:
+        if host_name.startswith("http://") or host_name.startswith("https://"):
+            parsed = urlparse(host_name)
+            host_value = parsed.netloc or parsed.path
+        else:
+            host_value = host_name
+        url = f"https://{host_value}/cs-helix-ticketing/internalHelix/troubleTicket/{helix_id}"
+        if host_value and all(part.isdigit() for part in host_value.split(".") if part):
+            verify_tls = False
+    else:
+        url = HELIX_API_BASE + f"troubleTicket/{helix_id}"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-System-Id": "jira",
+        "Content-Type": "application/json",
+        "Host": HELIX_HOST_HEADER,
+    }
+
+    if dry_run:
+        logger.info(f"[DRY-RUN] Would PATCH {url} with payload: {json.dumps(payload, indent=2)}")
+        return True
+
+    try:
+        resp = requests.patch(url, json=payload, headers=headers, timeout=30, verify=verify_tls)
+        if resp.status_code >= 400:
+            logger.error(
+                f"Helix PATCH failed status={resp.status_code} body={resp.text}"
+            )
+        resp.raise_for_status()
+        return True
+    except Exception as e:
+        logger.error(f"Helix PATCH failed for {helix_id}: {e}")
+        raise
+
+
+def close_helix_ticket(helix_id: str, token: str, dry_run: bool = False) -> bool:
+    """
+    Close a Helix trouble ticket by PATCH status.
+    """
+    payload = {
+        "@type": "troubleTicket",
+        "status": "CLOSED",
+    }
+    return patch_helix_ticket(helix_id, payload, token, dry_run=dry_run)
+
+
 # ===== JIRA API =====
 def get_jira_credentials() -> Tuple[str, str]:
     """
@@ -278,6 +347,37 @@ def get_jira_issue(jira_key: str, jira_url: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Jira fetch failed for {jira_key}: {e}")
         raise
+
+
+def get_jira_comments(jira_key: str, jira_url: str, page_size: int = 100) -> list[Dict[str, Any]]:
+    """
+    Fetch all Jira comments with pagination.
+    """
+    email, token = get_jira_credentials()
+    start_at = 0
+    comments: list[Dict[str, Any]] = []
+
+    while True:
+        url = f"{jira_url}/rest/api/3/issue/{jira_key}/comment"
+        params = {
+            "startAt": start_at,
+            "maxResults": page_size,
+            "orderBy": "created",
+        }
+        resp = requests.get(url, params=params, auth=(email, token), timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        page_values = data.get("comments", [])
+        if isinstance(page_values, list):
+            comments.extend(page_values)
+
+        total = int(data.get("total", len(comments)))
+        next_start = start_at + int(data.get("maxResults", page_size))
+        if next_start >= total or not page_values:
+            break
+        start_at = next_start
+
+    return comments
 
 
 def update_jira_issue_field(jira_key: str, field_ids: list[str], value: str, jira_url: str) -> bool:
@@ -526,6 +626,83 @@ def build_helix_worklog_note(comment_data: Dict[str, str]) -> Dict[str, Any]:
     }
 
 
+def build_helix_worklog_note_from_jira_comment(comment: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build Helix worklog payload from Jira issue comment.
+    """
+    author_name = "jira"
+    author = comment.get("author", {})
+    if isinstance(author, dict):
+        for key in ("displayName", "name", "emailAddress", "accountId"):
+            raw = author.get(key)
+            if isinstance(raw, str) and raw.strip():
+                author_name = raw.strip()
+                break
+
+    created_ts = normalize_jira_timestamp(str(comment.get("created", "")))
+    raw_updated = str(comment.get("updated", "")).strip()
+    updated_ts = normalize_jira_timestamp(raw_updated) if raw_updated else created_ts
+
+    body_text = flatten_jira_rich_text(comment.get("body"))
+    if not body_text:
+        body_text = "(Empty Jira comment)"
+
+    comment_id = str(comment.get("id", "")).strip() or "unknown"
+    note_text = (
+        "Jira comment sync\n"
+        f"Source comment ID: {comment_id}\n"
+        f"Author: {author_name}\n"
+        f"Created (Jira): {created_ts}\n"
+        f"Updated (Jira): {updated_ts}\n\n"
+        f"{body_text}"
+    )
+
+    return {
+        "id": HELIX_WORKLOG_TYPE,
+        "text": note_text,
+        "@type": "worklog",
+    }
+
+
+def build_close_dup_comment_phase_key(comment: Dict[str, Any]) -> str:
+    """
+    Build idempotency phase key for comment replay version.
+    """
+    comment_id = str(comment.get("id", "")).strip()
+    if not comment_id:
+        comment_id = "unknown"
+    raw_updated = str(comment.get("updated", "")).strip()
+    raw_created = str(comment.get("created", "")).strip()
+    stamp = normalize_jira_timestamp(raw_updated or raw_created)
+    return f"COMMENT_REPLAY:{comment_id}:{stamp}"
+
+
+def issue_is_closed(fields: Dict[str, Any]) -> bool:
+    """
+    Determine whether Jira issue is in a closed/done state.
+    """
+    if not isinstance(fields, dict):
+        return False
+
+    resolution_date = str(fields.get("resolutiondate", "")).strip()
+    if resolution_date:
+        return True
+
+    status = fields.get("status", {})
+    if isinstance(status, dict):
+        status_name = str(status.get("name", "")).strip().lower()
+        if status_name in {"closed", "done", "resolved"}:
+            return True
+
+        status_category = status.get("statusCategory", {})
+        if isinstance(status_category, dict):
+            category_key = str(status_category.get("key", "")).strip().lower()
+            if category_key == "done":
+                return True
+
+    return False
+
+
 def parse_loose_jira_webhook_payload(raw_payload: str) -> Optional[Dict[str, Any]]:
     """
     Best-effort parser for malformed Jira Automation payloads.
@@ -712,6 +889,41 @@ def map_jira_to_helix(
     return payload
 
 
+def map_jira_closed_issue_to_helix(
+    jira_issue: Dict[str, Any],
+    jira_key: str,
+    customer_id: str,
+    sr_no: str = "",
+) -> Dict[str, Any]:
+    """
+    Build Helix payload for close-triggered duplication flow.
+    """
+    payload = map_jira_to_helix(jira_issue, jira_key, customer_id, sr_no)
+    fields = jira_issue.get("fields", {})
+    created_raw = str(fields.get("created", "")).strip()
+    closed_raw = str(fields.get("resolutiondate", "")).strip()
+
+    created_ts = normalize_jira_timestamp(created_raw) if created_raw else ""
+    closed_ts = normalize_jira_timestamp(closed_raw) if closed_raw else ""
+
+    details = [
+        "",
+        "",
+        "[Jira Source Metadata]",
+        f"Jira Key: {jira_key}",
+    ]
+    if created_ts:
+        details.append(f"Jira Created: {created_ts}")
+    if closed_ts:
+        details.append(f"Jira Closed: {closed_ts}")
+
+    payload["description"] = (payload.get("description", "") + "\n".join(details)).strip()
+    if ENABLE_HELIX_BACKDATE_FIELDS and created_ts:
+        payload["creationDate"] = created_ts
+
+    return payload
+
+
 # ===== BIGQUERY IDEMPOTENCY =====
 def check_idempotency(jira_key: str) -> Optional[str]:
     """
@@ -862,6 +1074,241 @@ def record_comment_sync(
     except Exception as e:
         logger.error(f"Failed to record comment sync: {e}")
         return False
+
+
+def ensure_close_dup_sync_table() -> bool:
+    """
+    Ensure close-duplication idempotency table exists.
+    """
+    try:
+        client = bigquery.Client(project=PROJECT_ID)
+        table_ref = f"{PROJECT_ID}.{DATASET_ID}.{CLOSE_DUP_TABLE_ID}"
+        try:
+            client.get_table(table_ref)
+            return True
+        except Exception:
+            schema = [
+                bigquery.SchemaField("jira_key", "STRING", mode="REQUIRED"),
+                bigquery.SchemaField("helix_id", "STRING", mode="NULLABLE"),
+                bigquery.SchemaField("phase_key", "STRING", mode="REQUIRED"),
+                bigquery.SchemaField("sync_status", "STRING", mode="REQUIRED"),
+                bigquery.SchemaField("error_message", "STRING", mode="NULLABLE"),
+                bigquery.SchemaField("phase_meta", "STRING", mode="NULLABLE"),
+                bigquery.SchemaField("created_timestamp", "TIMESTAMP", mode="REQUIRED"),
+            ]
+            table = bigquery.Table(table_ref, schema=schema)
+            client.create_table(table)
+            logger.info(f"Created BigQuery table {table_ref}")
+            return True
+    except Exception as e:
+        logger.error(f"Failed ensuring close dup sync table: {e}")
+        return False
+
+
+def get_close_dup_phase_success(jira_key: str, phase_key: str) -> Optional[str]:
+    """
+    Return Helix ID for a successful phase if already recorded.
+    """
+    try:
+        client = bigquery.Client(project=PROJECT_ID)
+        query = f"""
+        SELECT helix_id
+        FROM `{PROJECT_ID}.{DATASET_ID}.{CLOSE_DUP_TABLE_ID}`
+        WHERE jira_key = @jira_key
+          AND phase_key = @phase_key
+          AND sync_status = 'success'
+        ORDER BY created_timestamp DESC
+        LIMIT 1
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("jira_key", "STRING", jira_key),
+                bigquery.ScalarQueryParameter("phase_key", "STRING", phase_key),
+            ]
+        )
+        results = client.query(query, job_config=job_config).result()
+        for row in results:
+            helix_id = row.get("helix_id")
+            if helix_id:
+                return str(helix_id)
+            return ""
+    except Exception as e:
+        logger.warning(f"Close dup phase check failed jira_key={jira_key} phase={phase_key}: {e}")
+    return None
+
+
+def record_close_dup_phase(
+    jira_key: str,
+    helix_id: Optional[str],
+    phase_key: str,
+    status: str,
+    error_msg: str = "",
+    phase_meta: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    Record close-dup workflow phase result.
+    """
+    try:
+        client = bigquery.Client(project=PROJECT_ID)
+        table_id = f"{PROJECT_ID}.{DATASET_ID}.{CLOSE_DUP_TABLE_ID}"
+        table = client.get_table(table_id)
+        rows = [
+            {
+                "jira_key": jira_key,
+                "helix_id": helix_id,
+                "phase_key": phase_key,
+                "sync_status": status,
+                "error_message": error_msg,
+                "phase_meta": json.dumps(phase_meta or {}, ensure_ascii=True),
+                "created_timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        ]
+        errors = client.insert_rows_json(table, rows)
+        if errors:
+            logger.error(f"BQ close dup insert errors: {errors}")
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"Failed to record close dup phase: {e}")
+        return False
+
+
+def process_closed_ticket_duplication(
+    correlation_id: str,
+    jira_key: str,
+    issue_data: Dict[str, Any],
+) -> Tuple[Dict[str, Any], int]:
+    """
+    Duplicate a closed Jira ticket into Helix:
+    create ticket, replay all comments as worklogs, then close Helix ticket.
+    """
+    if not ensure_close_dup_sync_table() and not DRY_RUN:
+        return {"status": "error", "message": "Close-dup sync table unavailable"}, 500
+
+    if isinstance(issue_data.get("fields"), dict) and issue_data.get("fields"):
+        jira_issue = issue_data
+    else:
+        jira_issue = get_jira_issue(jira_key, JIRA_SANDBOX_URL)
+
+    jira_fields = jira_issue.get("fields", {})
+    customer_id = extract_jira_customer_id(jira_fields)
+    sr_no = extract_jira_sr_no(jira_fields)
+    if not customer_id and DEFAULT_MSS_CUSTOMER_ID:
+        customer_id = DEFAULT_MSS_CUSTOMER_ID
+        logger.warning(
+            f"[{correlation_id}] Missing {JIRA_CUSTOMER_ID_FIELD}; "
+            f"falling back to default customer ID {DEFAULT_MSS_CUSTOMER_ID}"
+        )
+
+    if not customer_id:
+        return {
+            "status": "error",
+            "jira_key": jira_key,
+            "message": f"Missing Jira MSS customer ID field {JIRA_CUSTOMER_ID_FIELD}",
+        }, 400
+
+    created_phase_hit = get_close_dup_phase_success(jira_key, CLOSE_DUP_PHASE_CREATE)
+    helix_id = created_phase_hit if created_phase_hit is not None else ""
+
+    helix_token = get_helix_token()
+    if not helix_id:
+        helix_payload = map_jira_closed_issue_to_helix(jira_issue, jira_key, customer_id, sr_no)
+        logger.info(f"[{correlation_id}] Close-dup create payload: {json.dumps(helix_payload, indent=2)}")
+        helix_id = create_helix_ticket(helix_payload, helix_token, dry_run=DRY_RUN) or ""
+        if DRY_RUN and not helix_id:
+            helix_id = f"DRYRUN-{jira_key}"
+        if not helix_id:
+            err = "Helix ticket creation returned no ID"
+            if not DRY_RUN:
+                record_close_dup_phase(jira_key, None, CLOSE_DUP_PHASE_CREATE, "failed", err)
+            return {"status": "error", "jira_key": jira_key, "message": err}, 500
+
+        if not DRY_RUN:
+            record_close_dup_phase(jira_key, helix_id, CLOSE_DUP_PHASE_CREATE, "success")
+            update_jira_issue_field(
+                jira_key,
+                JIRA_REMEDY_TICKET_NUMBER_FIELDS,
+                helix_id,
+                JIRA_SANDBOX_URL,
+            )
+
+    jira_comments = get_jira_comments(jira_key, JIRA_SANDBOX_URL)
+    replayed = 0
+    skipped = 0
+    failed = 0
+
+    for comment in jira_comments:
+        phase_key = build_close_dup_comment_phase_key(comment)
+        if get_close_dup_phase_success(jira_key, phase_key) is not None:
+            skipped += 1
+            continue
+
+        note = build_helix_worklog_note_from_jira_comment(comment)
+        comment_id = str(comment.get("id", "")).strip()
+        try:
+            create_helix_worklog(helix_id, note, helix_token, dry_run=DRY_RUN)
+            replayed += 1
+            if not DRY_RUN:
+                record_close_dup_phase(
+                    jira_key,
+                    helix_id,
+                    phase_key,
+                    "success",
+                    phase_meta={"comment_id": comment_id},
+                )
+        except Exception as e:
+            failed += 1
+            if not DRY_RUN:
+                record_close_dup_phase(
+                    jira_key,
+                    helix_id,
+                    phase_key,
+                    "failed",
+                    str(e),
+                    phase_meta={"comment_id": comment_id},
+                )
+
+    if failed > 0:
+        return {
+            "status": "error",
+            "jira_key": jira_key,
+            "helix_id": helix_id,
+            "message": "One or more comments failed during replay",
+            "worklogs_replayed": replayed,
+            "worklogs_skipped": skipped,
+            "worklogs_failed": failed,
+            "correlation_id": correlation_id,
+        }, 500
+
+    close_phase_hit = get_close_dup_phase_success(jira_key, CLOSE_DUP_PHASE_CLOSE)
+    if close_phase_hit is None and ENABLE_HELIX_CLOSE_PATCH:
+        try:
+            close_helix_ticket(helix_id, helix_token, dry_run=DRY_RUN)
+            if not DRY_RUN:
+                record_close_dup_phase(jira_key, helix_id, CLOSE_DUP_PHASE_CLOSE, "success")
+        except Exception as e:
+            if not DRY_RUN:
+                record_close_dup_phase(jira_key, helix_id, CLOSE_DUP_PHASE_CLOSE, "failed", str(e))
+            return {
+                "status": "error",
+                "jira_key": jira_key,
+                "helix_id": helix_id,
+                "message": f"Failed to close Helix ticket: {e}",
+                "worklogs_replayed": replayed,
+                "worklogs_skipped": skipped,
+                "correlation_id": correlation_id,
+            }, 500
+
+    send_slack_email_alert(jira_key, helix_id, "success")
+    return {
+        "status": "success" if not DRY_RUN else "dry_run",
+        "jira_key": jira_key,
+        "helix_id": helix_id,
+        "worklogs_replayed": replayed,
+        "worklogs_skipped": skipped,
+        "closed_in_helix": ENABLE_HELIX_CLOSE_PATCH,
+        "correlation_id": correlation_id,
+    }, 200
 
 
 # ===== EMAIL ALERT =====
@@ -1077,6 +1524,19 @@ def jira_to_helix_create_uat(request):
                 "comment_event": comment_data.get("comment_event", "created"),
                 "correlation_id": correlation_id,
             }, 200
+
+        if DUPLICATE_ON_CLOSE_ENABLED:
+            issue_fields = issue_data.get("fields") if isinstance(issue_data, dict) else {}
+            if issue_is_closed(issue_fields):
+                jira_key = str(issue_key_hint or issue_data.get("key") or "").strip()
+                if not jira_key:
+                    jira_key = extract_jira_key_fallback(webhook_data, raw_payload)
+                if not jira_key:
+                    logger.error(f"[{correlation_id}] No Jira key in close webhook")
+                    return {"status": "error", "message": "Missing issue key"}, 400
+
+                logger.info(f"[{correlation_id}] Processing closed-ticket duplication for {jira_key}")
+                return process_closed_ticket_duplication(correlation_id, jira_key, issue_data)
 
         # Accept issue-created events for ticket creation flow.
         is_issue_created_event = (
