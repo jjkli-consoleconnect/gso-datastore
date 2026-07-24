@@ -17,6 +17,8 @@ name_filter AS (
     'Bautista Kevin Bryan',
     'Carl Jeffrey De Guzman',
     'Camille Quinto',
+    'Coleen Lara',
+    'Lara Coleen',
     'De Guzman Carl Jeffrey',
     'Evangelista John Darell',
     'Garcia Marvic',

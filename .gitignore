@@ -47,6 +47,13 @@ Archive/
 .env.local
 .env.*.local
 
+# Python virtual environments
+.venv/
+.venv*/
+venv/
+venv*/
+.cleanup_backup_venv-1_*/
+
 # Local BigQuerySync overrides
 BigQuerySync/bq-sync.config.local.json
 

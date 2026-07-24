@@ -33,6 +33,7 @@ DATASET_ID = "GSO"
 PIPELINE_RUNS_TABLE = "PipelineRuns"
 SCRIPT_NAME = "pubsub - HDWL"
 ERROR_NOTIFICATION_EMAIL = "jens-vertexai-aaaan3dj2p4fdro72c3fa2l3km@consoleconsole.org.slack.com"
+MIN_VALID_CSV_DATA_ROWS = 3
 
 # Global tracking for pipeline run timing
 _script_start_time = None
@@ -65,7 +66,8 @@ CSV_CONFIGURATIONS = [
             "Closed_Date", "Submit_Date", "Assignee", "Closed_By", "Submitter", "TrueMTTR_mins",
             "Cust_ID", "Carrier", "Customer_Name", "SRno", "LastResolvedDate", "ReportedDate",
             "RespondedDate", "FaultCauseDetail", "LastModifiedDate", "ReportedBy",
-            "Product_Family", "ProductDescription", "GSMP_Circuit_ID", "Urgency", "Priority"
+            "Product_Family", "ProductDescription", "GSMP_Circuit_ID", "Urgency", "Priority",
+            "RSMName"
         ],
         "field_map": {
             "IncidentNumber": "Incident_Number", "casetype": "CaseType", "Assigned Group": "Assigned_Group",
@@ -77,7 +79,7 @@ CSV_CONFIGURATIONS = [
             "Closed Date": "Closed_Date", "Submit Date": "Submit_Date", "ClosedBy": "Closed_By",
             "Cust ID": "Cust_ID", "CustomerName": "Customer_Name", "SRno": "SRno", "ReportedBy": "ReportedBy",
             "Product Family": "Product_Family", "ProductDescription": "ProductDescription",
-            "GSMP Circuit ID": "GSMP_Circuit_ID"
+            "GSMP Circuit ID": "GSMP_Circuit_ID", "RSM Name": "RSMName", "RSMName": "RSMName"
         },
         "timestamp_fields": [
             "GCSC_1st_Customer_Update", "GCSC_2nd_Customer_Update", "GCSC_3rd_Customer_Update",
@@ -514,6 +516,22 @@ def standardize_field_name(header: str, field_map: Dict[str, str]) -> str:
     return field_map.get(normalized_header, normalized_header.replace(' ', '_'))
 
 
+def normalize_rsm_name(value: Any) -> Any:
+    """Convert surname-first comma-delimited RSM values into display order."""
+    if value is None:
+        return None
+
+    cleaned = str(value).strip().strip('"').strip("'")
+    if not cleaned:
+        return None
+
+    parts = [part.strip() for part in cleaned.split(',') if part and part.strip()]
+    if len(parts) < 2:
+        return cleaned
+
+    return ' '.join(parts[1:] + [parts[0]])
+
+
 def handle_empty_values(value: Any, is_timestamp: bool, is_integer: bool) -> Any:
     """Handle empty values and type conversions"""
     if value is None or (isinstance(value, str) and not value.strip()):
@@ -576,9 +594,15 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
         # Parse CSV
         rows = robust_parse_csv(csv_data)
         
-        if len(rows) <= 1:
-            logger.info(f"CSV has no data rows: {attachment_filename}")
-            return False, 0, None
+        data_rows = max(len(rows) - 1, 0)
+        if data_rows < MIN_VALID_CSV_DATA_ROWS:
+            logger.warning(
+                "Skipping attachment %s due to insufficient data rows (%s < %s)",
+                attachment_filename,
+                data_rows,
+                MIN_VALID_CSV_DATA_ROWS,
+            )
+            return True, 0, "insufficient_csv_rows"
         
         # Convert to NDJSON
         headers = [standardize_field_name(h, config['field_map']) for h in rows[0]]
@@ -590,7 +614,10 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
                 value = row[i] if i < len(row) else None
                 is_ts = header in config['timestamp_fields']
                 is_int = header in config['integer_fields']
-                obj[header] = handle_empty_values(value, is_ts, is_int)
+                normalized_value = handle_empty_values(value, is_ts, is_int)
+                if header == "RSMName":
+                    normalized_value = normalize_rsm_name(normalized_value)
+                obj[header] = normalized_value
             ndjson_lines.append(json.dumps(obj))
         
         ndjson_content = '\n'.join(ndjson_lines)
@@ -810,6 +837,20 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
         return True, int(rows_affected), None
         
     except Exception as e:
+        error_text = str(e).lower()
+        non_retryable_reasons = {
+            "could not parse csv with any encoding/delimiter combination": "unparseable_csv_payload",
+        }
+        for marker, reason in non_retryable_reasons.items():
+            if marker in error_text:
+                logger.warning(
+                    "Skipping attachment %s due to non-retryable parse issue (%s): %s",
+                    attachment_filename,
+                    reason,
+                    e,
+                )
+                return True, 0, reason
+
         logger.error(f"Error processing CSV {attachment_filename}: {e}")
         return False, 0, None
     finally:
