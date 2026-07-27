@@ -39,11 +39,14 @@
     "**/.venv*": true
   },
   "terminal.integrated.profiles.windows": {
+    "PowerShell": {
+      "source": "PowerShell"
+    },
     "Command Prompt": {
       "path": "C:\\Windows\\System32\\cmd.exe"
     }
   },
-  "terminal.integrated.defaultProfile.windows": "Command Prompt",
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
   "terminal.integrated.shellIntegration.enabled": true,
   "terminal.integrated.shellIntegration.suggestEnabled": true,
   "terminal.integrated.shellIntegration.decorationsEnabled": "both",
