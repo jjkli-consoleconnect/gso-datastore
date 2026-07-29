@@ -45,7 +45,7 @@ SHR_PEOPLE_CONFIG = {
     "primary_key": "SRNo",
     "all_columns": [
         "CustID", "CustName", "SRNo", "Product_Family", "Product_ID",
-        "Insight_Circuit_ID", "Circuit_Owner", "ProductDescription", "SR_Status"
+        "Insight_Circuit_ID", "Circuit_Owner", "ProductDescription", "SR_Status", "RSMName"
     ],
     "legacy_mirror_map": {
         "Product Family": "Product_Family",
@@ -63,7 +63,9 @@ SHR_PEOPLE_CONFIG = {
         "Insight Circuit ID": "Insight_Circuit_ID",
         "Circuit Owner": "Circuit_Owner",
         "ProductDescription": "ProductDescription",
-        "SR Status": "SR_Status"
+        "SR Status": "SR_Status",
+        "RSM Name": "RSMName",
+        "RSMName": "RSMName"
     },
     "timestamp_fields": [],
     "integer_fields": []
@@ -172,6 +174,39 @@ def parse_timestamp(value: str) -> Optional[str]:
     return None
 
 
+def clean_rsm_name(value: Optional[str]) -> Optional[str]:
+    """Normalize RSM names from formats like 'Last,First,Middle' to 'First Middle Last'."""
+    if value is None:
+        return None
+
+    cleaned = str(value).strip().strip('"').strip("'").strip()
+    if not cleaned:
+        return None
+
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    if ',' not in cleaned:
+        return cleaned
+
+    parts = [part.strip() for part in cleaned.split(',') if part and part.strip()]
+    if len(parts) < 2:
+        return cleaned
+
+    # Expected input format: 'Last,First,Middle' or 'Last,First'.
+    last_name = parts[0]
+    first_name = parts[1]
+    middle_name = parts[2] if len(parts) > 2 else ''
+
+    formatted_parts = [part for part in [first_name, middle_name, last_name] if part]
+    return ' '.join(formatted_parts) if formatted_parts else cleaned
+
+
+def clean_quoted_field(value: Optional[str]) -> Optional[str]:
+    """Remove leading/trailing double quotes from a string field."""
+    if isinstance(value, str):
+        return value.strip('"')
+    return value
+
+
 def create_composite_key(row: Dict[str, Any], config: Dict) -> str:
     """Create composite key from row data"""
     primary_key = config.get('primary_key', '')
@@ -235,7 +270,7 @@ def process_csv_data(csv_content: bytes, config: Dict) -> Tuple[bool, int]:
             
             # Map fields
             for source_col, target_col in field_map.items():
-                value = row.get(source_col, '').strip()
+                value = (row.get(source_col, '') or '').strip()
                 
                 # Parse timestamps
                 if target_col in timestamp_fields:
@@ -247,6 +282,12 @@ def process_csv_data(csv_content: bytes, config: Dict) -> Tuple[bool, int]:
                         value = int(float(value)) if value else None
                     except ValueError:
                         value = None
+                
+                elif target_col == 'RSMName':
+                    value = clean_rsm_name(value)
+
+                elif target_col in ['CustID', 'CustName']:
+                    value = clean_quoted_field(value)
                 
                 transformed_row[target_col] = value
             

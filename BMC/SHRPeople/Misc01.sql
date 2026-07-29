@@ -8,6 +8,10 @@ SELECT
 		WHEN src.`Full Name` IS NULL THEN NULL
 		ELSE '"' + DBFN('REPLACE', DBFN('REPLACE', DBFN('REPLACE', DBFN('REPLACE', src.`Full Name`, '\r\n', ''), '\r', ''), '\n', ''), '"', '') + '"'
 	END AS CustName,
+	CASE
+		WHEN src.`RSM Name` IS NULL THEN NULL
+		ELSE '"' + DBFN('REPLACE', DBFN('REPLACE', DBFN('REPLACE', DBFN('REPLACE', src.`RSM Name`, '\r\n', ''), '\r', ''), '\n', ''), '"', '') + '"'
+	END AS `RSM Name`,
 	src.`Login Name` AS SRNo,
 	src.`Product Family`,
 	src.`Product ID`,
@@ -19,6 +23,7 @@ FROM (
 	SELECT
 		innerSrc.IdChar,
 		innerSrc.`Full Name`,
+		innerSrc.`RSM Name`,
 		innerSrc.`Login Name`,
 		innerSrc.`Product Family`,
 		innerSrc.`Product ID`,
@@ -31,6 +36,7 @@ FROM (
 		SELECT
 			STRCONVERT(`ID`, 'CHARACTER200') AS IdChar,
 			`Full Name`,
+			`RSM Name`,
 			`Login Name`,
 			`Product Family`,
 			`Product ID`,

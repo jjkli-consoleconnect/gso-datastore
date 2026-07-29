@@ -279,3 +279,81 @@ Recommended closure steps:
   - Temp/helix_spec_extracted.txt
 - Existing tenant runbook context:
   - KnowledgeBase/jira-to-helix-uat-runbook.md
+
+
+##create ticket request
+https://api.stage.corp.consoleconnect.com/cs-helix-ticketing/internalHelix/troubleTicket
+Bearer <jwt token>
+
+
+{
+    "name": "Packet Drop",
+    "creationDate": "2026-03-20T05:05:05.000+0000",
+    "description": "Testing from TYK internal API with Internal work log type, please ignore",
+    "priority": "High",
+    "ticketType": "Incident",
+    "destination":"",
+    "relatedParty": [
+        {
+            "name": "J Fung",
+            "email": "jylfung@consoleconnect.com",
+            "phone": "123456789"
+        }
+    ],
+    "notes": [
+        {
+            "id": "Internal Work Log",
+            "text": "For testing only, please ignore",
+            "@type": "worklog"
+        },
+        {
+            "id": "category",
+            "text": "IPVPN",
+            "@type": "faultsymptom"
+        },
+        {
+            "id": "type",
+            "text": "IPVPN",
+            "@type": "faultsymptom"
+        },
+        {
+            "id": "item",
+            "text": "Circuit Down",
+            "@type": "faultsymptom"
+        },
+                    {
+            "id": "cause",
+            "@type": "faultcause"
+        },
+        {
+            "id": "Tokyo",
+            "@type": "faultlocation"
+        }       
+    ],              
+    "channel": {
+        "name": "Web",  
+        "@type":"Customer"
+    },  
+    "relatedEntity": [
+        {
+            "name": "TCNAI",
+            "role": "customerId",
+            "@type": "RelatedEntity",
+            "@referredType": "Profile"
+        },              
+        {
+            "name": "S0015241",
+            "role": "srId",
+            "@type": "RelatedEntity",
+            "@referredType": "Profile"
+        },
+        {
+            "name": "br123",
+            "role": "breakout",
+            "@type": "RelatedEntity",
+            "@referredType": "Voice"
+        }  
+    ]   
+    ,
+    "@type": "troubleTicket"
+}

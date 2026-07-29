@@ -18,17 +18,11 @@ name_filter AS (
     'Carl Jeffrey De Guzman',
     'Camille Quinto',
     'Coleen Lara',
-    'Lara Coleen',
-    'De Guzman Carl Jeffrey',
-    'Evangelista John Darell',
-    'Garcia Marvic',
     'John Darell Evangelista',
     'Lloyd Stoltz',
     'Marvic Garcia',
     'Nelson Irvin Realizo',
-    'Paclibar Zacarias',
-    'Realizo Nelson Irvin',
-    'Stoltz Lloyd',
+    'Paul Angelo Vicente',
     'Zacarias Paclibar'
   ]) AS name
 )
