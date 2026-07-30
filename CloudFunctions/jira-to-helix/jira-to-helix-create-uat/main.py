@@ -207,6 +207,62 @@ def create_helix_ticket(payload: Dict[str, Any], token: str, dry_run: bool = Fal
         raise
 
 
+def get_helix_ticket(ticket_id: str, token: str, dry_run: bool = False) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve a Helix trouble ticket by ID.
+
+    Returns:
+        Full ticket payload as a dict, or None on dry-run/error.
+    """
+    if not ticket_id:
+        raise ValueError("ticket_id is required")
+
+    host_name = get_secret(JIRA_TO_HELIX_HOST_NAME_SECRET)
+    if host_name:
+        host_name = host_name.strip()
+
+    verify_tls = True
+    if host_name:
+        if host_name.startswith("http://") or host_name.startswith("https://"):
+            parsed = urlparse(host_name)
+            host_value = parsed.netloc or parsed.path
+        else:
+            host_value = host_name
+        url = f"https://{host_value}/cs-helix-ticketing/internalHelix/troubleTicket/{ticket_id}"
+        if host_value and all(part.isdigit() for part in host_value.split(".") if part):
+            verify_tls = False
+    else:
+        url = HELIX_API_BASE + f"troubleTicket/{ticket_id}"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-System-Id": "jira",
+        "Content-Type": "application/json",
+        "Host": HELIX_HOST_HEADER,
+    }
+
+    if dry_run:
+        logger.info(f"[DRY-RUN] Would GET {url}")
+        return None
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=30, verify=verify_tls)
+        if resp.status_code >= 400:
+            logger.error(
+                "Helix GET failed status=%s body=%s ticket_id=%s",
+                resp.status_code,
+                resp.text,
+                ticket_id,
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info(f"Helix ticket fetched: {ticket_id}")
+        return data
+    except Exception as e:
+        logger.error(f"Helix ticket fetch failed for {ticket_id}: {e}")
+        raise
+
+
 def create_helix_worklog(
     helix_id: str,
     note_payload: Dict[str, Any],
@@ -1115,6 +1171,15 @@ def map_jira_to_helix(
             }
         )
 
+    resolved_status = ""
+    status = fields.get("status", {})
+    if isinstance(status, dict):
+        status_name = str(status.get("name", "")).strip().upper()
+        if status_name in {"RESOLVED", "CLOSED", "DONE"}:
+            resolved_status = "RESOLVED"
+        elif status_name == "IN PROGRESS":
+            resolved_status = "IN PROGRESS"
+
     payload = {
         "@type": "troubleTicket",
         "name": summary,
@@ -1146,6 +1211,9 @@ def map_jira_to_helix(
             }
         ]
     }
+
+    if resolved_status:
+        payload["status"] = resolved_status
     
     return payload
 
@@ -1885,6 +1953,22 @@ def jira_to_helix_create_uat(request):
     """
     correlation_id = str(uuid.uuid4())
     logger.info(f"[{correlation_id}] Webhook received")
+
+    if request.method == "GET" and request.args.get("action") == "get_ticket":
+        ticket_id = (request.args.get("ticket_id") or "").strip()
+        if not ticket_id:
+            return {"status": "error", "message": "Missing ticket_id"}, 400
+        try:
+            helix_token = get_helix_token()
+            ticket = get_helix_ticket(ticket_id, helix_token, dry_run=False)
+            return {
+                "status": "success",
+                "ticket_id": ticket_id,
+                "ticket_status": ticket.get("status") if isinstance(ticket, dict) else None,
+                "ticket": ticket,
+            }, 200
+        except Exception as e:
+            return {"status": "error", "message": str(e)}, 500
     
     jira_key = ""
 

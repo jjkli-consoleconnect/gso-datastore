@@ -50,3 +50,19 @@ def test_resolve_jira_issue_for_mapping_fetches_full_issue_when_webhook_fields_a
     resolved = module.resolve_jira_issue_for_mapping(webhook_issue, "MSS-1", "https://example.test")
 
     assert resolved == full_issue
+
+
+def test_map_jira_to_helix_sets_resolved_status_for_resolved_jira_issue():
+    jira_issue = {
+        "fields": {
+            "summary": "Resolved test ticket",
+            "description": "Test description",
+            "status": {"name": "Resolved"},
+            "customfield_20270": "TMSTKL",
+            "customfield_10878": "SR128190",
+        }
+    }
+
+    payload = module.map_jira_to_helix(jira_issue, "MSS-1611", "TMSTKL", "SR128190")
+
+    assert payload["status"] == "RESOLVED"
