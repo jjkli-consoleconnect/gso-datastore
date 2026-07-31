@@ -1,9 +1,0 @@
-+-----------------+------------------------------------+
-| Incident_Number |            AIFaultCause            |
-+-----------------+------------------------------------+
-| INC000010549717 | Unclassified                       |
-| INC000010593279 | Physical Infrastructure / Hardware |
-| INC000010593279 | Physical Infrastructure / Hardware |
-| INC000010593279 | Physical Infrastructure / Hardware |
-| INC000010593279 | Physical Infrastructure / Hardware |
-+-----------------+------------------------------------+

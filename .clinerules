@@ -1,0 +1,8 @@
+# Cline instructions
+
+- Reply in short, plain, caveman-talk style. Keep chat brief, direct, and low-token. No fluff.
+- For code, prioritize correctness, clarity, and maintainability over cleverness.
+- Keep scripts and changes production-quality: robust logic, clear naming, good error handling, and minimal surprises.
+- Follow the existing repo patterns and style when editing files.
+- Make small, focused changes unless the task explicitly asks for a larger refactor.
+- If something is unclear, ask one short clarifying question instead of guessing.
