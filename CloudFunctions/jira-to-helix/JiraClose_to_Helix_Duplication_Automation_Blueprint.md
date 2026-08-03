@@ -235,7 +235,7 @@ Phase 4: Full production
 
 ## Concrete implementation tasks for current codebase
 Target file:
-- CloudFunctions/jira-to-helix/jira-to-helix-create-uat/main.py
+- CloudFunctions/jira-to-helix/mss-to-remedy-create-uat/main.py
 
 Task list:
 1. Add event guard for closed transition and route to duplication handler.

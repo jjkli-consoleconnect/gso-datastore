@@ -212,7 +212,7 @@ Operational interpretation:
 ### 5.6 Ticket type
 - Incident
 
-## Cross-check notes against current jira-to-helix integration usage
+## Cross-check notes against current Helix integration usage
 Current integration pattern (as observed in local UAT/prod scripts) broadly aligns with spec in these areas:
 - Uses POST create endpoint under /cs-helix-ticketing/internalHelix/troubleTicket.
 - Sends Authorization bearer token and custom X-System-Id header (X-System-Id is implementation-specific, not in the spec tables, but accepted in tenant tests).
@@ -263,7 +263,7 @@ Gaps identified:
 Recommended closure steps:
 - Export original doc to plain text or PDF with OCR-friendly tables/lists.
 - Ask API owner for canonical enum artifacts (CSV/JSON/Confluence table).
-- Store those enum lists in repo as plain markdown under jira-to-helix for strict validation.
+- Store those enum lists in repo as plain markdown under the relevant Helix integration area for strict validation.
 
 ## Suggested companion files for future implementation
 - A strict JSON schema for create payload and patch payload per tenant acceptance.
@@ -278,7 +278,7 @@ Recommended closure steps:
 - Raw extraction copy:
   - Temp/helix_spec_extracted.txt
 - Existing tenant runbook context:
-  - KnowledgeBase/jira-to-helix-uat-runbook.md
+  - KnowledgeBase UAT runbook context
 
 
 ##create ticket request
