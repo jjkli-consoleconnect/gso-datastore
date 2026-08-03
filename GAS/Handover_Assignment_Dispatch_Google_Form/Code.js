@@ -2,9 +2,9 @@ function processMatchingEmails() {
   // --- Configurable Variables ---
   const subject = "Automated Report - Automated Handover Queue";
   const sender = "noreply-bmchelix@onbmc.com";
-  const label = "pubsub";
+  const label = "dashboard-autoreports";
   const formLink = "https://docs.google.com/forms/d/e/1FAIpQLScn2x63PItOvw0_GDRnZ2YApszYIi0gEeXRjtMDGg8QgR-gpQ/viewform";
-  const recipientEmail = 'jens-vertexai-aaaan3dj2p4fdro72c3fa2l3km@consoleconnect.org.slack.com, jjkli@consoleconnect.com';
+  const recipientEmail = 'jens-vertexai-aaaan3dj2p4fdro72c3fa2l3km@consoleconnect.org.slack.com, cc-agents-aaaabhow4onydtdkewcpq3b4oq@consoleconnect.org.slack.com';
   const emailSubject = "Action Required: Handover Ticket Assignment";
 
   const query = `subject:${subject} from:${sender} label:${label} is:unread`;

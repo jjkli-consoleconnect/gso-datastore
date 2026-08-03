@@ -332,42 +332,13 @@ ${preview}
     }
 
     const headers = csvData.shift().map(header => standardizeFieldName(header, config.fieldMap));
-    
-    // DIAGNOSTIC: Log headers found in CSV
-    console.log(`      CSV Headers after standardization: ${headers.join(', ')}`);
-    
-    // For WorkLog config, specifically check for WorkLog_Type
-    if (config.name === "WorkLog") {
-      const hasWorkLogType = headers.includes("WorkLog_Type");
-      console.log(`      ✓ WorkLog_Type present in CSV: ${hasWorkLogType}`);
-      if (!hasWorkLogType) {
-        console.warn(`      ⚠ WARNING: WorkLog_Type column NOT FOUND in CSV headers!`);
-      }
-    }
-    
-    let nullFieldStats = {};
-    const jsonData = csvData.map((row, rowIndex) => {
+    const jsonData = csvData.map((row) => {
       const jsonObj = {};
       headers.forEach((header, colIndex) => {
-        const rawValue = row[colIndex];
-        const processedValue = handleEmptyValues(rawValue, config.timestampFields.includes(header), config.integerFields.includes(header));
-        jsonObj[header] = processedValue;
-        
-        // Track null values for mandatory fields
-        if (config.name === "WorkLog" && header === "WorkLog_Type" && processedValue === null) {
-          nullFieldStats[header] = (nullFieldStats[header] || 0) + 1;
-        }
+        jsonObj[header] = handleEmptyValues(row[colIndex], config.timestampFields.includes(header), config.integerFields.includes(header));
       });
       return JSON.stringify(jsonObj);
     });
-    
-    // Log null statistics for mandatory fields
-    if (Object.keys(nullFieldStats).length > 0) {
-      console.warn(`      ⚠ NULL VALUES DETECTED in mandatory fields:`);
-      for (const [field, count] of Object.entries(nullFieldStats)) {
-        console.warn(`        - ${field}: ${count} rows with NULL values`);
-      }
-    }
 
     const jsonString = jsonData.join("\n");
     const fileName = attachment.getName().replace(/\.[^/.]+$/, "") + "_converted.json";
@@ -740,21 +711,10 @@ function mergeTablesInBigQueryGeneric(config) {
       }
       return `H.${col}`;
     }).join(", ");
-    
-    // For WorkLog, add validation to REJECT records with NULL WorkLog_Type
-    let whereClause = "";
-    if (config.name === "WorkLog") {
-      whereClause = `
-      WHERE H.WorkLog_Type IS NOT NULL AND TRIM(H.WorkLog_Type) != ''
-      `;
-      console.log(`    ⚠ Adding WHERE clause for WorkLog to reject NULL/empty WorkLog_Type values`);
-    }
 
     const query = `
       MERGE \`${projectId}.${config.targetDatasetId}.${config.targetTableId}\` T
-      USING (
-        SELECT * FROM \`${projectId}.${config.stagingDatasetId}.${config.stagingTableId}\`${whereClause}
-      ) H
+      USING \`${projectId}.${config.stagingDatasetId}.${config.stagingTableId}\` H
       ON ${onClause}
       WHEN MATCHED THEN
         UPDATE SET
@@ -770,30 +730,6 @@ function mergeTablesInBigQueryGeneric(config) {
     // Extract row counts from job statistics
     const numDmlAffectedRows = completedJob.statistics && completedJob.statistics.query && completedJob.statistics.query.numDmlAffectedRows 
       ? parseInt(completedJob.statistics.query.numDmlAffectedRows) : 0;
-    
-    // For WorkLog, also check how many rows were filtered out
-    if (config.name === "WorkLog") {
-      try {
-        const stagingCount = BigQuery.Datasets.tables().list(projectId, config.stagingDatasetId, {tableId: config.stagingTableId}).tables[0];
-        const totalStagingRows = stagingCount.numRows;
-        const rejectedRows = parseInt(totalStagingRows) - numDmlAffectedRows;
-        console.log(`    WorkLog MERGE Summary:`);
-        console.log(`      - Total rows in staging: ${totalStagingRows}`);
-        console.log(`      - Rows merged to target: ${numDmlAffectedRows}`);
-        console.log(`      - Rows REJECTED (NULL WorkLog_Type): ${rejectedRows}`);
-        
-        if (rejectedRows > 0) {
-          console.warn(`    ⚠ ${rejectedRows} rows were rejected due to missing/empty WorkLog_Type!`);
-          MailApp.sendEmail({
-            to: errorNotificationEmails,
-            subject: `WARNING in ${scriptName}: ${rejectedRows} WorkLog rows rejected (NULL WorkLog_Type)`,
-            body: `${rejectedRows} rows from the latest WorkLog CSV had NULL or empty WorkLog_Type and were rejected from the merge.\n\nThis indicates either:\n1. The Remedy source query is returning NULL values\n2. The CSV extraction is missing the WorkLog_Type field\n\nPlease check the Remedy extraction query and staging table data.`
-          });
-        }
-      } catch (e) {
-        console.log(`    Could not retrieve staging row count for analysis: ${e.message}`);
-      }
-    }
     
     console.log(`    BigQuery MERGE for ${config.name} completed successfully! Rows affected: ${numDmlAffectedRows}`);
     return numDmlAffectedRows;

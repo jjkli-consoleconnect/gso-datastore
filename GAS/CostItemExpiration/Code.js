@@ -1177,3 +1177,7 @@ function viewLastProcessed() {
     Logger.log('Last processed timestamp: ' + new Date(lastProcessed).toISOString() + ' (' + lastProcessed + ')');
   }
 }
+
+function resyncFebruary16() {
+  setLastProcessedToDate('2026-02-16 23:59:59');
+}
