@@ -1,0 +1,56 @@
+# Node.js dependencies
+node_modules/
+
+# Test files
+test/
+tests/
+*.test.js
+*.spec.js
+__tests__/
+
+# Debug files
+*.log
+*.debug
+debug/
+logs/
+
+# Development files
+.env
+.env.local
+.env.development
+.env.test
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git files
+.git/
+.gitignore
+.gitattributes
+.gitmodules
+.gitkeep
+
+# Documentation
+README.md
+docs/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Coverage reports
+coverage/
+.nyc_output/
+
+# Build artifacts
+dist/
+build/
