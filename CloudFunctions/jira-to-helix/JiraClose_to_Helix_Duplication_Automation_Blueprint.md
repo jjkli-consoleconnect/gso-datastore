@@ -12,6 +12,11 @@
 - Phase model: CREATE -> WORKLOG_REPLAY -> CLOSE -> COMPLETE.
 - Replay safety: rerun should not duplicate artifacts already synced.
 
+## Status Snapshot
+- Implemented in UAT: closed-event routing, live Jira issue fetch, Jira comment replay, idempotency phase checks, and Helix create payloads that preserve Jira source metadata in the description.
+- Implemented in UAT and PROD: validated create notes pattern `category/item/type = Others` and safe dry-run validation that logs payloads without writes.
+- Still validate before relying on them natively: Helix backdated `creationDate`, worklog `date`, worklog `author`, and terminal close transition behavior.
+
 ## Assumptions to validate early
 - Jira automation trigger can send closure event with issue key.
 - Helix status patch to terminal closed state is accepted in this tenant.
@@ -47,7 +52,7 @@ Required reads:
   - description
   - created
   - resolutiondate
-  - customer/SR mapping fields
+  - customer/SR mapping fields (relatedEntity.customerId and relatedEntity.srId)
   - current status
 - GET comments (paginated) for:
   - id
@@ -67,7 +72,7 @@ Create payload mapping:
 - priority <- default or mapped Jira priority
 - ticketType <- Incident
 - relatedEntity.customerId <- mapped from Jira fields
-- relatedEntity.sr <- optional
+- relatedEntity.srId <- optional
 - channel <- API/Customer
 - notes <- create faultsymptom structure accepted in tenant
 
@@ -234,8 +239,13 @@ Phase 4: Full production
 - Remove pilot filter after stability window.
 
 ## Concrete implementation tasks for current codebase
-Target file:
+Target files:
 - CloudFunctions/jira-to-helix/mss-to-remedy-create-uat/main.py
+- CloudFunctions/jira-to-helix/mss-to-remedy-create-prod/main.py
+
+Implementation status:
+- Core create/comment/close flow is already present in the current UAT codebase.
+- Prod now mirrors the same Jira source description formatting and can be dry-run validated safely.
 
 Task list:
 1. Add event guard for closed transition and route to duplication handler.

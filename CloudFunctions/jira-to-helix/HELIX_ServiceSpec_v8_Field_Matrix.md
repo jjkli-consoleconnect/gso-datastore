@@ -17,7 +17,7 @@
 | @type | String | Implied by payload examples | Required by tenant behavior; expected troubleTicket | Required by tenant behavior for PATCH body | Always send as troubleTicket for create and patch requests. |
 | id | String | Yes | Server generated | Path parameter only | Never client-set on create. |
 | name | String | Yes | Mandatory | Patchable | Map from Jira summary; fallback required if missing. |
-| description | String | Yes | Optional | Patchable | Map from Jira description; include context stamps if needed. |
+| description | String | Yes | Optional | Patchable | Map from Jira description; append the Jira source trace plus metadata block so created/updated/resolved/assignee/resolution are visible in the Remedy ticket. |
 | externalId | String | Yes | Optional | Patchable | Use Jira key as externalId for deterministic traceability. |
 | priority | String | Yes | Mandatory | Not listed patchable | Use explicit default Low unless mapped rules exist. |
 | ticketType | String | Yes | Mandatory; default Incident also stated | Not listed patchable | Set explicitly to Incident to avoid ambiguity. |
@@ -28,16 +28,16 @@
 | channel.@type | String | Yes | Optional; default Customer | Not listed patchable | Set explicitly to Customer unless business requires different. |
 | relatedEntity[] | Array | Yes | Required in practice for customer mapping; customerId/sr key pair highlighted | Not listed patchable | Must include customerId relation at minimum. |
 | relatedParty[] | Array | Yes | Optional | Patchable only for role Contact | Do not use for assignment routing unless API owner confirms behavior. |
-| notes[] | Array | Yes | Required by create rules for faultsymptom in spec table | Patchable only to append worklog notes | Create and patch note types follow different constraints. |
+| notes[] | Array | Yes | Required by create rules for faultsymptom in spec table | Patchable only to append worklog notes | Create and patch note types follow different constraints. Current validated create payload uses the `category/item/type = Others` trio. |
 | troubleTicketRelationship[] | Array | Yes | Optional | Not listed patchable | Usually omit unless needed by workflow. |
 
 ## B. Notes field subtype matrix
 
 | Context | Required note shape per spec | Operational behavior guidance |
 | --- | --- | --- |
-| Create | notes.@type value faultsymptom; notes.id Item mandatory for symptom description; notes.text from Section 5.2 list | Tenant runbooks show category/item/type faultsymptom trio has been accepted in UAT. Preserve existing known-good pattern unless API owner instructs otherwise. |
+| Create | notes.@type value faultsymptom; notes.id Item mandatory for symptom description; notes.text from Section 5.2 list | Tenant runbooks show category/item/type faultsymptom trio has been accepted in UAT and PROD dry-run validation. Preserve existing known-good pattern unless API owner instructs otherwise. |
 | Patch worklog | notes only allows adding new notes where @type is worklog | Build additive worklog patches only; do not attempt full notes replacement. |
-| notes.date | Present in model | Not guaranteed to be accepted in patch requests. Test explicitly before relying on timestamp backfill in native note date field. |
+| notes.date | Present in model | Not guaranteed to be accepted in patch requests. Test explicitly before relying on timestamp backfill in native note date field; current scripts preserve timestamps in text and audit logs instead. |
 | notes.author | Present in model | Not guaranteed to be accepted for worklog patch in current route; treat as optional test item. |
 
 ## C. relatedEntity role guidance matrix
@@ -45,7 +45,7 @@
 | Role | Usage | Expected source |
 | --- | --- | --- |
 | customerId | Primary selection and linkage key | Jira mapped customer field or organization mapping |
-| sr | Secondary key (optional in list filters and create context) | Jira SR fields if available |
+| srId | Secondary key (optional in list filters and create context) | Jira SR fields if available |
 | serviceId | Mentioned in runbook examples | Only send when validated and available |
 
 ## D. Operation matrix

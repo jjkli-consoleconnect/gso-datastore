@@ -10,16 +10,11 @@ import os
 import re
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Tuple
-import hmac
-import hashlib
 from urllib.parse import urlparse
 
 import functions_framework
 import requests
 from google.cloud import secretmanager, bigquery
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import smtplib
 import urllib3
 
 # Configure logging
@@ -69,8 +64,8 @@ JIRA_REMEDY_TICKET_NUMBER_FIELDS = [
     "customfield_10161",  # Remedy Ticket Number
     "customfield_15154",  # Remedy Incident Number
 ]
-JIRA_ORGANIZATIONS_FIELD = "customfield_10002"  # Organizations
-JIRA_CUSTOMER_ID_FIELD = "customfield_20270"  # Customer ID
+JIRA_MSS_CUSTOMER_FIELD = "customfield_11247"  # MSS customer / customer ID (preferred)
+JIRA_CUSTOMER_ID_FIELD = "customfield_20270"  # Legacy customer ID field
 JIRA_SR_NUMBER_FIELD = "customfield_10878"    # SR Number
 JIRA_SR_REF_FIELD = "customfield_10228"       # SR Ref
 JIRA_SP_SR_FIELD = "customfield_11510"        # SP # / SR #
@@ -127,6 +122,9 @@ def get_helix_token() -> str:
     Returns:
         Bearer token string
     """
+    if DRY_RUN:
+        return "DRY_RUN_TOKEN"
+
     client_id = get_secret(JIRA_TO_HELIX_HELIX_CLIENT_ID_SECRET)
     client_secret = get_secret(JIRA_TO_HELIX_HELIX_CLIENT_SECRET)
     
@@ -160,6 +158,11 @@ def create_helix_ticket(payload: Dict[str, Any], token: str, dry_run: bool = Fal
     Returns:
         Helix incident ID (e.g., INC000006741116) or None on error
     """
+    if dry_run:
+        dry_url = HELIX_API_BASE + "troubleTicket"
+        logger.info(f"[DRY-RUN] Would POST to {dry_url} with payload: {json.dumps(payload, indent=2)}")
+        return None
+
     host_name = get_secret(JIRA_TO_HELIX_HOST_NAME_SECRET)
     if host_name:
         host_name = host_name.strip()
@@ -184,10 +187,6 @@ def create_helix_ticket(payload: Dict[str, Any], token: str, dry_run: bool = Fal
         "Content-Type": "application/json",
         "Host": HELIX_HOST_HEADER,
     }
-    
-    if dry_run:
-        logger.info(f"[DRY-RUN] Would POST to {url} with payload: {json.dumps(payload, indent=2)}")
-        return None
     
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=30, verify=verify_tls)
@@ -571,57 +570,6 @@ def update_jira_issue_field(jira_key: str, field_ids: list[str], value: str, jir
 
 
 # ===== FIELD MAPPING =====
-def extract_jira_customer_id(fields: Dict[str, Any]) -> str:
-    """
-    Extract customer ID from Jira fields.
-
-    Priority:
-    1) Organizations (customfield_10002) organization name
-    2) MSS customer (customfield_11247)
-
-    Jira custom fields may be strings or objects depending on field configuration.
-    """
-    org_value = fields.get(JIRA_ORGANIZATIONS_FIELD)
-    if isinstance(org_value, list):
-        for org in org_value:
-            if isinstance(org, dict):
-                org_name = org.get("name")
-                if isinstance(org_name, str) and org_name.strip():
-                    return org_name.strip()
-            elif isinstance(org, str) and org.strip():
-                return org.strip()
-            else:
-                text_value = str(org).strip()
-                if text_value:
-                    return text_value
-    elif isinstance(org_value, dict):
-        org_name = org_value.get("name")
-        if isinstance(org_name, str) and org_name.strip():
-            return org_name.strip()
-
-    raw_value = fields.get(JIRA_CUSTOMER_ID_FIELD)
-    if raw_value is None:
-        return ""
-    if isinstance(raw_value, str):
-        return raw_value.strip()
-    if isinstance(raw_value, dict):
-        for key in ("value", "name", "displayName"):
-            value = raw_value.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return str(raw_value).strip()
-
-
-def extract_jira_sr_no(fields: Dict[str, Any]) -> str:
-    """
-    Return fixed SR number for ASOC routing.
-
-    UAT requirement: always force SR128190 and ignore Jira SR-related fields.
-    """
-    _ = fields
-    return DEFAULT_ASOC_SR_NO
-
-
 def extract_existing_jira_helix_id(fields: Dict[str, Any]) -> str:
     """
     Extract current Remedy/Helix ID from Jira issue fields.
@@ -1062,41 +1010,85 @@ def extract_jira_key_fallback(webhook_data: Dict[str, Any], raw_payload: str) ->
     return ""
 
 
-def derive_helix_assigned_group(sr_no: str = "") -> str:
-    """Derive the Helix assigned group from the Jira SR number when available."""
-    if sr_no and sr_no.strip().upper() == "SR135227":
-        return "ASOC"
-    return HELIX_ASSIGNED_GROUP
-
-
 def resolve_jira_issue_for_mapping(
     issue_data: Dict[str, Any],
     jira_key: str,
     jira_url: str,
 ) -> Dict[str, Any]:
-    """Use webhook issue fields when present, otherwise fetch the full Jira issue."""
-    if isinstance(issue_data, dict) and isinstance(issue_data.get("fields"), dict) and issue_data.get("fields"):
-        fields = issue_data.get("fields", {})
-        if any(
-            key in fields
-            for key in (
-                JIRA_CUSTOMER_ID_FIELD,
-                JIRA_SR_NUMBER_FIELD,
-                JIRA_SR_REF_FIELD,
-                JIRA_SP_SR_FIELD,
-                *JIRA_USN_FIELDS,
-            )
-        ):
+    """Fetch the full Jira issue to avoid stale or synthetic webhook field values."""
+    try:
+        return get_jira_issue(jira_key, jira_url)
+    except Exception as e:
+        logger.warning(
+            "Falling back to webhook issue payload for %s because Jira fetch failed: %s",
+            jira_key,
+            e,
+        )
+        if isinstance(issue_data, dict):
             return issue_data
+        return {"fields": {}}
 
-    return get_jira_issue(jira_key, jira_url)
+
+def _extract_first_text(value: Any, keys: Tuple[str, ...] = ()) -> str:
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            return text
+
+    if isinstance(value, dict):
+        for key in keys:
+            candidate = value.get(key)
+            if isinstance(candidate, str):
+                text = candidate.strip()
+                if text:
+                    return text
+
+    return ""
+
+
+def build_jira_source_description(
+    fields: Dict[str, Any],
+    jira_key: str,
+    jira_customer_id: str,
+    jira_sr_no: str,
+) -> str:
+    created_raw = str(fields.get("created", "")).strip()
+    updated_raw = str(fields.get("updated", "")).strip()
+    resolved_raw = str(fields.get("resolutiondate", "")).strip()
+
+    assignee_name = _extract_first_text(
+        fields.get("assignee", {}),
+        ("displayName", "name", "emailAddress", "accountId"),
+    )
+    resolution_name = _extract_first_text(
+        fields.get("resolution", {}),
+        ("name", "value", "description"),
+    )
+
+    trace_lines = [
+        "[Jira Source Trace]",
+        f"Jira customer ID: {jira_customer_id or '(not provided)'}",
+        f"Jira SR no: {jira_sr_no or '(not provided)'}",
+    ]
+
+    metadata_lines = [
+        "[Jira Source Metadata]",
+        f"Jira Key: {jira_key}",
+        f"Jira Created: {normalize_jira_timestamp(created_raw) if created_raw else '(not provided)'}",
+        f"Jira Updated: {normalize_jira_timestamp(updated_raw) if updated_raw else '(not provided)'}",
+        f"Jira Resolved: {normalize_jira_timestamp(resolved_raw) if resolved_raw else '(not provided)'}",
+        f"Jira Assignee: {assignee_name or '(unassigned)'}",
+        f"Jira Resolution: {resolution_name or '(not provided)'}",
+    ]
+
+    return "\n".join(trace_lines + [""] + metadata_lines)
 
 
 def map_jira_to_helix(
     jira_issue: Dict[str, Any],
     jira_key: str,
-    customer_id: str,
-    sr_no: str = "",
+    jira_customer_id_override: str = "",
+    jira_sr_no_override: str = "",
 ) -> Dict[str, Any]:
     """
     Transform Jira MSS issue to Helix ticket payload.
@@ -1126,24 +1118,64 @@ def map_jira_to_helix(
     elif description is not None:
         desc_text = str(description)
     
-    # Build Helix payload
+    jira_customer_id = jira_customer_id_override.strip()
+    if not jira_customer_id:
+        for field_id in (JIRA_MSS_CUSTOMER_FIELD, JIRA_CUSTOMER_ID_FIELD):
+            raw_value = fields.get(field_id)
+            if isinstance(raw_value, str):
+                value = raw_value.strip()
+                if value:
+                    jira_customer_id = value
+                    break
+            elif isinstance(raw_value, dict):
+                for key in ("value", "name", "displayName"):
+                    value = raw_value.get(key)
+                    if isinstance(value, str) and value.strip():
+                        jira_customer_id = value.strip()
+                        break
+                if jira_customer_id:
+                    break
+
+    jira_sr_no = jira_sr_no_override.strip()
+    if not jira_sr_no:
+        for field_id in (JIRA_SR_NUMBER_FIELD, JIRA_SR_REF_FIELD, JIRA_SP_SR_FIELD, *JIRA_USN_FIELDS):
+            raw_value = fields.get(field_id)
+            if isinstance(raw_value, str):
+                value = raw_value.strip()
+                if value:
+                    jira_sr_no = value
+                    break
+            elif isinstance(raw_value, dict):
+                for key in ("value", "name", "displayName"):
+                    value = raw_value.get(key)
+                    if isinstance(value, str) and value.strip():
+                        jira_sr_no = value.strip()
+                        break
+                if jira_sr_no:
+                    break
+
+    source_description = build_jira_source_description(fields, jira_key, jira_customer_id, jira_sr_no)
+    if desc_text:
+        desc_text = f"{desc_text}\n\n{source_description}"
+    else:
+        desc_text = source_description
+
+    # Build Helix payload.
+    # This flow intentionally forces the default customer/SR pair for Helix create.
     related_entity = [
         {
-            "name": customer_id,
+            "name": DEFAULT_MSS_CUSTOMER_ID,
             "role": "customerId",
+            "@type": "RelatedEntity",
+            "@referredType": "Profile"
+        },
+        {
+            "name": DEFAULT_ASOC_SR_NO,
+            "role": "srId",
             "@type": "RelatedEntity",
             "@referredType": "Profile"
         }
     ]
-    if sr_no:
-        related_entity.append(
-            {
-                "name": sr_no,
-                "role": "srId",
-                "@type": "RelatedEntity",
-                "@referredType": "Profile"
-            }
-        )
 
     resolved_status = ""
     status = fields.get("status", {})
@@ -1162,7 +1194,7 @@ def map_jira_to_helix(
         "ticketType": HELIX_TICKET_TYPE,
         "externalId": jira_key,
         "relatedEntity": related_entity,
-        "assignedGroup": derive_helix_assigned_group(sr_no),
+        "assignedGroup": HELIX_ASSIGNED_GROUP,
         "channel": {
             "name": HELIX_CHANNEL,
             "@type": "Customer"
@@ -1195,13 +1227,11 @@ def map_jira_to_helix(
 def map_jira_closed_issue_to_helix(
     jira_issue: Dict[str, Any],
     jira_key: str,
-    customer_id: str,
-    sr_no: str = "",
 ) -> Dict[str, Any]:
     """
     Build Helix payload for close-triggered duplication flow.
     """
-    payload = map_jira_to_helix(jira_issue, jira_key, customer_id, sr_no)
+    payload = map_jira_to_helix(jira_issue, jira_key)
     fields = jira_issue.get("fields", {})
     created_raw = str(fields.get("created", "")).strip()
     closed_raw = str(fields.get("resolutiondate", "")).strip()
@@ -1218,11 +1248,9 @@ def map_jira_closed_issue_to_helix(
     details = [
         "",
         "",
-        "[Jira Source Metadata]",
+        "[Jira Close Event]",
         f"Jira Key: {jira_key}",
     ]
-    if created_ts:
-        details.append(f"Jira Created: {created_ts}")
     if closed_ts:
         details.append(f"Jira Closed: {closed_ts}")
 
@@ -1589,21 +1617,12 @@ def process_closed_ticket_duplication(
     jira_issue = resolve_jira_issue_for_mapping(issue_data, jira_key, JIRA_BASE_URL)
 
     jira_fields = jira_issue.get("fields", {})
-    customer_id = extract_jira_customer_id(jira_fields)
-    sr_no = extract_jira_sr_no(jira_fields)
-    if not customer_id and DEFAULT_MSS_CUSTOMER_ID:
-        customer_id = DEFAULT_MSS_CUSTOMER_ID
-        logger.warning(
-            f"[{correlation_id}] Missing {JIRA_CUSTOMER_ID_FIELD}; "
-            f"falling back to default customer ID {DEFAULT_MSS_CUSTOMER_ID}"
-        )
-
-    if not customer_id:
-        return {
-            "status": "error",
-            "jira_key": jira_key,
-            "message": f"Missing Jira MSS customer ID field {JIRA_CUSTOMER_ID_FIELD}",
-        }, 400
+    customer_id = DEFAULT_MSS_CUSTOMER_ID
+    sr_no = DEFAULT_ASOC_SR_NO
+    logger.warning(
+        f"[{correlation_id}] Ignoring Jira customer field and forcing default customer/SR pair "
+        f"customer={customer_id} sr={sr_no}"
+    )
 
     close_cycle_key = build_close_cycle_key(jira_fields)
     incoming_close_ts = extract_close_event_timestamp(jira_fields)
@@ -1685,7 +1704,7 @@ def process_closed_ticket_duplication(
                 "correlation_id": correlation_id,
             }, 200
 
-        helix_payload = map_jira_closed_issue_to_helix(jira_issue, jira_key, customer_id, sr_no)
+        helix_payload = map_jira_closed_issue_to_helix(jira_issue, jira_key)
         logger.info(f"[{correlation_id}] Close-dup create payload: {json.dumps(helix_payload, indent=2)}")
         helix_id = create_helix_ticket(helix_payload, helix_token, dry_run=DRY_RUN) or ""
         if DRY_RUN and not helix_id:
@@ -1927,6 +1946,9 @@ def jira_to_helix_create_prod(request):
     """
     correlation_id = str(uuid.uuid4())
     logger.info(f"[{correlation_id}] Webhook received")
+    force_reprocess = str(request.args.get("force", "")).strip().lower() in {"1", "true", "yes", "y"}
+    if force_reprocess:
+        logger.info(f"[{correlation_id}] Force reprocess enabled; bypassing idempotency cache")
 
     if request.method == "GET" and request.args.get("action") == "get_ticket":
         ticket_id = (request.args.get("ticket_id") or "").strip()
@@ -2125,8 +2147,10 @@ def jira_to_helix_create_prod(request):
         
         logger.info(f"[{correlation_id}] Processing {jira_key}")
         
-        # Check idempotency
-        cached_helix_id = check_idempotency(jira_key)
+        # Check idempotency unless explicitly bypassed for testing.
+        cached_helix_id = ""
+        if not force_reprocess:
+            cached_helix_id = check_idempotency(jira_key)
         if cached_helix_id:
             # Avoid clobbering an existing Remedy ID on Jira with stale cached values.
             existing_issue_fields = issue_data.get("fields") if isinstance(issue_data, dict) else {}
@@ -2150,37 +2174,19 @@ def jira_to_helix_create_prod(request):
         # Otherwise fetch the full Jira issue so customer/SR values are not lost.
         jira_issue = resolve_jira_issue_for_mapping(issue_data, jira_key, JIRA_BASE_URL)
 
-        jira_fields = jira_issue.get("fields", {})
-        customer_id = extract_jira_customer_id(jira_fields)
-        sr_no = extract_jira_sr_no(jira_fields)
-        if not customer_id and DEFAULT_MSS_CUSTOMER_ID:
-            customer_id = DEFAULT_MSS_CUSTOMER_ID
-            logger.warning(
-                f"[{correlation_id}] Missing {JIRA_CUSTOMER_ID_FIELD}; "
-                f"falling back to default customer ID {DEFAULT_MSS_CUSTOMER_ID}"
-            )
+        customer_id = DEFAULT_MSS_CUSTOMER_ID
+        sr_no = DEFAULT_ASOC_SR_NO
         logger.info(
-            f"[{correlation_id}] SR override enabled: using fixed SR {sr_no}; Jira SR fields are ignored"
+            f"[{correlation_id}] Forcing default Helix customer/SR pair customer={customer_id} sr={sr_no}; Jira customer/SR fields are ignored"
         )
-        if not customer_id:
-            error_msg = (
-                f"Missing Jira MSS customer ID field {JIRA_CUSTOMER_ID_FIELD}"
-            )
-            record_sync(jira_key, None, "failed", error_msg)
-            send_slack_email_alert(jira_key, None, "failed", error_msg)
-            logger.error(f"[{correlation_id}] {error_msg}")
-            return {
-                "status": "error",
-                "jira_key": jira_key,
-                "message": error_msg,
-            }, 400
         
         # Map to Helix payload
-        helix_payload = map_jira_to_helix(jira_issue, jira_key, customer_id, sr_no)
+        helix_payload = map_jira_to_helix(jira_issue, jira_key)
         logger.info(
             f"[{correlation_id}] Mapped payload customer={customer_id} sr={sr_no} "
             f"assignedGroup={helix_payload.get('assignedGroup')} relatedEntity={helix_payload.get('relatedEntity')}"
         )
+        logger.info(f"[{correlation_id}] Helix payload to post: {json.dumps(helix_payload, indent=2)}")
         
         # Get Helix token
         helix_token = get_helix_token()
@@ -2189,6 +2195,45 @@ def jira_to_helix_create_prod(request):
         helix_id = create_helix_ticket(helix_payload, helix_token, dry_run=DRY_RUN)
         
         if helix_id and not DRY_RUN:
+            try:
+                helix_ticket = get_helix_ticket(helix_id, helix_token, dry_run=DRY_RUN)
+                if helix_ticket:
+                    related_entities = helix_ticket.get("relatedEntity") or []
+                    related_map = {}
+                    if isinstance(related_entities, list):
+                        for item in related_entities:
+                            if isinstance(item, dict):
+                                role = str(item.get("role") or "").strip()
+                                if role:
+                                    related_map[role] = item.get("name")
+                    logger.info(
+                        f"[{correlation_id}] Helix ticket verification for {helix_id}: "
+                        f"customerId={related_map.get('customerId')} srId={related_map.get('srId')} "
+                        f"assignedGroup={helix_ticket.get('assignedGroup')}"
+                    )
+            except Exception as e:
+                logger.warning(f"[{correlation_id}] Helix ticket verification failed for {helix_id}: {e}")
+
+            try:
+                jira_comments = get_jira_comments(jira_key, JIRA_BASE_URL)
+                if jira_comments:
+                    logger.info(
+                        f"[{correlation_id}] Replaying {len(jira_comments)} Jira comments to Helix ticket {helix_id}"
+                    )
+                    for comment in jira_comments:
+                        comment_id = str(comment.get("id", "")).strip()
+                        if not comment_id:
+                            continue
+                        note = build_helix_worklog_note_from_jira_comment(comment)
+                        create_helix_worklog(helix_id, note, helix_token, dry_run=DRY_RUN)
+                        logger.info(
+                            f"[{correlation_id}] Replayed Jira comment {comment_id} to Helix ticket {helix_id}"
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"[{correlation_id}] Failed to replay Jira comments to Helix ticket {helix_id}: {e}"
+                )
+
             # Backlink Jira
             update_jira_issue_field(jira_key, JIRA_REMEDY_TICKET_NUMBER_FIELDS, helix_id, JIRA_BASE_URL)
             if ENFORCE_HELIX_ASSIGNED_GROUP:

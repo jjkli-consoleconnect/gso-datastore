@@ -13,6 +13,13 @@
 
 - VPC Connector ready: `eu-uat-wanda-vpc-conn` (READY, EU)
 
+## Current Validated Behavior
+- One function handles create, comment sync, and close-triggered duplication for Jira MSS webhooks.
+- The handler fetches the live Jira issue before mapping so the latest customer, SR, timestamp, assignee, and resolution data are used.
+- Remedy description includes a readable Jira source trace plus Jira metadata block.
+- Helix create still requires the validated tenant notes pattern: `category/item/type = Others`.
+- Use `?force=true` on the trigger URL when you need to bypass idempotency for a re-drive.
+
 ## Deploy CloudFunction
 
 ```bash
@@ -66,7 +73,7 @@ Trigger URL: https://europe-west2-pccw-internal-virt-agent-uat.cloudfunctions.ne
 2. CloudFunction logs appear in Cloud Logging
 3. BigQuery table records sync attempt
 4. Helix sandbox should have new troubleTicket with externalId = MSS-XXX
-5. Jira issue customfield_10647 updated with Helix ID
+5. Jira issue backfills the first writable Remedy number field from the configured candidate list; current sandbox runs observed `customfield_14905` being writable when `customfield_10647` returned 400.
 6. Email alert sent to `jjkli-consoleconnect-aaaat6e6tqjcdqmox62y2vcqfi@consoleconnect.org.slack.com`
 
 For comment sync test:
@@ -85,6 +92,8 @@ gcloud functions deploy mss-to-remedy-create-uat \
 ```
 
 Then toggle back to `DRY_RUN=false` when ready for live.
+
+For a manual re-drive without Helix writes, call the trigger URL with `?force=true` and keep `DRY_RUN=true`.
 
 ## Monitoring
 
@@ -106,8 +115,8 @@ Then toggle back to `DRY_RUN=false` when ready for live.
 
 **Jira backlink not updating?**
 - Verify Jira API credentials valid
-- Check customfield_10647 exists in Jira
-- Ensure Jira user has permission to edit field
+- Check which Remedy-number field is writable in the current Jira project; the function will try `customfield_10647`, `customfield_14905`, `customfield_10161`, then `customfield_15154`
+- Ensure Jira user has permission to edit the chosen field
 
 ## Next Steps
 

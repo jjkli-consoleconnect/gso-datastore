@@ -12,6 +12,12 @@
 - BigQuery table (comment idempotency): `Testing.jira_to_helix_comment_sync` (auto-created by function on first comment event)
 - VPC Connector ready: `eu-prod-wanda-vpc-conn`
 
+## Current Validated Behavior
+- Prod mirrors the UAT flow for create and comment handling, including the readable Jira source trace and metadata block in the Remedy description.
+- Dry-run mode still fetches the live Jira issue but prevents writes to Helix and Jira.
+- The validated create note pattern remains `category/item/type = Others`.
+- The trigger URL accepts `?force=true` for safe re-drives during validation.
+
 ## Deploy Cloud Function
 
 ```bash
@@ -32,6 +38,28 @@ gcloud functions deploy mss-to-remedy-create-prod \
   --timeout 120 \
   --memory 512MB
 ```
+
+For a safe validation pass after deploy, switch only `DRY_RUN` to `true`:
+
+```bash
+gcloud functions deploy mss-to-remedy-create-prod \
+  --gen2 \
+  --runtime python312 \
+  --trigger-http \
+  --allow-unauthenticated \
+  --entry-point jira_to_helix_create_prod \
+  --project pccw-internal-virtual-agent \
+  --region europe-west2 \
+  --service-account jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com \
+  --vpc-connector projects/pccw-internal-virtual-agent/locations/europe-west2/connectors/eu-prod-wanda-vpc-conn \
+  --egress-settings all \
+  --update-env-vars DRY_RUN=true \
+  --source CloudFunctions/jira-to-helix/mss-to-remedy-create-prod/ \
+  --timeout 120 \
+  --memory 512MB
+```
+
+When dry-run is enabled, the function logs the would-post Helix payload and stops before Helix/Jira writes.
 
 ## MSS Automation Setup (Production)
 

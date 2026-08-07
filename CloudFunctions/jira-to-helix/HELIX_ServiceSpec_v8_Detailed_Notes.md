@@ -95,7 +95,7 @@ Mandatory attributes/rules called out in spec text:
 - notes.@type: value must be "faultsymptom" in create flow context.
 - notes.id: note.id="Item" is explicitly called mandatory to describe fault symptom.
 - notes.text: must use allowed item values from Section 5.2.
-- relatedEntity: service profile on customer id and sr id are key pairs to the ticket.
+- relatedEntity: service profile on customer id and srId are key pairs to the ticket.
 
 Non-mandatory attributes/rules called out:
 - troubleTicket.description: optional.
@@ -131,7 +131,7 @@ Endpoint and headers:
 Filter contract text:
 - relatedEntity.customerId: mandatory for selection.
 - status: mandatory in table text.
-- relatedEntity.sr: optional.
+- relatedEntity.srId: optional.
 - Additional caveat in spec text:
   - Not all first-level troubleTicket attributes are filterable.
   - Status defaults to IN PROGRESS if not provided.
@@ -218,6 +218,8 @@ Current integration pattern (as observed in local UAT/prod scripts) broadly alig
 - Sends Authorization bearer token and custom X-System-Id header (X-System-Id is implementation-specific, not in the spec tables, but accepted in tenant tests).
 - Sends faultsymptom notes array in create flow.
 - Uses PATCH with @type=worklog notes for comment sync.
+- Uses the tenant-validated create notes trio `category/item/type = Others` because that is the currently working create contract in UAT and PROD dry-run validation.
+- Appends a readable Jira source trace block to the Remedy description with Jira customer ID, Jira SR no, created, updated, resolved, assignee, and resolution.
 
 Known divergences/ambiguities to track:
 - Spec notes.id text says Item mandatory with specific naming conventions, while practical tenant tests accepted category/item/type faultsymptom tuple and worklog id conventions.
@@ -230,6 +232,9 @@ For Jira-closed-ticket duplication use cases:
   - Jira issue created timestamp.
   - Jira comment created/updated timestamps.
   - Jira closure timestamp.
+- Current implementation behavior:
+  - exact Jira timestamps are embedded in the Remedy description and logged for auditability.
+  - native Helix timestamp backfill remains feature-flagged and must be validated before relying on it.
 - Spec-level possible fields:
   - troubleTicket.creationDate exists in create model and is optional.
   - notes.date exists in model, but patch rules narrow notes usage to worklog adds.
@@ -243,6 +248,7 @@ For Jira-closed-ticket duplication use cases:
 - Create tests:
   - Minimal mandatory payload acceptance.
   - notes.id/value compliance for faultsymptom items.
+  - Tenant-accepted `category/item/type = Others` pattern.
   - Explicit vs omitted ticketType behavior.
   - Explicit creationDate acceptance and round-trip retrieval check.
 - Patch tests:

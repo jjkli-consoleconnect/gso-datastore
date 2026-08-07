@@ -230,9 +230,9 @@ This section is the authoritative guide for syncing Jira comments to Helix workl
 ### 11.2 Function and Runtime Contract
 
 - Cloud Function:
-  - `jira-to-helix-create-uat`
+  - `mss-to-remedy-create-uat`
 - Trigger URL:
-  - `https://europe-west2-pccw-internal-virt-agent-uat.cloudfunctions.net/jira-to-helix-create-uat`
+  - `https://europe-west2-pccw-internal-virt-agent-uat.cloudfunctions.net/mss-to-remedy-create-uat`
 - Region / network:
   - `europe-west2`, VPC connector `eu-uat-wanda-vpc-conn`, egress `ALL_TRAFFIC`
 - Auth header toward Helix:
@@ -242,6 +242,8 @@ This section is the authoritative guide for syncing Jira comments to Helix workl
 ### 11.3 Jira Automation Rules Required
 
 Create two Jira Automation rules, both posting to the same URL:
+
+The same endpoint handles issue-created and comment-edited payloads. The function inspects the webhook contents and routes create, comment replay, and close-triggered duplication internally.
 
 1. Rule A
    - Trigger: `Issue commented`
@@ -294,6 +296,8 @@ For comment sync to work, the Jira issue must already contain the mapped Helix t
 - `customfield_14905`
 - `customfield_10161`
 - `customfield_15154`
+
+Current create flow also backfills the first writable field from the same candidate list after Helix create succeeds. In the current sandbox, `customfield_14905` was writable when `customfield_10647` returned 400.
 
 If none exists, comment sync fails with:
 
@@ -475,17 +479,17 @@ If no worklog is posted and function says no ticket number:
 
 ### 12.6 Code Notes
 
-- File: `CloudFunctions/jira-to-helix/jira-to-helix-create-uat/main.py`
+- File: `CloudFunctions/jira-to-helix/mss-to-remedy-create-uat/main.py`
 - Keep `relatedParty` reserved for actual contact info only.
 - Do not reintroduce `relatedParty` with `role = "Assigned Group"`.
 - Any future support-group change should be validated against Helix UI with a fresh dummy create before deploying.
 
 ### 12.7 Deployment Record
 
-- Function: `jira-to-helix-create-uat`
+- Function: `mss-to-remedy-create-uat`
 - Region: `europe-west2`
-- Current validated revision: `jira-to-helix-create-uat-00034-jaf`
-- Date of findings: `2026-05-22`
+- Current validated revision: `mss-to-remedy-create-uat-00026-qug`
+- Date of findings: `2026-08-07`
 
 ### 12.8 Scope Note
 

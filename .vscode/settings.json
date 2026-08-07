@@ -101,5 +101,6 @@
   },
   "[jsonc]": {
     "editor.defaultFormatter": "vscode.json-language-features"
-  }
+  },
+  "python-envs.defaultEnvManager": "ms-python.python:system"
 }
