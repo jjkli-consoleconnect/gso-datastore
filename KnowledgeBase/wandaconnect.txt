@@ -1,0 +1,55 @@
+curl -X POST "$ADK_API_URL/apps/wanda_chatbot/users/<your sample user>/sessions/<generate your own session id>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform": "slack",
+    "slackChatInterface": "DM"
+  }'Just dont change these 2
+"platform": "slack",
+"slackChatInterface": "DM"
+
+
+
+
+
+
+
+Talking to wanda
+
+Body
+{
+  "app_name": "wanda_chatbot",
+  "user_id": "<your sample user>",
+  "session_id": "<your own generated session id>",
+  "new_message": {
+    "role": "user",
+    "parts": [
+      { "text": "give me the detail report of INC000006739190" }
+    ]
+  }
+}
+
+
+
+Sample call
+
+
+
+curl -X POST "$ADK_API_URL/run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "app_name": "wanda_chatbot",
+    "user_id": "<your sample user>",
+    "session_id": "<your own generated session id>",
+    "new_message": {
+      "role": "user",
+      "parts": [{ "text": "hello, what can you help with?" }]
+    }
+  }'
+
+
+
+
+
+ADK API URL  PROD = https://wanda-adk-service-bot-370161436243.europe-west2.run.app
+
+ADK API URL UAT = https://wanda-adk-service-bot-14417857267.europe-west2.run.app

@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  wanda-backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "3000:8080"
+    env_file:
+      - backend/.env
+    volumes:
+      - ./frontend:/app/public:ro
+      - ./backend/server.js:/app/server.js:ro
