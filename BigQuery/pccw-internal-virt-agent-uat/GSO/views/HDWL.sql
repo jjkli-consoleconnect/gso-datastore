@@ -112,8 +112,12 @@ SELECT
   ai.AI_ConfidenceScore,
   ai.AI_EvidenceSummary,
   ai.AI_DeviceName,
-  ai.AI_CircuitReference
-  
+  ai.AI_CircuitReference,
+
+  -- PagerDuty escalation fields
+  pd.pagerduty_escalation_count,
+  pd.pagerduty_escalation_policies_used
+
 FROM
   `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
   
@@ -175,7 +179,28 @@ LEFT JOIN (
 ) ai
   ON ai.Incident_Number = h.Incident_Number
   AND ai.rn = 1
-  
+
+LEFT JOIN (
+  SELECT
+    RemedyIncidentNumber,
+    COUNT(*) AS pagerduty_escalation_count,
+    STRING_AGG(escalation_policy_label, ', ' ORDER BY sort_key) AS pagerduty_escalation_policies_used
+  FROM (
+    SELECT DISTINCT
+      RemedyIncidentNumber,
+      escalation_policy_label,
+      CASE
+        WHEN REGEXP_CONTAINS(escalation_policy_label, r'T[0-9]+') THEN CAST(REGEXP_EXTRACT(escalation_policy_label, r'T([0-9]+)') AS INT64)
+        ELSE 999
+      END AS sort_key
+    FROM `pccw-internal-virt-agent-uat.GSO.PagerDutyIncidentCleansed`
+    WHERE RemedyIncidentNumber IS NOT NULL
+      AND escalation_policy_label IS NOT NULL
+  )
+  GROUP BY RemedyIncidentNumber
+) pd
+  ON h.Incident_Number = pd.RemedyIncidentNumber
+
 ORDER BY
   h.Incident_Number,
   w.WorkLog_Submit_Date
