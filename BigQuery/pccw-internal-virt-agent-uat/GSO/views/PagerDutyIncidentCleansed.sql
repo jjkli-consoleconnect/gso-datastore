@@ -4,6 +4,7 @@ SELECT
   incident_type,
   title,
   description,
+  REGEXP_EXTRACT(description, r'INC[0-9]+') AS RemedyIncidentNumber,
   urgency,
   priority,
   service_id,
@@ -122,5 +123,6 @@ SELECT
   sync_time,
   status
 FROM `pccw-internal-virt-agent-uat.GSO.PagerDutyIncidentData`
+
 
 

@@ -12,6 +12,97 @@ WITH UserFirstUse AS (
     GROUP BY
         1
 ),
+TrainingData AS (
+  SELECT
+    TRIM(UPPER(UserID)) AS UserID,
+    REGEXP_REPLACE(LOWER(TRIM(UserID)), r'[^a-z0-9]', '') AS UserID_compact,
+    REGEXP_REPLACE(LOWER(TRIM(ANY_VALUE(First_Name))), r'[^a-z0-9]', '') AS First_Name_compact,
+    REGEXP_REPLACE(LOWER(TRIM(ANY_VALUE(Last_Name))), r'[^a-z0-9]', '') AS Last_Name_compact,
+    REGEXP_REPLACE(LOWER(TRIM(ANY_VALUE(User_Legal_Name))), r'[^a-z0-9]', '') AS Legal_Name_compact,
+    TRIM(REGEXP_REPLACE(ANY_VALUE(Department), r'\s*\(.*$', '')) AS Department,
+    TRIM(REGEXP_REPLACE(ANY_VALUE(Division), r'\s*\(.*$', '')) AS Division,
+    TRIM(
+      REGEXP_REPLACE(
+        REGEXP_REPLACE(
+          REGEXP_REPLACE(
+            REGEXP_REPLACE(
+              REGEXP_REPLACE(
+                REGEXP_REPLACE(
+                  REGEXP_REPLACE(ANY_VALUE(Team), r'\s*\(.*$', ''),
+                  r'(?i)\bProject\s+Management\b',
+                  'PM'
+                ),
+                r'(?i)\bInformation\s+Security\b',
+                'InfoSec'
+              ),
+              r'(?i)\bManagement\b',
+              'Mgmt'
+            ),
+            r'(?i)\bTechnology\b',
+            'Tech'
+          ),
+          r'(?i)\bDevelopment\b',
+          'Dev'
+        ),
+        r'(?i)\bEngineering\b',
+        'Eng'
+      )
+    ) AS Team
+  FROM
+    `pccw-internal-virt-agent-uat.GSO.TrainingData_cleaned`
+  WHERE
+    UserID IS NOT NULL
+  GROUP BY
+    1,
+    2
+),
+TrainingDataByName AS (
+  SELECT
+    FullName_compact,
+    ANY_VALUE(Department) AS Department,
+    ANY_VALUE(Division) AS Division,
+    ANY_VALUE(Team) AS Team
+  FROM (
+    SELECT
+      CONCAT(IFNULL(First_Name_compact, ''), IFNULL(Last_Name_compact, '')) AS FullName_compact,
+      Department,
+      Division,
+      Team
+    FROM
+      TrainingData
+    UNION ALL
+    SELECT
+      Legal_Name_compact AS FullName_compact,
+      Department,
+      Division,
+      Team
+    FROM
+      TrainingData
+    WHERE
+      Legal_Name_compact IS NOT NULL
+      AND Legal_Name_compact != ''
+  )
+  WHERE
+    FullName_compact IS NOT NULL
+    AND FullName_compact != ''
+  GROUP BY
+    1
+),
+ManualOverrides AS (
+  SELECT 'ASFYEUNG' AS slack_userid, 'ANGIE.SF.YEUNG' AS override_userid UNION ALL
+  SELECT 'GKFWAN', 'GARY.KF.WAN' UNION ALL
+  SELECT 'TWLUK', 'JASON.TW.LUK' UNION ALL
+  SELECT 'JBELATCHA', 'JOHNMELVIN.JM.BELATCHA' UNION ALL
+  SELECT 'LROLLONFR', 'ROLLON.LEOPOLDOJR' UNION ALL
+  SELECT 'PPANG', 'PATTEN.TP.PANG' UNION ALL
+  SELECT 'RWKWONG', 'RICKY.WK2.WONG' UNION ALL
+  SELECT 'SSORIANO', 'SORIANO.SHERWIN' UNION ALL
+  SELECT 'SMAN', 'SIMON.W.MAN' UNION ALL
+  SELECT 'SWYCHOI2', 'SOLA.WY.CHOI' UNION ALL
+  SELECT 'VWCLEE', 'VICTOR.WC.LEE' UNION ALL
+  SELECT 'YLI', 'YIKIE.Y.LI' UNION ALL
+  SELECT 'JCKATIPUNAN', 'JOANCOLLEEN.KATIPUNAN'
+),
 BaseConversationData AS (
     SELECT
         REGEXP_EXTRACT(cc.conversationName, r"conversations\/([a-zA-Z0-9-_]+)$") AS conversation_id,
@@ -42,6 +133,10 @@ BaseConversationData AS (
         JSON_VALUE(df.request, "$.queryInput.text.text") AS user_query_text,
         JSON_VALUE(df.request, "$.queryParams.payload.data.channel_id") AS platform_channel,
         JSON_VALUE(df.request, "$.queryParams.payload.data.email") AS slack_email,
+        REGEXP_EXTRACT(
+          JSON_VALUE(df.request, "$.queryParams.payload.data.email"),
+          r'^[^@]+'
+        ) AS slack_UserID,
         JSON_VALUE(df.request, "$.queryParams.payload.data.files") AS slack_attached_files,
         JSON_VALUE(df.request, "$.queryParams.payload.data.full_name") AS slack_fullname,
         JSON_VALUE(df.request, "$.queryParams.payload.data.team_id") AS slack_team_id,
@@ -173,11 +268,11 @@ BaseConversationData AS (
         CAST(JSON_VALUE(df.derived_data, "$.responseMetrics.stepMetrics[0].latency.seconds") AS FLOAT64)
         + CAST(JSON_VALUE(df.derived_data, "$.responseMetrics.stepMetrics[0].latency.nanos") AS FLOAT64) / 1e9
         AS step_1_latency_seconds,
-        JSON_VALUE(df.derived_data, "$.responseMetrics[0].name") AS step_1_name, 
+        JSON_VALUE(df.derived_data, "$.responseMetrics[0].name") AS step_1_name,
         CAST(JSON_VALUE(df.derived_data, "$.responseMetrics.stepMetrics[1].latency.seconds") AS FLOAT64)
         + CAST(JSON_VALUE(df.derived_data, "$.responseMetrics.stepMetrics[1].latency.nanos") AS FLOAT64) / 1e9
         AS step_2_latency_seconds,
-        JSON_VALUE(df.derived_data, "$.responseMetrics[1].name") AS step_2_name, 
+        JSON_VALUE(df.derived_data, "$.responseMetrics[1].name") AS step_2_name,
         JSON_VALUE(df.derived_data, "$.timeZone") AS time_zone,
         JSON_QUERY(df.derived_data, "$.webhookPayloads") AS webhook_payloads,
         JSON_QUERY(df.derived_data, "$.webhookStatuses") AS webhook_statuses,
@@ -237,6 +332,10 @@ SELECT
     b.user_query_text,
     b.platform_channel,
     b.slack_email,
+    b.slack_UserID,
+    COALESCE(td_id.Department, td_override.Department, td_name.Department) AS Department,
+    COALESCE(td_id.Division, td_override.Division, td_name.Division) AS Division,
+    COALESCE(td_id.Team, td_override.Team, td_name.Team) AS Team,
     b.slack_attached_files,
     b.slack_fullname,
     b.slack_team_id,
@@ -291,10 +390,10 @@ SELECT
     b.request_id,
     b.input_audio_duration,
     b.output_audio_duration,
-    b.step_1_latency_seconds, 
-    b.step_1_name,          
-    b.step_2_latency_seconds, 
-    b.step_2_name,          
+    b.step_1_latency_seconds,
+    b.step_1_name,
+    b.step_2_latency_seconds,
+    b.step_2_name,
     b.time_zone,
     b.webhook_payloads,
     b.webhook_statuses,
@@ -307,5 +406,18 @@ FROM
     BaseConversationData b
 LEFT JOIN
     UserFirstUse ufu ON b.slack_user_id = ufu.slack_user_id
+LEFT JOIN
+  TrainingData td_id ON TRIM(UPPER(b.slack_UserID)) = td_id.UserID
+LEFT JOIN
+  ManualOverrides mo ON TRIM(UPPER(b.slack_UserID)) = mo.slack_userid
+LEFT JOIN
+  TrainingData td_override ON mo.override_userid = td_override.UserID
+LEFT JOIN
+  TrainingDataByName td_name ON td_id.UserID IS NULL
+    AND td_override.UserID IS NULL
+    AND REGEXP_REPLACE(
+      LOWER(TRIM(REGEXP_REPLACE(b.slack_fullname, r'\s*\([^)]*\)\s*', ''))),
+      r'[^a-z0-9]', ''
+    ) = td_name.FullName_compact
 
 ORDER BY b.requisitionStartTime DESC

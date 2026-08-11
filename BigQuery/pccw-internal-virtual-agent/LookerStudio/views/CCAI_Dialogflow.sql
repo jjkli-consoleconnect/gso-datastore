@@ -29,6 +29,9 @@ TrainingData AS (
   SELECT
     TRIM(UPPER(UserID)) AS UserID,
     REGEXP_REPLACE(LOWER(TRIM(UserID)), r'[^a-z0-9]', '') AS UserID_compact,
+    REGEXP_REPLACE(LOWER(TRIM(ANY_VALUE(First_Name))), r'[^a-z0-9]', '') AS First_Name_compact,
+    REGEXP_REPLACE(LOWER(TRIM(ANY_VALUE(Last_Name))), r'[^a-z0-9]', '') AS Last_Name_compact,
+    REGEXP_REPLACE(LOWER(TRIM(ANY_VALUE(User_Legal_Name))), r'[^a-z0-9]', '') AS Legal_Name_compact,
     TRIM(REGEXP_REPLACE(ANY_VALUE(Department), r'\s*\(.*$', '')) AS Department,
     TRIM(REGEXP_REPLACE(ANY_VALUE(Division), r'\s*\(.*$', '')) AS Division,
     TRIM(
@@ -66,17 +69,35 @@ TrainingData AS (
     1,
     2
 ),
-TrainingDataCompact AS (
+TrainingDataByName AS (
   SELECT
-    UserID_compact,
+    FullName_compact,
     ANY_VALUE(Department) AS Department,
     ANY_VALUE(Division) AS Division,
     ANY_VALUE(Team) AS Team
-  FROM
-    TrainingData
+  FROM (
+    SELECT
+      CONCAT(IFNULL(First_Name_compact, ''), IFNULL(Last_Name_compact, '')) AS FullName_compact,
+      Department,
+      Division,
+      Team
+    FROM
+      TrainingData
+    UNION ALL
+    SELECT
+      Legal_Name_compact AS FullName_compact,
+      Department,
+      Division,
+      Team
+    FROM
+      TrainingData
+    WHERE
+      Legal_Name_compact IS NOT NULL
+      AND Legal_Name_compact != ''
+  )
   WHERE
-    UserID_compact IS NOT NULL
-    AND UserID_compact != ''
+    FullName_compact IS NOT NULL
+    AND FullName_compact != ''
   GROUP BY
     1
 ),
@@ -484,9 +505,12 @@ LEFT JOIN
 LEFT JOIN
   TrainingData td_override ON mo.override_userid = td_override.UserID
 LEFT JOIN
-  TrainingDataCompact td_name ON td_id.UserID IS NULL
+  TrainingDataByName td_name ON td_id.UserID IS NULL
     AND td_override.UserID IS NULL
-    AND REGEXP_REPLACE(LOWER(TRIM(b.slack_fullname)), r'[^a-z0-9]', '') = td_name.UserID_compact
+    AND REGEXP_REPLACE(
+      LOWER(TRIM(REGEXP_REPLACE(b.slack_fullname, r'\s*\([^)]*\)\s*', ''))),
+      r'[^a-z0-9]', ''
+    ) = td_name.FullName_compact
 
 
 ORDER BY b.requisitionStartTime DESC
