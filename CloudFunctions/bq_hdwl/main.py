@@ -67,7 +67,7 @@ CSV_CONFIGURATIONS = [
             "Cust_ID", "Carrier", "Customer_Name", "SRno", "LastResolvedDate", "ReportedDate",
             "RespondedDate", "FaultCauseDetail", "LastModifiedDate", "ReportedBy",
             "Product_Family", "ProductDescription", "GSMP_Circuit_ID", "Urgency", "Priority",
-            "RSMName"
+            "RSMName", "Summary", "Fault_Location", "Service_Type", "Destination"
         ],
         "field_map": {
             "IncidentNumber": "Incident_Number", "casetype": "CaseType", "Assigned Group": "Assigned_Group",
@@ -79,7 +79,7 @@ CSV_CONFIGURATIONS = [
             "Closed Date": "Closed_Date", "Submit Date": "Submit_Date", "ClosedBy": "Closed_By",
             "Cust ID": "Cust_ID", "CustomerName": "Customer_Name", "SRno": "SRno", "ReportedBy": "ReportedBy",
             "Product Family": "Product_Family", "ProductDescription": "ProductDescription",
-            "GSMP Circuit ID": "GSMP_Circuit_ID", "RSM Name": "RSMName", "RSMName": "RSMName"
+            "GSMP Circuit ID": "GSMP_Circuit_ID", "RSM Name": "RSMName", "Summary": "Summary", "Fault Location": "Fault_Location", "Service Type": "Service_Type", "Destination": "Destination"
         },
         "timestamp_fields": [
             "GCSC_1st_Customer_Update", "GCSC_2nd_Customer_Update", "GCSC_3rd_Customer_Update",
@@ -615,7 +615,7 @@ def process_csv_attachment(service, message_id: str, attachment_filename: str, c
                 is_ts = header in config['timestamp_fields']
                 is_int = header in config['integer_fields']
                 normalized_value = handle_empty_values(value, is_ts, is_int)
-                if header == "RSMName":
+                if header in ["RSMName", "Summary", "Fault_Location", "Service_Type", "Destination"]:
                     normalized_value = normalize_rsm_name(normalized_value)
                 obj[header] = normalized_value
             ndjson_lines.append(json.dumps(obj))

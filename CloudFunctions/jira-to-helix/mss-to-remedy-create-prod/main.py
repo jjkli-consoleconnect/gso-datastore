@@ -217,6 +217,10 @@ def get_helix_ticket(ticket_id: str, token: str, dry_run: bool = False) -> Optio
     if not ticket_id:
         raise ValueError("ticket_id is required")
 
+    if dry_run:
+        logger.info(f"[DRY-RUN] Would GET Helix ticket {ticket_id}")
+        return None
+
     host_name = get_secret(JIRA_TO_HELIX_HOST_NAME_SECRET)
     if host_name:
         host_name = host_name.strip()
@@ -240,10 +244,6 @@ def get_helix_ticket(ticket_id: str, token: str, dry_run: bool = False) -> Optio
         "Content-Type": "application/json",
         "Host": HELIX_HOST_HEADER,
     }
-
-    if dry_run:
-        logger.info(f"[DRY-RUN] Would GET {url}")
-        return None
 
     try:
         resp = requests.get(url, headers=headers, timeout=30, verify=verify_tls)
@@ -281,6 +281,13 @@ def create_helix_worklog(
     Returns:
         True if PATCH succeeded
     """
+    if dry_run:
+        logger.info(
+            f"[DRY-RUN] Would create Helix worklog on {helix_id}: "
+            f"{json.dumps(note_payload, indent=2)}"
+        )
+        return True
+
     host_name = get_secret(JIRA_TO_HELIX_HOST_NAME_SECRET)
     if host_name:
         host_name = host_name.strip()
@@ -309,10 +316,6 @@ def create_helix_worklog(
         "notes": [note_payload],
     }
 
-    if dry_run:
-        logger.info(f"[DRY-RUN] Would PATCH {url} with payload: {json.dumps(payload, indent=2)}")
-        return True
-
     try:
         resp = requests.patch(url, json=payload, headers=headers, timeout=30, verify=verify_tls)
         if resp.status_code >= 400:
@@ -336,6 +339,13 @@ def patch_helix_ticket(
     """
     PATCH an existing Helix ticket with provided payload.
     """
+    if dry_run:
+        logger.info(
+            f"[DRY-RUN] Would PATCH Helix ticket {helix_id}: "
+            f"{json.dumps(payload, indent=2)}"
+        )
+        return True
+
     host_name = get_secret(JIRA_TO_HELIX_HOST_NAME_SECRET)
     if host_name:
         host_name = host_name.strip()
@@ -359,10 +369,6 @@ def patch_helix_ticket(
         "Content-Type": "application/json",
         "Host": HELIX_HOST_HEADER,
     }
-
-    if dry_run:
-        logger.info(f"[DRY-RUN] Would PATCH {url} with payload: {json.dumps(payload, indent=2)}")
-        return True
 
     try:
         resp = requests.patch(url, json=payload, headers=headers, timeout=30, verify=verify_tls)
@@ -2078,7 +2084,8 @@ def jira_to_helix_create_prod(request):
 
             if not helix_id:
                 error_msg = "No Remedy ticket number found on Jira issue"
-                record_comment_sync(jira_key, None, comment_sync_key, "failed", error_msg)
+                if not DRY_RUN:
+                    record_comment_sync(jira_key, None, comment_sync_key, "failed", error_msg)
                 logger.error(f"[{correlation_id}] {error_msg} for {jira_key}")
                 return {
                     "status": "error",
@@ -2092,7 +2099,8 @@ def jira_to_helix_create_prod(request):
             helix_token = get_helix_token()
             create_helix_worklog(helix_id, worklog_note, helix_token, dry_run=DRY_RUN)
 
-            record_comment_sync(jira_key, helix_id, comment_sync_key, "success")
+            if not DRY_RUN:
+                record_comment_sync(jira_key, helix_id, comment_sync_key, "success")
             logger.info(
                 f"[{correlation_id}] ✓ Comment sync complete: {jira_key} comment={source_comment_id} "
                 f"event={comment_data.get('comment_event')} key={comment_sync_key} → {helix_id}"
@@ -2284,7 +2292,7 @@ def jira_to_helix_create_prod(request):
         
         # Best-effort failure recording
         try:
-            if jira_key:
+            if jira_key and not DRY_RUN:
                 record_sync(jira_key, None, "failed", str(e))
                 send_slack_email_alert(jira_key, None, "failed", str(e))
         except:
