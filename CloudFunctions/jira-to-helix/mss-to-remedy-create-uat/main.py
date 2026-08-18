@@ -602,21 +602,34 @@ def flatten_jira_rich_text(value: Any) -> str:
     if not isinstance(value, dict):
         return str(value).strip()
 
-    chunks: list[str] = []
+    block_types = {
+        "doc",
+        "blockquote",
+        "bulletList",
+        "orderedList",
+        "listItem",
+        "table",
+        "tableRow",
+    }
 
-    def walk(node: Any) -> None:
-        if isinstance(node, dict):
-            text_value = node.get("text")
-            if isinstance(text_value, str) and text_value:
-                chunks.append(text_value)
-            for child in node.get("content", []):
-                walk(child)
-        elif isinstance(node, list):
-            for child in node:
-                walk(child)
+    def render(node: Any) -> str:
+        if isinstance(node, str):
+            return node
+        if isinstance(node, list):
+            return "".join(render(child) for child in node)
+        if not isinstance(node, dict):
+            return ""
 
-    walk(value)
-    return "\n".join(part.strip() for part in chunks if part and part.strip()).strip()
+        node_type = str(node.get("type", ""))
+        if node_type == "text":
+            return str(node.get("text", ""))
+        if node_type == "hardBreak":
+            return "\n"
+
+        separator = "\n" if node_type in block_types else ""
+        return separator.join(render(child) for child in node.get("content", []))
+
+    return render(value).strip()
 
 
 def extract_jira_attachment_labels(comment: Dict[str, Any]) -> list[str]:

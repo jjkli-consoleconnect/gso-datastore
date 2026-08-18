@@ -53,7 +53,7 @@ HELIX_PRIORITY = "Low"
 HELIX_ASSIGNED_GROUP = "ASOC"
 HELIX_CHANNEL = "API"
 HELIX_WORKLOG_TYPE = "JIRA Work Log"
-DEFAULT_MSS_CUSTOMER_ID = os.environ.get("JIRA_TO_HELIX_DEFAULT_CUSTOMER_ID", "TMS").strip()
+DEFAULT_MSS_CUSTOMER_ID = os.environ.get("JIRA_TO_HELIX_DEFAULT_CUSTOMER_ID", "TMSTKL").strip()
 DEFAULT_ASOC_SR_NO = "SR128190"
 
 # Jira custom fields for Helix ID backlink.
@@ -64,15 +64,15 @@ JIRA_REMEDY_TICKET_NUMBER_FIELDS = [
     "customfield_10161",  # Remedy Ticket Number
     "customfield_15154",  # Remedy Incident Number
 ]
-JIRA_MSS_CUSTOMER_FIELD = "customfield_11247"  # MSS customer / customer ID (preferred)
-JIRA_CUSTOMER_ID_FIELD = "customfield_20270"  # Legacy customer ID field
-JIRA_SR_NUMBER_FIELD = "customfield_10878"    # SR Number
-JIRA_SR_REF_FIELD = "customfield_10228"       # SR Ref
-JIRA_SP_SR_FIELD = "customfield_11510"        # SP # / SR #
+JIRA_MSS_CUSTOMER_FIELD = "customfield_16097"  # Customer ID (preferred in production)
+JIRA_CUSTOMER_ID_FIELD = "customfield_11364"  # MSS customer label fallback
+JIRA_SR_NUMBER_FIELD = "customfield_10638"    # SR Number
+JIRA_SR_REF_FIELD = "customfield_10382"       # SR Ref
+JIRA_SP_SR_FIELD = "customfield_11627"        # SP # / SR #
 JIRA_USN_FIELDS = [
-    "customfield_10878",  # SR Number
-    "customfield_10228",  # SR Ref
-    "customfield_11510",  # SP # / SR #
+    "customfield_10638",  # SR Number
+    "customfield_10382",  # SR Ref
+    "customfield_11627",  # SP # / SR #
     "customfield_11810",  # USN / Service Request identifier (common fallback)
     "customfield_11111",  # Generic fallback USN-like field
 ]
@@ -602,6 +602,13 @@ def is_issue_created_event(webhook_event: Any, issue_event_type_name: str) -> bo
     return webhook_event_text == "jira:issue_created" or issue_event_text == "issue_created"
 
 
+def is_comment_event(webhook_event: Any, issue_event_type_name: str) -> bool:
+    """Return True when Jira explicitly identifies a comment create/update event."""
+    webhook_event_text = str(webhook_event or "").strip().lower()
+    issue_event_text = str(issue_event_type_name or "").strip().lower()
+    return "comment" in webhook_event_text or "comment" in issue_event_text
+
+
 def flatten_jira_rich_text(value: Any) -> str:
     """
     Flatten Jira Atlassian Document Format or primitive text to plain text.
@@ -613,21 +620,34 @@ def flatten_jira_rich_text(value: Any) -> str:
     if not isinstance(value, dict):
         return str(value).strip()
 
-    chunks: list[str] = []
+    block_types = {
+        "doc",
+        "blockquote",
+        "bulletList",
+        "orderedList",
+        "listItem",
+        "table",
+        "tableRow",
+    }
 
-    def walk(node: Any) -> None:
-        if isinstance(node, dict):
-            text_value = node.get("text")
-            if isinstance(text_value, str) and text_value:
-                chunks.append(text_value)
-            for child in node.get("content", []):
-                walk(child)
-        elif isinstance(node, list):
-            for child in node:
-                walk(child)
+    def render(node: Any) -> str:
+        if isinstance(node, str):
+            return node
+        if isinstance(node, list):
+            return "".join(render(child) for child in node)
+        if not isinstance(node, dict):
+            return ""
 
-    walk(value)
-    return "\n".join(part.strip() for part in chunks if part and part.strip()).strip()
+        node_type = str(node.get("type", ""))
+        if node_type == "text":
+            return str(node.get("text", ""))
+        if node_type == "hardBreak":
+            return "\n"
+
+        separator = "\n" if node_type in block_types else ""
+        return separator.join(render(child) for child in node.get("content", []))
+
+    return render(value).strip()
 
 
 def extract_jira_attachment_labels(comment: Dict[str, Any]) -> list[str]:
@@ -1167,7 +1187,8 @@ def map_jira_to_helix(
         desc_text = source_description
 
     # Build Helix payload.
-    # This flow intentionally forces the default customer/SR pair for Helix create.
+    # The Helix tenant accepts the create request only when the default customer/SR
+    # pair is present as relatedEntity entries, so populate them explicitly.
     related_entity = [
         {
             "name": DEFAULT_MSS_CUSTOMER_ID,
@@ -1572,6 +1593,35 @@ def acquire_close_dup_window_lock(
         return False
 
 
+def release_close_dup_window_lock(
+    jira_key: str,
+    lock_phase_key: str,
+    error_msg: str,
+) -> bool:
+    """Mark an acquired close-create lock failed so the same window can be retried."""
+    try:
+        client = bigquery.Client(project=PROJECT_ID)
+        query = f"""
+        UPDATE `{PROJECT_ID}.{DATASET_ID}.{CLOSE_DUP_TABLE_ID}`
+        SET sync_status = 'failed', error_message = @error_msg
+        WHERE jira_key = @jira_key
+          AND phase_key = @phase_key
+          AND sync_status = 'in_progress'
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("jira_key", "STRING", jira_key),
+                bigquery.ScalarQueryParameter("phase_key", "STRING", lock_phase_key),
+                bigquery.ScalarQueryParameter("error_msg", "STRING", error_msg),
+            ]
+        )
+        client.query(query, job_config=job_config).result()
+        return True
+    except Exception as e:
+        logger.warning(f"Close dup lock release failed jira_key={jira_key} phase={lock_phase_key}: {e}")
+        return False
+
+
 def record_close_dup_phase(
     jira_key: str,
     helix_id: Optional[str],
@@ -1688,7 +1738,7 @@ def process_closed_ticket_duplication(
             "close_ts": incoming_close_ts,
             "correlation_id": correlation_id,
         }
-        lock_acquired = acquire_close_dup_window_lock(
+        lock_acquired = DRY_RUN or acquire_close_dup_window_lock(
             jira_key,
             create_window_lock_phase_key,
             phase_meta=lock_meta,
@@ -1712,7 +1762,20 @@ def process_closed_ticket_duplication(
 
         helix_payload = map_jira_closed_issue_to_helix(jira_issue, jira_key)
         logger.info(f"[{correlation_id}] Close-dup create payload: {json.dumps(helix_payload, indent=2)}")
-        helix_id = create_helix_ticket(helix_payload, helix_token, dry_run=DRY_RUN) or ""
+        try:
+            helix_id = create_helix_ticket(helix_payload, helix_token, dry_run=DRY_RUN) or ""
+        except Exception as e:
+            if not DRY_RUN:
+                release_close_dup_window_lock(jira_key, create_window_lock_phase_key, str(e))
+                record_close_dup_phase(
+                    jira_key,
+                    None,
+                    create_phase_key,
+                    "failed",
+                    str(e),
+                    phase_meta=lock_meta,
+                )
+            raise
         if DRY_RUN and not helix_id:
             helix_id = f"DRYRUN-{jira_key}"
         if not helix_id:
@@ -1976,6 +2039,7 @@ def jira_to_helix_create_prod(request):
 
     try:
         raw_payload = request.get_data(as_text=True) or ""
+        recovered_malformed_payload = False
 
         # Parse request. Use silent mode so malformed JSON returns a controlled 400 instead of raising.
         webhook_data = request.get_json(silent=True)
@@ -1983,6 +2047,7 @@ def jira_to_helix_create_prod(request):
             recovered_payload = parse_loose_jira_webhook_payload(raw_payload)
             if recovered_payload is not None:
                 webhook_data = recovered_payload
+                recovered_malformed_payload = True
                 logger.warning(
                     f"[{correlation_id}] Recovered malformed Jira JSON payload via loose parser"
                 )
@@ -2035,9 +2100,33 @@ def jira_to_helix_create_prod(request):
         if issue_key_hint and not issue_data.get("key"):
             issue_data["key"] = issue_key_hint
 
+        if recovered_malformed_payload and issue_key_hint:
+            issue_data = get_jira_issue(str(issue_key_hint), JIRA_BASE_URL)
+            webhook_data["issue"] = issue_data
+            logger.info(
+                f"[{correlation_id}] Hydrated recovered payload with live Jira issue {issue_key_hint}"
+            )
+
         if issue_data:
             webhook_data["issue"] = issue_data
         has_comment = isinstance(webhook_data.get("comment"), dict)
+
+        issue_fields = issue_data.get("fields") if isinstance(issue_data, dict) else {}
+        closed_issue_event = (
+            DUPLICATE_ON_CLOSE_ENABLED
+            and issue_is_closed(issue_fields)
+            and not is_comment_event(webhook_event, issue_event_type_name)
+        )
+        if closed_issue_event:
+            jira_key = str(issue_key_hint or issue_data.get("key") or "").strip()
+            if not jira_key:
+                jira_key = extract_jira_key_fallback(webhook_data, raw_payload)
+            if not jira_key:
+                logger.error(f"[{correlation_id}] No Jira key in close webhook")
+                return {"status": "error", "message": "Missing issue key"}, 400
+
+            logger.info(f"[{correlation_id}] Processing closed-ticket duplication for {jira_key}")
+            return process_closed_ticket_duplication(correlation_id, jira_key, issue_data)
 
         if has_comment:
             jira_key = str(issue_key_hint or "").strip()
@@ -2114,19 +2203,6 @@ def jira_to_helix_create_prod(request):
                 "comment_event": comment_data.get("comment_event", "created"),
                 "correlation_id": correlation_id,
             }, 200
-
-        if DUPLICATE_ON_CLOSE_ENABLED:
-            issue_fields = issue_data.get("fields") if isinstance(issue_data, dict) else {}
-            if issue_is_closed(issue_fields):
-                jira_key = str(issue_key_hint or issue_data.get("key") or "").strip()
-                if not jira_key:
-                    jira_key = extract_jira_key_fallback(webhook_data, raw_payload)
-                if not jira_key:
-                    logger.error(f"[{correlation_id}] No Jira key in close webhook")
-                    return {"status": "error", "message": "Missing issue key"}, 400
-
-                logger.info(f"[{correlation_id}] Processing closed-ticket duplication for {jira_key}")
-                return process_closed_ticket_duplication(correlation_id, jira_key, issue_data)
 
         # Accept explicit issue-created events for legacy ticket creation flow.
         # Closed events are handled above when the issue payload indicates a resolved state.

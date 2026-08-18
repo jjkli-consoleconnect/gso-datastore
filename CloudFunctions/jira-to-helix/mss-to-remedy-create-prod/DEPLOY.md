@@ -12,11 +12,12 @@ This file is the production source of truth for `mss-to-remedy-create-prod`. Do 
 | Region | `europe-west2` |
 | Function | `mss-to-remedy-create-prod` (Gen 2, Python 3.12) |
 | Entry point | `jira_to_helix_create_prod` |
-| Active revision after this change | `mss-to-remedy-create-prod-00012-zob` |
+| Active revision after this change | `mss-to-remedy-create-prod-00021-xex` |
 | Runtime service account | `jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com` |
 | VPC connector | `eu-prod-wanda-vpc-conn` with all egress |
 | Memory / timeout | `512MB` / `120s` |
 | Production mode | `DRY_RUN=false` |
+| Helix close PATCH | Disabled: `ENABLE_HELIX_CLOSE_PATCH=false` |
 | BigQuery dataset | `pccw-internal-virtual-agent.jiratohelix` (`EU`) |
 
 The revision name is historical evidence, not a deployment target. A later valid deployment will create a newer revision.
@@ -32,7 +33,9 @@ The operational destination is BMC Helix, not BigQuery.
 5. On ticket creation, the function writes the Helix incident ID back to a supported Jira Remedy field.
 6. The function records successful or failed processing in the relevant BigQuery ledger.
 
-The close-duplication workflow creates a new Helix ticket for a Jira close cycle, replays Jira comments, and applies the Helix close transition. Its phase ledger allows retries to resume without repeating completed phases.
+The close-duplication workflow creates a new Helix ticket for a Jira close cycle and replays Jira comments. Its phase ledger allows retries to resume without repeating completed phases. The optional Helix close PATCH is disabled in production because the API rejects the supported status transitions; created tickets remain in the status assigned by Helix.
+
+Malformed Jira Automation JSON is recovered by a loose parser. A recovered payload contains only partial issue data, so the function must hydrate the complete live Jira issue before event routing. A genuinely closed issue takes the close-duplication path unless Jira explicitly identifies the event as a comment event. Do not route solely because a recovered payload contains a `comment` object; the loose parser can synthesize that shape from a transition payload.
 
 ## BigQuery Ledgers
 
@@ -52,10 +55,11 @@ Known validation artifact: `jira_to_helix_sync` contains one failed synthetic ro
 
 ## Environment Variables
 
-The live function must have these as five separate values:
+The live function must have these as six separate values:
 
 ```text
 DRY_RUN=false
+ENABLE_HELIX_CLOSE_PATCH=false
 JIRA_TO_HELIX_DATASET_ID=jiratohelix
 JIRA_TO_HELIX_TABLE_ID=jira_to_helix_sync
 JIRA_TO_HELIX_COMMENT_TABLE_ID=jira_to_helix_comment_sync
@@ -77,7 +81,7 @@ The runtime service account has:
   - `PROD_HELIX_AUTH0_CLIENT_SECRET`
   - `PROD_HOST_NAME`
 
-The `PROD_HOST_NAME` grant was missing before 2026-08-17 and was added during the staged rollout.
+The `PROD_HOST_NAME` grant was missing before 2026-08-17 and was added during the staged rollout. The Helix client ID and client secret were originally stored as UTF-16LE and caused Python UTF-8 decode failures. UTF-8 versions were added as version `4`; older versions remain available for rollback.
 
 ## Dry-Run Contract
 
@@ -86,6 +90,7 @@ The `PROD_HOST_NAME` grant was missing before 2026-08-17 and was added during th
 - No Helix create, GET, or PATCH request.
 - No Jira field update.
 - No BigQuery success or failure ledger write.
+- No close-workflow cooldown lock write.
 - No alert side effect from the top-level exception handler.
 - Logging and BigQuery idempotency reads are allowed.
 
@@ -127,7 +132,7 @@ gcloud functions deploy mss-to-remedy-create-prod `
   --service-account=jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com `
   --vpc-connector=projects/pccw-internal-virtual-agent/locations/europe-west2/connectors/eu-prod-wanda-vpc-conn `
   --egress-settings=all `
-  '--set-env-vars=DRY_RUN=true,JIRA_TO_HELIX_DATASET_ID=jiratohelix,JIRA_TO_HELIX_TABLE_ID=jira_to_helix_sync,JIRA_TO_HELIX_COMMENT_TABLE_ID=jira_to_helix_comment_sync,JIRA_TO_HELIX_CLOSE_DUP_TABLE_ID=jira_to_helix_close_dup_sync' `
+  '--set-env-vars=DRY_RUN=true,ENABLE_HELIX_CLOSE_PATCH=false,JIRA_TO_HELIX_DATASET_ID=jiratohelix,JIRA_TO_HELIX_TABLE_ID=jira_to_helix_sync,JIRA_TO_HELIX_COMMENT_TABLE_ID=jira_to_helix_comment_sync,JIRA_TO_HELIX_CLOSE_DUP_TABLE_ID=jira_to_helix_close_dup_sync' `
   --source='CloudFunctions/jira-to-helix/mss-to-remedy-create-prod/' `
   --timeout=120 `
   --memory=512MB `
@@ -142,11 +147,47 @@ Do not assume another Jira Automation rule is sufficient. The current implementa
 
 - `JIRA_PROJECT = "MSS"` controls fallback Jira-key parsing.
 - MSS custom field IDs and Remedy backlink candidates are hardcoded.
-- The Helix customer/SR pair is forced to `TMS` / `SR128190`.
+- The Helix customer/SR pair is forced to `TMSTKL` / `SR128190`. `TMSTKL` is the production Jira Customer ID; `TMS` is only the MSS customer label and is rejected by Helix SHR profile validation.
 - Helix assignment defaults to `ASOC`.
 - Jira status and close-duplication behavior are based on the MSS workflow.
 
 Before adding another project, make project mapping explicit in configuration or code and add focused tests. The shared ledger tables can still be used. Consider adding a `jira_project` column for easier reporting, although the project can be derived from `jira_key`.
+
+## UAT Mapping Parity
+
+The business-approved UAT `map_jira_to_helix` function is the source of truth. Production mapping logic must remain structurally identical to UAT. Environment-specific constants may differ where Jira projects expose different field IDs or where endpoints, projects, and secrets differ.
+
+Validated production field constants:
+
+| Meaning | Production Jira field | Behavior |
+|---|---|---|
+| Customer ID, preferred | `customfield_16097` | `TMSTKL` on `MSS-8754`; shown as `Jira customer ID: TMSTKL` in the Helix description |
+| MSS customer label, fallback | `customfield_11364` | `TMS`; used only when Customer ID is empty |
+| SR Number | `customfield_10638` | Used for description trace when populated |
+| SR Ref | `customfield_10382` | SR fallback for description trace |
+| SP # / SR # | `customfield_11627` | SR fallback for description trace |
+
+As in UAT, the Helix `relatedEntity` profile is explicitly forced to the validated default pair `TMSTKL/SR128190`. Jira customer/SR values are used for the source trace only. The mapping function's AST was compared with UAT before deploying revision `00019-poy`, and a deployed dry-run returned:
+
+```text
+customerId=TMSTKL
+srId=SR128190
+Jira customer ID: TMSTKL
+Jira SR no: (not provided)
+```
+
+## Jira Comment Formatting
+
+Jira comments use Atlassian Document Format (ADF). Inline formatting such as bold text splits one sentence into multiple adjacent `text` nodes. The previous shared formatter joined every text node with a newline, so bold fragments such as a time, product name, or username appeared on separate lines in Helix.
+
+The formatter was corrected identically in UAT and production:
+
+- Adjacent inline text nodes are concatenated exactly as Jira stores them.
+- Paragraph and other block boundaries produce one newline.
+- Explicit Jira `hardBreak` nodes produce one newline.
+- Existing Remedy worklogs are not rewritten or replayed automatically.
+
+The exact ADF pattern from Jira comment `1720252` on `MSS-8756` was validated locally and through production dry-run revision `00020-qaj`. The resulting worklog text kept `12:46:59`, `Crowdstrike`, and `gkorelis` inline while retaining the three intended paragraphs. Live revision `00021-xex` contains this fix. `MSS-8756` was not triggered or modified during validation.
 
 ## 2026-08-17 Incident And Resolution
 
@@ -173,6 +214,49 @@ The production project never had a `Testing` dataset. The similarly named tables
 - Validated in dry-run, then enabled live revision `00012-zob` with 100% traffic.
 
 The original malformed Jira comment JSON was recovered by the function's loose parser. It was not the cause of the HTTP 500.
+
+### 2026-08-17 16:41 +08:00 routing follow-up
+
+Jira Automation audit event `a41da8fb-655c-49c5-8c36-7e8b03905f0a` ran for closed issue `MSS-8754` and received HTTP 400:
+
+```json
+{"comment_id":"10505","jira_key":"MSS-8754","message":"No Remedy ticket number found on Jira issue","status":"error"}
+```
+
+Cloud Logging showed that malformed JSON recovery had incorrectly routed the transition as a comment webhook. Jira API verification showed the issue was actually `Archived`, status category `done`, with `resolutiondate=2026-08-17T08:41:04.352Z` and no Remedy ID.
+
+Resolution:
+
+- Added explicit comment-event detection based on Jira event names.
+- Hydrate malformed recovered payloads from the live Jira issue before routing.
+- Route a closed issue to close duplication before considering a synthetic comment object, unless Jira explicitly declares a comment event.
+- Made the close-workflow cooldown lock non-mutating in dry-run mode.
+- Removed the redundant second close-routing branch.
+- Replayed a truly malformed `MSS-8754` payload against dry-run revision `00013-bel`; it returned `status=dry_run`, replayed one comment, and left all ledger counts unchanged.
+- Enabled live revision `00014-rut` after validation.
+
+The failed comment-ledger row for `MSS-8754` remains harmless because idempotency checks only treat `sync_status='success'` as processed. Do not delete it without explicit approval.
+
+### MSS-8754 authorized production replay
+
+An explicitly authorized live replay exposed and resolved two additional production issues:
+
+- `PROD_HELIX_AUTH0_CLIENT_ID` and `PROD_HELIX_AUTH0_CLIENT_SECRET` used UTF-16LE encoding. New UTF-8 secret versions were added as version `4` without deleting prior versions.
+- Helix rejected `customerId=TMS` with `srId=SR128190` as an invalid SHR profile. Jira production field `Customer ID` (`customfield_16097`) contained `TMSTKL`, matching the proven UAT default. The production default was corrected to `TMSTKL`.
+- Failed Helix creates previously left a cooldown lock in `in_progress`. The function now marks the lock and create phase failed when creation raises, allowing a controlled retry.
+
+Final result:
+
+- Jira issue: `MSS-8754`
+- Helix ticket: `INC000011481347`
+- Jira backlink: `customfield_10647=INC000011481347`
+- External ID: `MSS-8754-C20260817084104`
+- Jira comments replayed: `1` (`1720053`)
+- Helix notes observed after replay: `4` (three create notes plus one Jira worklog)
+- Helix status observed: `Acknowledged`
+- Idempotency replay result: `duplicate_suppressed` with the same Helix ID
+
+Helix rejected `CLOSED` as an invalid status and returned internal errors for `IN PROGRESS` and `RESOLVED`. Production now sets `ENABLE_HELIX_CLOSE_PATCH=false`; this prevents a misleading HTTP 500 after ticket creation, Jira backlink, and worklog replay have already succeeded.
 
 ## MSS Automation Setup (Production)
 
@@ -219,4 +303,4 @@ gcloud functions describe mss-to-remedy-create-prod `
   --format='yaml(serviceConfig.revision,serviceConfig.environmentVariables,serviceConfig.serviceAccountEmail,serviceConfig.vpcConnector,state)'
 ```
 
-The environment-variable output must show five separate keys. Stop and correct the deployment immediately if `DRY_RUN` contains the other variable assignments in one long value.
+The environment-variable output must show six separate keys. Stop and correct the deployment immediately if `DRY_RUN` contains the other variable assignments in one long value.
