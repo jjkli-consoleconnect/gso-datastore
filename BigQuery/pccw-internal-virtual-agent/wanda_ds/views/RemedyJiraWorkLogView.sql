@@ -14,4 +14,4 @@ LEFT JOIN (
   GROUP BY
     Incident_Number ) AS t2
 ON
-  t1.Incident_Number = t2.Incident_Number;
+  t1.Incident_Number = t2.Incident_Number

@@ -1019,5 +1019,3 @@ LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
   ON CONCAT('SR', st.SR_Ref) = shr.SRNo
 LEFT JOIN LatestAI AS ai
   ON ai.Incident_Number = hd.Incident_Number
-
-

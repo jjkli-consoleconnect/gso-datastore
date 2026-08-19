@@ -1,7 +1,23 @@
+WITH LatestAI AS (
+  SELECT * EXCEPT(rn)
+  FROM (
+    SELECT
+      src.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY src.Incident_Number
+        ORDER BY src.ClassifiedAt DESC
+      ) AS rn
+    FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` AS src
+  )
+  WHERE rn = 1
+)
 SELECT
   remedy_jira.*, 
   worklog_devices.Device_Names,
-  worklog.ExtractedDescription
+  worklog.ExtractedDescription,
+  latest_ai.AI_FaultCause AS AI_FaultCause,
+  latest_ai.AI_FaultCause_Audit AS AI_FaultCause_Audit,
+  latest_ai.AIFault_Audit AS AIFault_Audit
 FROM
   `pccw-internal-virt-agent-uat.wanda_ds.RemedyJira` AS remedy_jira
 LEFT JOIN (
@@ -30,4 +46,8 @@ ON
 LEFT JOIN
   `pccw-internal-virt-agent-uat.wanda_ds.RemedyWorkLog` AS worklog
 ON
-  remedy_jira.Incident_Number = worklog.Incident_Number;
+  remedy_jira.Incident_Number = worklog.Incident_Number
+LEFT JOIN
+  LatestAI AS latest_ai
+ON
+  remedy_jira.Incident_Number = latest_ai.Incident_Number

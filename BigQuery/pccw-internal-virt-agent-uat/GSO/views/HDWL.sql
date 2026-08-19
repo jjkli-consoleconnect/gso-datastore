@@ -22,6 +22,9 @@ SELECT
   h.Fault_Cause,
   h.FaultCauseDetail as Fault_Cause_Detail,
   h.inserted_at,
+  h.Summary,
+  h.Fault_Location,
+  h.Service_Type,
   ai.AI_FaultCause AS AIFaultCause,
   h.Priority,
   h.Urgency,
@@ -34,6 +37,7 @@ SELECT
   h.TrueMTTR_mins,
   h.GCSC_1st_Customer_Update,
   h.GCSC_2nd_Customer_Update,
+  h.GCSC_3rd_Customer_Update,
   CASE WHEN h.Status = 'Assigned' THEN "1-Assigned"
         WHEN h.Status = 'In Progress' THEN "2-In Progress"
         WHEN h.Status = 'Pending' THEN "3-Pending"

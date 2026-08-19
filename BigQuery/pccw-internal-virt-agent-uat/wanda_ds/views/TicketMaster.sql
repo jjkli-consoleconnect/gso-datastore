@@ -1,13 +1,3 @@
--- TicketMaster view for pccw-internal-virt-agent-uat.wanda_ds
--- Keep these two deploy targets in sync:
---   1. pccw-internal-virt-agent-uat.wanda_ds.TicketMaster
---   2. pccw-internal-virtual-agent.wanda_ds.TicketMaster
--- Base-table implementation: HelpDeskAllNOC joined directly to JiraTickets via
--- Incident_Number = RemedyTicketNumber, following the same flatten/dedupe pattern
--- used by GSO.JIRA_HD.
-
-CREATE OR REPLACE VIEW `pccw-internal-virt-agent-uat.wanda_ds.TicketMaster`
-OPTIONS(description = "Curated ticket analytics view for LLM and chatbot use. Combines HelpDesk, Jira, worklog, AI, customer feedback, and survey signals with cleaned keys and deduped escalations.") AS
 WITH jira_flat AS (
   SELECT
     t.*,
@@ -17,7 +7,7 @@ WITH jira_flat AS (
   WHERE COALESCE(t.IsDeleted, FALSE) = FALSE
     AND (
       t.Key IS NULL
-      OR REGEXP_CONTAINS(t.Key, r'(TXCE|ITHD|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|VVT|IPECR|CSM|CCAI|GTA|GDA|GKC|OCR|IKM)')
+      OR REGEXP_CONTAINS(t.Key, r'(TXCE|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|VVT|IPECR|CSM|CCAI|GTA|GDA|GKC|OCR|IKM)')
     )
 ),
 jira_ranked AS (
@@ -153,13 +143,13 @@ shr_people AS (
   FROM `pccw-internal-virt-agent-uat.GSO.SHRPeople`
   GROUP BY SRNo
 ),
-cost_items AS (
-  SELECT
-    CONCAT('SR', CAST(SalesRecord AS STRING)) AS SalesRecordKey,
-    SUM(MRC_USD) AS MRC_USD
-  FROM `pccw-internal-virt-agent-uat.Mirror.all_cost_items_report`
-  GROUP BY SalesRecordKey
-),
+--cost_items AS (
+--  SELECT
+--    CONCAT('SR', CAST(SalesRecord AS STRING)) AS SalesRecordKey,
+--    SUM(MRC_USD) AS MRC_USD
+--  FROM `pccw-internal-virt-agent-uat.Mirror.all_cost_items_report`
+--  GROUP BY SalesRecordKey
+--),
 worklog_latest AS (
   SELECT * EXCEPT(rn)
   FROM (
@@ -300,7 +290,7 @@ SELECT
   core.Customer_Name AS Ticket_Customer_Name,
   core.RSMName AS Ticket_Regional_Service_Manager,
   core.GSMP_Circuit_ID AS Ticket_GSMP_Circuit_ID,
-  ci.MRC_USD AS Ticket_MRC_USD,
+  --ci.MRC_USD AS Ticket_MRC_USD,
   core.TrueMTTR_mins AS Ticket_True_MTTR_Minutes,
   core.GCSC_1st_Customer_Update AS Ticket_First_Customer_Update_At,
   core.GCSC_2nd_Customer_Update AS Ticket_Second_Customer_Update_At,
@@ -376,6 +366,7 @@ SELECT
   wl.ExtractedDescription AS WorkLog_Description,
   ai.AIFirstResponse AS AI_First_Response,
   ai.AIFirstResponseTimestamp AS AI_First_Response_At,
+  CASE WHEN ai.AIFirstResponseTimestamp IS NOT NULL AND core.Reported_Date IS NOT NULL THEN CAST(DATETIME_DIFF(ai.AIFirstResponseTimestamp, core.Reported_Date, MINUTE) AS INT64) ELSE NULL END AS AI_First_Response_Minutes,
   ai.AIFirstResponse_Audit AS AI_First_Response_Audit,
   ai.AIAtFault AS AI_At_Fault,
   ai.AIAtFault_Audit AS AI_At_Fault_Audit,
@@ -425,8 +416,8 @@ SELECT
 FROM normalized_core core
 LEFT JOIN shr_people shr
   ON core.SR_Key = shr.SRNo
-LEFT JOIN cost_items ci
-  ON core.SR_Key = ci.SalesRecordKey
+--LEFT JOIN cost_items ci
+--  ON core.SR_Key = ci.SalesRecordKey
 LEFT JOIN worklog_latest wl
   ON core.Incident_Number = wl.Incident_Number
 LEFT JOIN latest_ai ai
@@ -434,6 +425,4 @@ LEFT JOIN latest_ai ai
 LEFT JOIN feedback_latest fb
   ON core.SR_Key = fb.Feedback_SR_Key
 LEFT JOIN pagerduty_escalation_latest sc
-  ON TRIM(CAST(core.Incident_Number AS STRING)) = TRIM(CAST(sc.PagerDuty_Escalation_Incident_Number AS STRING));
-
-
+  ON TRIM(CAST(core.Incident_Number AS STRING)) = TRIM(CAST(sc.PagerDuty_Escalation_Incident_Number AS STRING))

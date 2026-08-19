@@ -183,22 +183,12 @@ LatestAI AS (
   SELECT * EXCEPT(rn)
   FROM (
     SELECT
-      Incident_Number,
-      AIFirstResponse,
-      AIFirstResponseTimestamp,
-      AIFirstResponse_Audit,
-      AIAtFault,
-      AIAtFault_Audit,
-      AI_FaultDomain,
-      AI_CarrierVendor,
-      AI_PrimarySymptom,
-      AI_LikelyRootCause,
-      AI_ConfidenceScore,
-      AI_EvidenceSummary,
-      AI_DeviceName,
-      AI_CircuitReference,
-      ROW_NUMBER() OVER (PARTITION BY Incident_Number ORDER BY ClassifiedAt DESC) AS rn
-    FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
+      src.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY Incident_Number
+        ORDER BY ClassifiedAt DESC
+      ) AS rn
+    FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused` AS src
   )
   WHERE rn = 1
 )

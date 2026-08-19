@@ -129,5 +129,3 @@ FROM (
   WHERE REGEXP_CONTAINS(COALESCE(Issue_Key, ''), r'(CCAS)')
 )
 WHERE User_FullName IN (SELECT name FROM name_filter)
-
-

@@ -1,5 +1,3 @@
--- RemedyJira: FULL OUTER JOIN of Remedy (T1) and Jira snapshot (T2/T3)
-
 WITH jira_tickets AS (
   SELECT
     T AS Type,
@@ -559,10 +557,3 @@ ON se.Team_Name = (
     ELSE NULL
   END
 )
-
-
-
-
-
-
-

@@ -247,3 +247,4 @@ WHERE REGEXP_EXTRACT(COALESCE(j.Key, ''), r'^([A-Z]+)') IN ('CCAI','GTA','GDA','
 
 
 
+

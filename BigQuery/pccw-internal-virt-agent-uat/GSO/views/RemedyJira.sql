@@ -1,5 +1,3 @@
--- RemedyJira: FULL OUTER JOIN of Remedy (T1) and Jira snapshot (T2/T3)
-
 WITH jira_tickets AS (
   SELECT
     T AS Type,
@@ -625,9 +623,3 @@ ON se.Team_Name = (
 WHERE 
   REGEXP_CONTAINS(COALESCE(j.Key, ''), r'(TXCE|GSDT|ITHD|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|CCPROV)')
   OR j.Key IS NULL
-
-
-
-
-
-

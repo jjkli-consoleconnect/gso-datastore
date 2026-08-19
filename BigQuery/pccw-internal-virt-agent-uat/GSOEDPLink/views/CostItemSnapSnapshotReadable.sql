@@ -34,4 +34,4 @@ SELECT
   CASE WHEN scorecard_type = 'stop_gap' THEN avg_gap_duration_days END AS stop_gap_avg_gap_duration_days,
   CASE WHEN scorecard_type = 'stop_gap' THEN mrc_usd END AS stop_gap_mrc_usd,
   CASE WHEN scorecard_type = 'stop_gap' THEN estimated_gap_cost_usd END AS stop_gap_estimated_gap_cost_usd
-FROM `pccw-internal-virt-agent-uat.GSOEDPLink.CostItemSnapSnapshot`;
+FROM `pccw-internal-virt-agent-uat.GSOEDPLink.CostItemSnapSnapshot`

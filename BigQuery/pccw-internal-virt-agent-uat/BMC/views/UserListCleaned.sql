@@ -1,7 +1,7 @@
 SELECT
   CASE
     WHEN STARTS_WITH(RemedyLoginID, 'cs-') THEN SUBSTR(RemedyLoginID, 4)
-    WHEN RemedyLoginID = 'mktam' THEN 'ken.mk.tam'
+    --WHEN RemedyLoginID = 'mktam' THEN 'ken.mk.tam'
     WHEN RemedyLoginID = 'jrliu' THEN 'aliu'
     WHEN RemedyLoginID = 'angelal' THEN 'alui'
     WHEN RemedyLoginID = 'angus' THEN 'ktlau'
@@ -35,7 +35,7 @@ SELECT
   FullName,
   trim(lower(EmailAddress)) AS EmailAddress
 FROM
-  `pccw-internal-virtual-agent.BMC.UserList`
+  `pccw-internal-virt-agent-uat.BMC.UserList`
 
 WHERE LOWER(EmailAddress) NOT LIKE '%bmc%'
 

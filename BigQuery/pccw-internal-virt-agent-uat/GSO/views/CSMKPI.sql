@@ -1,21 +1,3 @@
--- CSMKPI
--- Ticket-level KPI view for the CSM (Jira) project, modeled on GSO.Tier1KPI (Remedy).
--- Source of truth: GSO.CSM (JiraTickets filtered to Project = 'CSM') + its comment array.
---
--- Logic parallels Tier1KPI, but fields remain Jira-native:
---   Ticket_Key / Project / Reporter / Assignee / Resolved / Comments / Changelogs
---   LSR logic is Jira-specific: link to a non-CSM ticket (LinkedProject_Clean)
---
--- Assumptions / deviations from Tier1KPI (documented, per business decision):
---   * MTTR "in scope" is ALL Resolved/Closed CSM tickets. The Remedy gate
---     (Priority Critical/High + fault-cause whitelist) is DROPPED because the CSM
---     Jira data exposes no Priority or Fault_Cause field.
---   * Sanity thresholds kept identical to Remedy: FRT pass <= 30 min, SRT pass
---     <= 90 min, MTTR pass <= 90 min.
---   * "Customer-facing response" in Jira is approximated by comments from the
---     CSM responder roster below. FRT uses the first qualifying responder comment;
---     SRT uses the second qualifying responder comment.
-
 WITH responder_roster AS (
   SELECT 'Liza Necio' AS Responder_Name UNION ALL
   SELECT 'Ma Lourdes Robledo' UNION ALL

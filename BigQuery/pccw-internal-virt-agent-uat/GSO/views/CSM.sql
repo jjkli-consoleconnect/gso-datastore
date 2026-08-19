@@ -80,7 +80,6 @@ SELECT
   t.TimeToCloseAfterResolution_Goal,
   t.TimeToCloseAfterResolution_Breached,
   t.TimeToCloseAfterResolution_Cycles,
-  t.AppSupEscalation,
   ARRAY(
     SELECT AS STRUCT
       c.Issue_Key,

@@ -1,7 +1,7 @@
 SELECT
   CASE
     WHEN STARTS_WITH(RemedyLoginID, 'cs-') THEN SUBSTR(RemedyLoginID, 4)
-    WHEN RemedyLoginID = 'mktam' THEN 'ken.mk.tam'
+    --WHEN RemedyLoginID = 'mktam' THEN 'ken.mk.tam'
     WHEN RemedyLoginID = 'jrliu' THEN 'aliu'
     WHEN RemedyLoginID = 'angelal' THEN 'alui'
     WHEN RemedyLoginID = 'angus' THEN 'ktlau'
@@ -38,5 +38,7 @@ FROM
   `pccw-internal-virtual-agent.BMC.UserList`
 
 WHERE LOWER(EmailAddress) LIKE '%pccw%'
+OR LOWER(EmailAddress) LIKE '%console%'
+
 
 ORDER BY FullName ASC;
