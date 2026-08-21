@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise AI Hub | Internal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        cc: {
+                            primary: '#2B5EEA',
+                            dark: '#161A28',
+                            panel: '#F4F6F8',
+                            border: '#E5E7EB',
+                            pink: '#E14985',
+                            teal: '#2DD4BF',
+                            orange: '#F39C12',
+                            purple: '#9B59B6',
+                            blue: '#36A2EB'
+                        },
+                        corporate: {
+                            50: '#f0f4f8',
+                            100: '#d9e2ec',
+                            500: '#334e68',
+                            600: '#243b53',
+                            700: '#102a43',
+                            900: '#061626',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        
+        /* Custom Scrollbar for chat areas */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        .typing-indicator span {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background-color: #94a3b8;
+            border-radius: 50%;
+            margin: 0 2px;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+        .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+        
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* Dashboard Custom Chart Styles to Mock Looker Studio */
+        .pie-1 { background: conic-gradient(#E14985 0% 46.5%, #d1d5db 46.5% 100%); }
+        .pie-2 { background: conic-gradient(#36A2EB 0% 24.1%, #E14985 24.1% 66.4%, #2DD4BF 66.4% 85%, #9B59B6 85% 100%); }
+        .pie-3 { background: conic-gradient(#E14985 0% 48.5%, #2DD4BF 48.5% 63.2%, #36A2EB 63.2% 82.7%, #9B59B6 82.7% 100%); }
+        .donut-hole { position: absolute; inset: 30%; background: white; border-radius: 50%; }
+        
+        /* Utility for stacked bars */
+        .stacked-wrapper { display: flex; align-items: flex-end; gap: 4px; height: 100%; padding-top: 10px; border-bottom: 1px solid #e5e7eb; border-left: 1px solid #e5e7eb; }
+        .stacked-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 1px; }
+        .bar-seg { width: 100%; transition: all 0.2s; }
+        .bar-seg:hover { filter: brightness(0.85); }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 h-screen w-full overflow-hidden flex items-center justify-center">
+
+    <!-- SSO Login View -->
+    <div id="login-view" class="w-full h-full flex flex-col items-center justify-center bg-[#F4F6F8] absolute z-50 transition-opacity duration-500">
+        <div class="bg-white p-10 rounded-xl shadow-2xl w-full max-w-md text-center border border-gray-200">
+            <div class="flex items-center justify-center gap-2 mb-6">
+                <div class="w-8 h-8 rounded-full border-2 border-cc-dark flex items-center justify-center bg-cc-dark">
+                    <div class="w-3 h-3 bg-white rounded-full"></div>
+                </div>
+                <h1 class="text-2xl font-bold text-cc-dark tracking-tight">consoleconnect</h1>
+            </div>
+            <h2 class="text-lg font-semibold text-gray-900 mb-2">AI Hub Authentication</h2>
+            <p class="text-sm text-gray-500 mb-8">Sign in with your corporate account to access internal AI tools.</p>
+            
+            <button onclick="app.login()" class="w-full flex items-center justify-center gap-3 bg-[#2B5EEA] hover:bg-blue-700 text-white font-medium py-3 px-4 rounded transition-colors duration-200 shadow-md">
+                <svg class="w-5 h-5 bg-white rounded-sm p-0.5" viewBox="0 0 24 24" fill="currentColor">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                </svg>
+                Continue with Company SSO
+            </button>
+            <div class="mt-6 flex items-center justify-center gap-2 text-xs text-gray-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                Protected by PCCW Global Security
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App Container (Hidden initially) -->
+    <div id="app-container" class="hidden w-full h-full flex bg-white font-sans">
+        
+        <!-- Sidebar Navigation -->
+        <nav class="w-64 bg-[#161A28] text-gray-300 flex flex-col hidden md:flex border-r border-[#2a2f42]">
+            <div class="h-16 flex items-center px-6 border-b border-[#2a2f42] bg-[#10131e]">
+                <div class="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center mr-3">
+                    <div class="w-2 h-2 bg-white rounded-full"></div>
+                </div>
+                <span class="font-bold text-white tracking-wide">AI Hub</span>
+            </div>
+            
+            <div class="flex-1 py-6 px-4 space-y-2">
+                <div class="text-[10px] uppercase font-bold tracking-wider text-gray-500 mb-3 px-2">Applications</div>
+                <button onclick="app.switchTab('chat')" id="nav-chat" class="w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm font-medium bg-[#2B5EEA] text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                    AI Assistant
+                </button>
+                <button onclick="app.switchTab('performance')" id="nav-performance" class="w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm font-medium text-gray-400 hover:bg-[#2a2f42] hover:text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                    Performance Dashboard
+                </button>
+            </div>
+            
+            <div class="p-4 border-t border-[#2a2f42] bg-[#10131e]">
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 rounded bg-[#2a2f42] text-white flex items-center justify-center font-bold text-sm border border-[#3e445c]">
+                        JD
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm font-medium text-white truncate">John Doe</p>
+                        <p class="text-[11px] text-gray-400 truncate">jdoe@consoleconnect.com</p>
+                    </div>
+                    <button onclick="app.logout()" class="text-gray-500 hover:text-white transition-colors" title="Sign out">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                    </button>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 flex flex-col relative min-w-0 overflow-hidden">
+            
+            <!-- Mobile Header -->
+            <header class="h-16 md:hidden border-b border-gray-200 flex items-center justify-between px-4">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    </div>
+                    <span class="font-bold text-gray-800">AI Hub</span>
+                </div>
+                <button class="text-gray-600">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                </button>
+            </header>
+
+            <!-- TAB 1: Chat Interface -->
+            <div id="tab-chat" class="flex-1 flex flex-col h-full absolute inset-0">
+                <!-- Chat Header -->
+                <div class="h-16 border-b border-gray-200 bg-white flex items-center px-6 justify-between shrink-0 shadow-sm z-10">
+                    <div>
+                        <h2 class="text-lg font-semibold text-gray-900">Internal Support Assistant</h2>
+                        <div class="flex items-center gap-2 text-xs text-cc-primary font-medium mt-0.5">
+                            <span class="relative flex h-2 w-2">
+                              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                              <span class="relative inline-flex rounded-full h-2 w-2 bg-[#2B5EEA]"></span>
+                            </span>
+                            Running on Google ADK (Gemini Pro)
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs text-gray-500 border border-gray-200 px-2 py-1 rounded bg-gray-50 font-medium">Confidential</span>
+                        <button class="text-gray-400 hover:text-gray-700 p-2 rounded-md hover:bg-gray-100 transition">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Chat History -->
+                <div id="chat-messages" class="flex-1 overflow-y-auto p-6 space-y-6 bg-[#F4F6F8] pb-32">
+                    <!-- Welcome Message -->
+                    <div class="flex gap-4 fade-in">
+                        <div class="w-8 h-8 rounded bg-[#2B5EEA] flex items-center justify-center shrink-0 mt-1 shadow-sm">
+                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        </div>
+                        <div class="bg-white border border-gray-200 p-4 rounded-xl rounded-tl-sm max-w-[80%] shadow-sm">
+                            <p class="text-gray-800 text-sm leading-relaxed">Hello John! I'm your secure enterprise AI assistant powered by Google ADK. How can I help you today? You can ask me questions, or attach documents/images for analysis.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Input Area (Floating at bottom) -->
+                <div class="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-[#F4F6F8] via-[#F4F6F8] to-transparent pointer-events-none">
+                    <div class="max-w-4xl mx-auto bg-white border border-gray-300 rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative flex flex-col overflow-hidden transition-all focus-within:border-[#2B5EEA] focus-within:ring-1 focus-within:ring-[#2B5EEA] pointer-events-auto">
+                        
+                        <!-- Multimodal Attachment Preview Area -->
+                        <div id="attachment-preview" class="hidden px-4 pt-3 flex gap-2 flex-wrap">
+                            <!-- JS will inject chips here -->
+                        </div>
+
+                        <div class="flex items-end">
+                            <button onclick="document.getElementById('file-upload').click()" class="p-3 m-1 text-gray-400 hover:text-cc-primary rounded hover:bg-blue-50 transition-colors shrink-0" title="Attach file">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                            </button>
+                            <input type="file" id="file-upload" class="hidden" multiple onchange="app.handleFileUpload(event)">
+                            
+                            <textarea id="chat-input" class="w-full max-h-32 p-3 pb-4 bg-transparent border-0 focus:ring-0 resize-none text-sm text-gray-800 placeholder-gray-400 m-0" rows="1" placeholder="Message Assistant... (Press Enter to send)" onkeydown="app.handleKeyDown(event, 'main')"></textarea>
+                            
+                            <button onclick="app.sendMessage('main')" class="p-2 m-2 bg-[#2B5EEA] hover:bg-blue-700 text-white rounded transition-colors shrink-0 shadow-sm flex items-center justify-center">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="text-center mt-2">
+                        <span class="text-[10px] text-gray-400">AI generated content may be inaccurate. Do not input highly sensitive PII.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: Performance Dashboard & Data Copilot -->
+            <div id="tab-performance" class="hidden flex-1 flex h-full absolute inset-0 bg-gray-50 overflow-hidden">
+                
+                <!-- Left Side: Embedded Looker Studio Dashboard -->
+                <div class="flex-1 flex flex-col bg-[#F4F6F8] overflow-hidden min-w-0 border-r border-gray-200">
+                    <iframe
+                        class="w-full flex-1 min-h-0 bg-white"
+                        src="https://datastudio.google.com/embed/reporting/fa541938-eb12-438c-be10-3f7a0b7178a4/page/p_tqe99hhm6d"
+                        title="Wanda performance dashboard"
+                        frameborder="0"
+                        allowfullscreen
+                        sandbox="allow-storage-access-by-user-activation allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                    ></iframe>
+                    
+                    <!-- Dashboard Header matching image -->
+                    <div class="hidden bg-[#1C2029] text-white px-4 py-2 items-center justify-between shrink-0 shadow-sm z-10 sticky top-0">
+                        <div class="text-[10px] font-bold tracking-wider text-gray-400 w-48">CONFIDENTIAL</div>
+                        <h1 class="text-base font-semibold tracking-wide absolute left-1/2 -translate-x-1/2">Division / Department / Team - Trends</h1>
+                        <div class="flex items-center gap-4 text-xs w-64 justify-end">
+                            <span class="text-gray-300 whitespace-nowrap">12 Jul 2026 - 10 Aug 2026 <span class="text-[8px] ml-1">▼</span></span>
+                            <div class="w-px h-5 bg-gray-600"></div>
+                            <span class="font-bold italic text-sm tracking-tight whitespace-nowrap">PCCW Global</span>
+                            <div class="w-px h-5 bg-gray-600"></div>
+                            <div class="flex items-center gap-1.5 font-bold tracking-tight text-sm whitespace-nowrap">
+                                <div class="w-4 h-4 rounded-full border-2 border-white flex items-center justify-center">
+                                    <div class="w-1.5 h-1.5 bg-white rounded-full"></div>
+                                </div>
+                                consoleconnect
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Dashboard Body Grid -->
+                    <div class="hidden p-2 gap-2 flex-1 overflow-auto text-gray-800">
+                        
+                        <!-- Left Column: Filters -->
+                        <div class="w-56 shrink-0 flex flex-col gap-2">
+                            <div class="bg-white border-t-[6px] border-[#2B5EEA] p-2 text-center shadow-[0_1px_3px_rgba(0,0,0,0.05)] border-l border-r border-b border-gray-200">
+                                <div class="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Division</div>
+                                <div class="text-lg">GS&O</div>
+                            </div>
+                            <div class="bg-white p-2 text-center shadow-[0_1px_3px_rgba(0,0,0,0.05)] border border-gray-200">
+                                <div class="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Department</div>
+                                <div class="text-lg">Service & Operations</div>
+                            </div>
+                            <div class="bg-white p-2 text-center shadow-[0_1px_3px_rgba(0,0,0,0.05)] border border-gray-200">
+                                <div class="text-[10px] text-gray-500 uppercase tracking-wide mb-1">Team</div>
+                                <div class="text-lg">-</div>
+                            </div>
+                        </div>
+
+                        <!-- Right Column: Data Visualization -->
+                        <div class="flex-1 flex flex-col gap-2 min-w-0">
+                            
+                            <!-- Row 1: Pie Charts -->
+                            <div class="grid grid-cols-3 gap-2">
+                                <div class="bg-white p-2 border border-gray-200 shadow-sm flex flex-col relative h-[140px]">
+                                    <div class="text-[11px] font-semibold text-center mb-2">Division</div>
+                                    <div class="flex-1 flex items-center justify-center relative">
+                                        <div class="w-20 h-20 pie-1 relative rounded-full"></div>
+                                        <div class="absolute left-2 top-0 text-[8px] flex flex-col gap-1 w-20">
+                                            <div class="flex items-center"><span class="w-2 h-2 bg-cc-pink inline-block mr-1"></span> GS&O (46.5%)</div>
+                                            <div class="flex items-center"><span class="w-2 h-2 bg-gray-300 inline-block mr-1"></span> Other</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="bg-white p-2 border border-gray-200 shadow-sm flex flex-col relative h-[140px]">
+                                    <div class="text-[11px] font-semibold text-center mb-2">Department</div>
+                                    <div class="flex-1 flex items-center justify-center relative">
+                                        <div class="w-20 h-20 pie-2 relative rounded-full"><div class="donut-hole"></div></div>
+                                        <div class="absolute right-2 top-0 text-[8px] flex flex-col gap-1 w-24">
+                                            <div class="flex items-center"><span class="w-2 h-2 bg-cc-pink inline-block mr-1"></span> Service & Ops</div>
+                                            <div class="flex items-center"><span class="w-2 h-2 bg-cc-blue inline-block mr-1"></span> Global Service...</div>
+                                            <div class="flex items-center"><span class="w-2 h-2 bg-cc-teal inline-block mr-1"></span> North Asia</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="bg-white p-2 border border-gray-200 shadow-sm flex flex-col relative h-[140px]">
+                                    <div class="text-[11px] font-semibold text-center mb-2">Team</div>
+                                    <div class="flex-1 flex items-center justify-center relative">
+                                        <div class="w-20 h-20 pie-3 relative rounded-full"><div class="donut-hole"></div></div>
+                                        <div class="absolute right-2 top-0 text-[8px] flex flex-col gap-1 w-24">
+                                            <div class="flex items-center"><span class="w-2 h-2 bg-cc-pink inline-block mr-1"></span> Automation & Anal...</div>
+                                            <div class="flex items-center"><span class="w-2 h-2 bg-cc-blue inline-block mr-1"></span> Customer Eng</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Row 2: KPIs -->
+                            <div class="grid grid-cols-4 gap-2">
+                                <div class="bg-white p-2 text-center border border-gray-200 shadow-sm">
+                                    <div class="text-[10px] text-gray-500 mb-1">Active Users</div>
+                                    <div class="text-2xl mb-1">148</div>
+                                    <div class="text-[10px] text-green-500 font-medium">↑ 73</div>
+                                </div>
+                                <div class="bg-white p-2 text-center border border-gray-200 shadow-sm">
+                                    <div class="text-[10px] text-gray-500 mb-1">New Users</div>
+                                    <div class="text-2xl mb-1">52</div>
+                                    <div class="text-[10px] text-green-500 font-medium">↑ 42</div>
+                                </div>
+                                <div class="bg-white p-2 text-center border border-gray-200 shadow-sm">
+                                    <div class="text-[10px] text-gray-500 mb-1">Request Count</div>
+                                    <div class="text-2xl mb-1">2,075</div>
+                                    <div class="text-[10px] text-green-500 font-medium">↑ 1,112</div>
+                                </div>
+                                <div class="bg-white p-2 text-center border border-gray-200 shadow-sm">
+                                    <div class="text-[10px] text-gray-500 mb-1">Conversation Count</div>
+                                    <div class="text-2xl mb-1">1,012</div>
+                                    <div class="text-[10px] text-green-500 font-medium">↑ 527</div>
+                                </div>
+                            </div>
+
+                            <!-- Row 3: Trend Charts -->
+                            <div class="grid grid-cols-4 gap-2 h-32">
+                                <div class="bg-white p-2 border border-gray-200 shadow-sm flex flex-col">
+                                    <div class="text-[10px] font-semibold text-center mb-1">Active Users Trend</div>
+                                    <div class="stacked-wrapper flex-1">
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 40%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 45%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 42%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 40%"></div></div>
+                                        <div class="stacked-col">
+                                            <div class="bar-seg bg-cc-blue" style="height: 10%"></div>
+                                            <div class="bar-seg bg-cc-pink" style="height: 65%"></div>
+                                        </div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 35%"></div></div>
+                                    </div>
+                                    <div class="flex justify-between text-[7px] text-gray-400 mt-1 px-1">
+                                        <span>Mar</span><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span>
+                                    </div>
+                                </div>
+                                
+                                <div class="bg-white p-2 border border-gray-200 shadow-sm flex flex-col">
+                                    <div class="text-[10px] font-semibold text-center mb-1">New Users Trend</div>
+                                    <div class="stacked-wrapper flex-1">
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 20%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 15%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 25%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 20%"></div></div>
+                                        <div class="stacked-col">
+                                            <div class="bar-seg bg-cc-teal" style="height: 10%"></div>
+                                            <div class="bar-seg bg-cc-orange" style="height: 20%"></div>
+                                            <div class="bar-seg bg-cc-blue" style="height: 30%"></div>
+                                            <div class="bar-seg bg-cc-pink" style="height: 20%"></div>
+                                        </div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 15%"></div></div>
+                                    </div>
+                                    <div class="flex justify-between text-[7px] text-gray-400 mt-1 px-1">
+                                        <span>Mar</span><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span>
+                                    </div>
+                                </div>
+
+                                <div class="bg-white p-2 border border-gray-200 shadow-sm flex flex-col">
+                                    <div class="text-[10px] font-semibold text-center mb-1">Request Count Trend</div>
+                                    <div class="stacked-wrapper flex-1">
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 35%"></div><div class="bar-seg bg-cc-purple" style="height: 5%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 45%"></div><div class="bar-seg bg-cc-purple" style="height: 5%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 45%"></div><div class="bar-seg bg-cc-purple" style="height: 5%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 35%"></div><div class="bar-seg bg-cc-purple" style="height: 5%"></div></div>
+                                        <div class="stacked-col">
+                                            <div class="bar-seg bg-cc-pink" style="height: 75%"></div>
+                                            <div class="bar-seg bg-cc-purple" style="height: 5%"></div>
+                                        </div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 30%"></div><div class="bar-seg bg-cc-purple" style="height: 5%"></div></div>
+                                    </div>
+                                    <div class="flex justify-between text-[7px] text-gray-400 mt-1 px-1">
+                                        <span>Mar</span><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span>
+                                    </div>
+                                </div>
+
+                                <div class="bg-white p-2 border border-gray-200 shadow-sm flex flex-col">
+                                    <div class="text-[10px] font-semibold text-center mb-1">Conversation Count Trend</div>
+                                    <div class="stacked-wrapper flex-1">
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 45%"></div><div class="bar-seg bg-cc-purple" style="height: 5%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 48%"></div><div class="bar-seg bg-cc-purple" style="height: 5%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 50%"></div><div class="bar-seg bg-cc-purple" style="height: 5%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 48%"></div><div class="bar-seg bg-cc-purple" style="height: 5%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 85%"></div><div class="bar-seg bg-cc-purple" style="height: 5%"></div></div>
+                                        <div class="stacked-col"><div class="bar-seg bg-cc-pink" style="height: 35%"></div><div class="bar-seg bg-cc-purple" style="height: 5%"></div></div>
+                                    </div>
+                                    <div class="flex justify-between text-[7px] text-gray-400 mt-1 px-1">
+                                        <span>Mar</span><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Row 4: Sentiment Line Chart & Multi-bars -->
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="bg-white border border-gray-200 shadow-sm flex flex-col h-[180px]">
+                                    <div class="flex justify-between p-2 pb-0">
+                                        <div class="bg-[#FDE68A] p-2 flex-1 text-center border-r border-white border-b-2 border-b-yellow-400">
+                                            <div class="text-[9px] text-gray-700">User Sentiment | Neg (-1.0), Pos (1.0)</div>
+                                            <div class="text-xl">0.26</div>
+                                            <div class="text-[9px] text-green-600 font-medium">↑ 0.02</div>
+                                        </div>
+                                        <div class="bg-[#DBEAFE] p-2 flex-1 text-center border-b-2 border-b-blue-300">
+                                            <div class="text-[9px] text-gray-700">User Sentiment Magnitude</div>
+                                            <div class="text-xl">1</div>
+                                            <div class="text-[9px] text-red-500 font-medium">↓ -0</div>
+                                        </div>
+                                    </div>
+                                    <div class="text-[10px] font-semibold text-center mt-2 mb-1">User Sentiment Score and Magnitude over time</div>
+                                    <div class="flex-1 bg-[#D1FAE5] border-t border-[#34D399] relative m-2 mt-0 flex items-end">
+                                        <svg class="absolute bottom-0 left-0 w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 100">
+                                            <path d="M 0 90 Q 20 60, 40 40 L 100 40" fill="none" stroke="#059669" stroke-width="1" />
+                                        </svg>
+                                        <div class="absolute top-1 left-2 text-[8px] text-green-800 font-bold bg-green-200 px-1 border border-green-400">AVG (0.26)</div>
+                                        <div class="w-full flex justify-between text-[7px] text-gray-500 absolute bottom-0 px-1 z-10 bg-white/50 border-t border-gray-300">
+                                            <span>6 Jul</span><span>13 Jul</span><span>20 Jul</span><span>27 Jul</span><span>3 Aug</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="flex flex-col gap-2 h-[180px]">
+                                    <div class="bg-white p-2 border border-gray-200 shadow-sm text-center">
+                                        <div class="text-[10px] text-gray-500 mb-0.5">Average Requests per User</div>
+                                        <div class="text-xl">14 <span class="text-[10px] text-green-500 font-medium ml-2">↑ 1.2</span></div>
+                                    </div>
+                                    <div class="bg-white p-2 border border-gray-200 shadow-sm flex-1 flex flex-col">
+                                        <div class="text-[10px] font-semibold text-center mb-1 truncate px-4">Request per User by requisitionStartTime (Year Month)...</div>
+                                        <div class="stacked-wrapper flex-1">
+                                            <div class="stacked-col">
+                                                <div class="bar-seg bg-cc-purple" style="height: 10%"></div>
+                                                <div class="bar-seg bg-cc-orange" style="height: 5%"></div>
+                                                <div class="bar-seg bg-cc-blue" style="height: 10%"></div>
+                                                <div class="bar-seg bg-cc-pink" style="height: 20%"></div>
+                                            </div>
+                                            <div class="stacked-col">
+                                                <div class="bar-seg bg-cc-purple" style="height: 12%"></div>
+                                                <div class="bar-seg bg-cc-orange" style="height: 8%"></div>
+                                                <div class="bar-seg bg-cc-blue" style="height: 15%"></div>
+                                                <div class="bar-seg bg-cc-pink" style="height: 25%"></div>
+                                            </div>
+                                            <div class="stacked-col">
+                                                <div class="bar-seg bg-cc-purple" style="height: 8%"></div>
+                                                <div class="bar-seg bg-cc-orange" style="height: 5%"></div>
+                                                <div class="bar-seg bg-cc-blue" style="height: 12%"></div>
+                                                <div class="bar-seg bg-cc-pink" style="height: 18%"></div>
+                                            </div>
+                                            <div class="stacked-col">
+                                                <div class="bar-seg bg-cc-purple" style="height: 15%"></div>
+                                                <div class="bar-seg bg-cc-orange" style="height: 5%"></div>
+                                                <div class="bar-seg bg-cc-blue" style="height: 10%"></div>
+                                                <div class="bar-seg bg-cc-pink" style="height: 22%"></div>
+                                            </div>
+                                            <div class="stacked-col">
+                                                <div class="bar-seg bg-cc-purple" style="height: 18%"></div>
+                                                <div class="bar-seg bg-cc-orange" style="height: 10%"></div>
+                                                <div class="bar-seg bg-cc-blue" style="height: 15%"></div>
+                                                <div class="bar-seg bg-cc-pink" style="height: 35%"></div>
+                                            </div>
+                                            <div class="stacked-col">
+                                                <div class="bar-seg bg-cc-purple" style="height: 10%"></div>
+                                                <div class="bar-seg bg-cc-orange" style="height: 5%"></div>
+                                                <div class="bar-seg bg-cc-blue" style="height: 12%"></div>
+                                                <div class="bar-seg bg-cc-pink" style="height: 25%"></div>
+                                            </div>
+                                        </div>
+                                        <div class="flex justify-between text-[7px] text-gray-400 mt-1 px-1">
+                                            <span>Mar</span><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Row 5: Table -->
+                            <div class="bg-white border border-gray-200 shadow-sm flex flex-col mb-4">
+                                <div class="text-[10px] font-semibold text-center p-1.5 border-b border-gray-100">Top 10 Team by Request</div>
+                                <table class="w-full text-left text-[9px] border-collapse">
+                                    <thead class="bg-[#E0F2FE] text-[#0369A1] font-semibold text-center">
+                                        <tr>
+                                            <th class="py-1 px-2 border-b border-white w-8">#</th>
+                                            <th class="py-1 px-2 border-b border-white w-32">Division</th>
+                                            <th class="py-1 px-2 border-b border-white w-32">Department</th>
+                                            <th class="py-1 px-2 border-b border-white w-32">Team</th>
+                                            <th class="py-1 px-2 border-b border-white w-48 text-left">Request ▼</th>
+                                            <th class="py-1 px-2 border-b border-white w-32">User Sentiment Score</th>
+                                            <th class="py-1 px-2 border-b border-white w-32">User Sentiment Magnitude</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="text-gray-700 divide-y divide-gray-100">
+                                        <tr>
+                                            <td class="py-1.5 px-2 text-center text-gray-400">1.</td>
+                                            <td class="py-1.5 px-2">Commercial Asia & MEA</td>
+                                            <td class="py-1.5 px-2">Global Service Management</td>
+                                            <td class="py-1.5 px-2">-</td>
+                                            <td class="py-1.5 px-2 flex items-center gap-2">501 <div class="h-2 bg-cc-pink w-[70%]"></div></td>
+                                            <td class="py-1.5 px-2">
+                                                <div class="flex items-center gap-2">0.31 <div class="h-2 bg-cc-teal w-[30%]"></div></div>
+                                            </td>
+                                            <td class="py-1.5 px-2">
+                                                <div class="flex items-center gap-2">1 <div class="h-2 bg-cc-blue w-[90%]"></div></div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td class="py-1.5 px-2 text-center text-gray-400">2.</td>
+                                            <td class="py-1.5 px-2">Commercial Asia & MEA</td>
+                                            <td class="py-1.5 px-2">North Asia, CIS & SAM</td>
+                                            <td class="py-1.5 px-2">-</td>
+                                            <td class="py-1.5 px-2 flex items-center gap-2">409 <div class="h-2 bg-cc-pink w-[55%]"></div></td>
+                                            <td class="py-1.5 px-2">
+                                                <div class="flex items-center gap-2">0.2 <div class="h-2 bg-cc-teal w-[20%]"></div></div>
+                                            </td>
+                                            <td class="py-1.5 px-2">
+                                                <div class="flex items-center gap-2">1 <div class="h-2 bg-cc-blue w-[90%]"></div></div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td class="py-1.5 px-2 text-center text-gray-400">3.</td>
+                                            <td class="py-1.5 px-2">GS&O</td>
+                                            <td class="py-1.5 px-2">Service & Operations</td>
+                                            <td class="py-1.5 px-2">Automation & Analytics</td>
+                                            <td class="py-1.5 px-2 flex items-center gap-2">405 <div class="h-2 bg-cc-pink w-[54%]"></div></td>
+                                            <td class="py-1.5 px-2">
+                                                <div class="flex items-center gap-2">0.29 <div class="h-2 bg-cc-teal w-[29%]"></div></div>
+                                            </td>
+                                            <td class="py-1.5 px-2">
+                                                <div class="flex items-center gap-2">1 <div class="h-2 bg-cc-blue w-[90%]"></div></div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Right Side: Data Copilot Chat (Updated colors) -->
+                <div class="hidden lg:flex w-[380px] flex-col bg-white shrink-0 z-20 shadow-[-4px_0_15px_rgba(0,0,0,0.05)] border-l border-gray-200">
+                    <div class="h-16 border-b border-gray-200 bg-white flex items-center px-5 shrink-0 shadow-sm z-10">
+                        <div class="w-8 h-8 rounded bg-[#2B5EEA] flex items-center justify-center mr-3 shadow-sm">
+                            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-bold text-gray-900">Data Copilot</h3>
+                            <p class="text-[10px] text-gray-500">Query your dashboard in natural language</p>
+                        </div>
+                    </div>
+                    
+                    <div id="perf-chat-messages" class="flex-1 overflow-y-auto p-5 space-y-5 bg-[#F4F6F8]">
+                        <div class="flex gap-3 fade-in">
+                            <div class="w-6 h-6 rounded bg-[#2B5EEA] flex items-center justify-center shrink-0 mt-1 shadow-sm">
+                                <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                            </div>
+                            <div class="bg-white p-3 rounded-xl rounded-tl-sm max-w-[85%] border border-gray-200 shadow-sm">
+                                <p class="text-gray-800 text-xs leading-relaxed">I have context on the current Looker Studio report (Trends for GS&O). Ask me things like <em>"Why did active users spike in July?"</em> or <em>"Summarize sentiment for Automation & Analytics."</em></p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="p-4 border-t border-gray-200 bg-white">
+                        <div class="relative flex items-center bg-gray-50 rounded-lg border border-gray-300 shadow-inner overflow-hidden focus-within:border-[#2B5EEA] focus-within:ring-1 focus-within:ring-[#2B5EEA] transition-all">
+                            <input type="text" id="perf-chat-input" class="w-full py-2.5 pl-3 pr-10 text-xs text-gray-800 bg-transparent border-0 focus:ring-0" placeholder="Ask about the data..." onkeydown="app.handleKeyDown(event, 'perf')">
+                            <button onclick="app.sendMessage('perf')" class="absolute right-1 p-1.5 text-[#2B5EEA] hover:bg-blue-100 rounded-md transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        const app = {
+            state: {
+                currentTab: 'chat', // 'chat' | 'performance'
+                attachments: [], // stores files before sending
+                wanda: {
+                    appName: 'wanda_chatbot',
+                    userId: `wanda-web-${crypto.randomUUID()}`,
+                    sessionId: null,
+                },
+            },
+
+            // Setup bindings
+            init() {
+                // Auto-resize textarea
+                const tx = document.getElementById("chat-input");
+                tx.setAttribute("style", "height:" + (tx.scrollHeight) + "px;overflow-y:hidden;");
+                tx.addEventListener("input", function () {
+                    this.style.height = "auto";
+                    this.style.height = (this.scrollHeight) + "px";
+                }, false);
+            },
+
+            // Handle SSO Login simulation
+            login() {
+                const loginView = document.getElementById('login-view');
+                const appContainer = document.getElementById('app-container');
+                
+                loginView.classList.add('opacity-0');
+                
+                setTimeout(() => {
+                    loginView.classList.add('hidden');
+                    appContainer.classList.remove('hidden');
+                    appContainer.classList.add('fade-in');
+                    document.getElementById('chat-input').focus();
+                }, 500);
+            },
+
+            logout() {
+                const loginView = document.getElementById('login-view');
+                const appContainer = document.getElementById('app-container');
+                
+                appContainer.classList.add('hidden');
+                loginView.classList.remove('hidden');
+                setTimeout(() => {
+                    loginView.classList.remove('opacity-0');
+                }, 50);
+            },
+
+            // Tab Switching Logic
+            switchTab(tabName) {
+                this.state.currentTab = tabName;
+                
+                // Update Nav UI
+                document.getElementById('nav-chat').className = `w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm font-medium transition-colors ${tabName === 'chat' ? 'bg-[#2B5EEA] text-white' : 'text-gray-400 hover:bg-[#2a2f42] hover:text-white'}`;
+                document.getElementById('nav-performance').className = `w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm font-medium transition-colors ${tabName === 'performance' ? 'bg-[#2B5EEA] text-white' : 'text-gray-400 hover:bg-[#2a2f42] hover:text-white'}`;
+                
+                // Update Content Views
+                const chatTab = document.getElementById('tab-chat');
+                const perfTab = document.getElementById('tab-performance');
+                
+                if (tabName === 'chat') {
+                    chatTab.classList.remove('hidden');
+                    perfTab.classList.add('hidden');
+                    setTimeout(() => document.getElementById('chat-input').focus(), 50);
+                } else {
+                    perfTab.classList.remove('hidden');
+                    chatTab.classList.add('hidden');
+                    setTimeout(() => document.getElementById('perf-chat-input').focus(), 50);
+                }
+            },
+
+            handleFileUpload(event) {
+                const files = event.target.files;
+                if (!files || files.length === 0) return;
+
+                const previewArea = document.getElementById('attachment-preview');
+                previewArea.classList.remove('hidden');
+
+                Array.from(files).forEach(file => {
+                    this.state.attachments.push(file);
+                    
+                    const isImage = file.type.startsWith('image/');
+                    
+                    const chip = document.createElement('div');
+                    chip.className = 'flex items-center gap-2 bg-gray-100 border border-gray-200 rounded-lg p-1.5 pr-2 max-w-[200px] text-xs fade-in';
+                    
+                    let iconOrThumb = '';
+                    if (isImage) {
+                        const url = URL.createObjectURL(file);
+                        iconOrThumb = `<img src="${url}" class="w-6 h-6 object-cover rounded bg-white" alt="preview">`;
+                    } else {
+                        iconOrThumb = `<div class="w-6 h-6 bg-[#F4F6F8] text-[#2B5EEA] rounded flex items-center justify-center"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg></div>`;
+                    }
+
+                    // Unique ID to allow removal
+                    const fileId = Math.random().toString(36).substr(2, 9);
+                    chip.id = `file-${fileId}`;
+                    
+                    chip.innerHTML = `
+                        ${iconOrThumb}
+                        <span class="truncate flex-1 text-gray-700 font-medium" title="${file.name}">${file.name}</span>
+                        <button onclick="app.removeAttachment('${fileId}', '${file.name}')" class="text-gray-400 hover:text-red-500 rounded-full hover:bg-gray-200 p-0.5">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    `;
+                    previewArea.appendChild(chip);
+                });
+                
+                // reset input so same file can be selected again if needed
+                event.target.value = '';
+            },
+
+            removeAttachment(id, fileName) {
+                const el = document.getElementById(`file-${id}`);
+                if (el) el.remove();
+                
+                // Remove from state array
+                this.state.attachments = this.state.attachments.filter(f => f.name !== fileName);
+                
+                if (this.state.attachments.length === 0) {
+                    document.getElementById('attachment-preview').classList.add('hidden');
+                }
+            },
+
+            handleKeyDown(event, target) {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    this.sendMessage(target);
+                }
+            },
+
+            async sendMessage(target) {
+                const isMain = target === 'main';
+                const inputEl = document.getElementById(isMain ? 'chat-input' : 'perf-chat-input');
+                const containerEl = document.getElementById(isMain ? 'chat-messages' : 'perf-chat-messages');
+                
+                const text = inputEl.value.trim();
+                const hasAttachments = isMain && this.state.attachments.length > 0;
+                
+                if (!text && !hasAttachments) return;
+
+                const currentAttachments = [...this.state.attachments];
+
+                // 1. Render User Message
+                let userContentHtml = `<p class="text-white ${isMain ? 'text-sm' : 'text-xs'} leading-relaxed">${text.replace(/\n/g, '<br>')}</p>`;
+                
+                // Append file badges if any
+                if (hasAttachments) {
+                    const attachmentBadges = this.state.attachments.map(f => 
+                        `<span class="inline-flex items-center gap-1 bg-white/20 text-white px-2 py-1 rounded text-[10px] mt-2 border border-white/30 backdrop-blur-sm">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                            ${f.name}
+                        </span>`
+                    ).join(' ');
+                    userContentHtml += `<div class="flex flex-wrap gap-1">${attachmentBadges}</div>`;
+                }
+
+                const userMsg = document.createElement('div');
+                userMsg.className = 'flex gap-4 fade-in flex-row-reverse';
+                userMsg.innerHTML = `
+                    <div class="w-8 h-8 rounded bg-[#2a2f42] text-white flex items-center justify-center font-bold text-xs shrink-0 mt-1 border border-[#3e445c]">JD</div>
+                    <div class="bg-[#2B5EEA] p-${isMain ? '4' : '3'} rounded-xl rounded-tr-sm max-w-[${isMain ? '80%' : '85%'}] shadow-sm text-white">
+                        ${userContentHtml}
+                    </div>
+                `;
+                containerEl.appendChild(userMsg);
+                
+                // Clear inputs & state
+                inputEl.value = '';
+                if (isMain) {
+                    inputEl.style.height = "auto";
+                    this.state.attachments = [];
+                    document.getElementById('attachment-preview').innerHTML = '';
+                    document.getElementById('attachment-preview').classList.add('hidden');
+                }
+                
+                this.scrollToBottom(containerEl);
+
+                // 2. Show Typing Indicator
+                const typingId = `typing-${Date.now()}`;
+                const typingMsg = document.createElement('div');
+                typingMsg.id = typingId;
+                typingMsg.className = 'flex gap-4 fade-in';
+                typingMsg.innerHTML = `
+                    <div class="w-8 h-8 rounded bg-[#2B5EEA] flex items-center justify-center shrink-0 mt-1 shadow-sm">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    </div>
+                    <div class="bg-white border border-gray-200 p-${isMain ? '4' : '3'} rounded-xl rounded-tl-sm flex items-center shadow-sm">
+                        <div class="typing-indicator"><span></span><span></span><span></span></div>
+                    </div>
+                `;
+                containerEl.appendChild(typingMsg);
+                this.scrollToBottom(containerEl);
+
+                // 3. Call the UAT Wanda ADK API
+                try {
+                    const responseText = await this.sendToWanda(text || "Please analyze this file.", currentAttachments);
+
+                    // Simple markdown parsing for bold and line breaks
+                    const formattedText = responseText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+
+                    document.getElementById(typingId).remove();
+                    
+                    const botMsg = document.createElement('div');
+                    botMsg.className = 'flex gap-4 fade-in';
+                    botMsg.innerHTML = `
+                        <div class="w-8 h-8 rounded bg-[#2B5EEA] flex items-center justify-center shrink-0 mt-1 shadow-sm">
+                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        </div>
+                        <div class="bg-white border border-gray-200 text-gray-800 p-${isMain ? '4' : '3'} rounded-xl rounded-tl-sm max-w-[${isMain ? '80%' : '85%'}] shadow-sm">
+                            <p class="${isMain ? 'text-sm' : 'text-xs'} leading-relaxed">${formattedText}</p>
+                        </div>
+                    `;
+                    containerEl.appendChild(botMsg);
+                    this.scrollToBottom(containerEl);
+
+                } catch (error) {
+                    console.error("Wanda API Error:", error);
+                    document.getElementById(typingId).remove();
+                    const errorMsg = document.createElement('div');
+                    errorMsg.className = 'flex gap-4 fade-in';
+                    errorMsg.innerHTML = `
+                        <div class="w-8 h-8 rounded bg-red-500 flex items-center justify-center shrink-0 mt-1 shadow-sm">
+                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        </div>
+                        <div class="bg-white border border-red-200 text-red-600 p-${isMain ? '4' : '3'} rounded-xl rounded-tl-sm max-w-[${isMain ? '80%' : '85%'}] shadow-sm">
+                            <p class="${isMain ? 'text-sm' : 'text-xs'} leading-relaxed">Failed to connect to Wanda. Please try again later.</p>
+                        </div>
+                    `;
+                    containerEl.appendChild(errorMsg);
+                    this.scrollToBottom(containerEl);
+                }
+            },
+
+            async sendToWanda(message, attachments = []) {
+                const wanda = this.state.wanda;
+                const apiBase = '/api/wanda';
+                const sessionPath = `${apiBase}/apps/${encodeURIComponent(wanda.appName)}/users/${encodeURIComponent(wanda.userId)}/sessions`;
+
+                const createSession = async () => {
+                    wanda.sessionId = `session-${crypto.randomUUID()}`;
+                    const response = await fetch(`${sessionPath}/${encodeURIComponent(wanda.sessionId)}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ platform: 'web', webChatInterface: 'wanda-web-uat' })
+                    });
+                    if (!response.ok) throw new Error(`Session creation failed: ${response.status}`);
+                };
+
+                if (!wanda.sessionId) await createSession();
+
+                const messageParts = [{ text: message }];
+                if (attachments.length > 0) {
+                    messageParts[0].text = `${message}\n\nAttached files: ${attachments.map(file => file.name).join(', ')}`;
+                }
+
+                const run = async () => fetch(`${apiBase}/run`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        app_name: wanda.appName,
+                        user_id: wanda.userId,
+                        session_id: wanda.sessionId,
+                        new_message: { role: 'user', parts: messageParts }
+                    })
+                });
+
+                let response = await run();
+                if (response.status === 404) {
+                    await createSession();
+                    response = await run();
+                }
+                if (!response.ok) throw new Error(`Wanda request failed: ${response.status}`);
+
+                const data = await response.json();
+                const messages = [];
+                let finalized = '';
+                for (const item of Array.isArray(data) ? data : []) {
+                    for (const part of item?.content?.parts || []) {
+                        const functionResponse = part.functionResponse;
+                        if (functionResponse?.name === 'show_wait_message') {
+                            messages.push(functionResponse.response?.message || functionResponse.response?.text);
+                        } else if (functionResponse?.name === 'finalize_for_platform') {
+                            finalized = functionResponse.response?.text || functionResponse.response?.message || '';
+                        } else if (part.text) {
+                            messages.push(part.text);
+                        }
+                    }
+                }
+                if (finalized) messages.push(finalized);
+                return messages.filter(Boolean).filter((message, index, all) => all.indexOf(message) === index).join('\n\n') || 'Wanda returned no message.';
+            },
+
+            fileToBase64(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64String = reader.result.split(',')[1];
+                        resolve(base64String);
+                    };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+            },
+
+            scrollToBottom(el) {
+                el.scrollTo({
+                    top: el.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }
+        };
+
+        // Initialize on load
+        window.onload = () => {
+            app.init();
+        };
+    </script>
+</body>
+</html>
