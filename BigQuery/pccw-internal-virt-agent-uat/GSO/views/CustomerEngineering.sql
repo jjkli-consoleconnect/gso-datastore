@@ -13,6 +13,7 @@ SELECT
   t.RemedyTicketNumber,
   t.Resolution,
   t.Labels,
+  t.Creator,
   CASE
     WHEN LOWER(t.Links) LIKE '%none%' THEN NULL
     ELSE ARRAY_TO_STRING(
@@ -93,5 +94,5 @@ FROM
   `pccw-internal-virt-agent-uat.GSO.JiraTickets` t
 
 WHERE 
-  Project IN ('IP Customer Engineering', 'Transmission TX-CE')
+  Project IN ('IP Customer Engineering', 'Transmission TX-CE', 'TAC')
 

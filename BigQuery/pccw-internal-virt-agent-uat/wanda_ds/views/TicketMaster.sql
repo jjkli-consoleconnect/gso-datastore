@@ -169,6 +169,34 @@ worklog_latest AS (
   )
   WHERE rn = 1
 ),
+jira_comments_agg AS (
+  SELECT
+    Issue_Key,
+    COUNT(*) AS Comment_Count,
+    MAX(Created) AS Last_Comment_At,
+    ARRAY_AGG(STRUCT(
+      Comment_ID,
+      Author_Account_ID,
+      Author_Display_Name,
+      Created,
+      Updated,
+      Body,
+      SyncTime,
+      InsertedAt
+    ) ORDER BY Created) AS Comments,
+    ARRAY_AGG(STRUCT(
+      Comment_ID,
+      Author_Account_ID,
+      Author_Display_Name,
+      Created,
+      Updated,
+      Body,
+      SyncTime,
+      InsertedAt
+    ) ORDER BY Created DESC LIMIT 1)[OFFSET(0)] AS Last_Comment
+  FROM `pccw-internal-virt-agent-uat.GSO.JiraComments`
+  GROUP BY Issue_Key
+),
 latest_ai AS (
   SELECT * EXCEPT(rn)
   FROM (
@@ -358,6 +386,17 @@ SELECT
   core.TimeToResolution_Goal AS Jira_Escalation_Time_To_Resolution_Goal,
   core.TimeToResolution_Breached AS Jira_Escalation_Time_To_Resolution_Breached,
   core.TimeToResolution_Cycles AS Jira_Escalation_Time_To_Resolution_Cycles,
+  jc.Comment_Count AS Jira_Escalation_Comment_Count,
+  jc.Last_Comment_At AS Jira_Escalation_Last_Comment_At,
+  jc.Last_Comment.Comment_ID AS Jira_Escalation_Last_Comment_ID,
+  jc.Last_Comment.Author_Account_ID AS Jira_Escalation_Last_Comment_Author_Account_ID,
+  jc.Last_Comment.Author_Display_Name AS Jira_Escalation_Last_Comment_Author_Display_Name,
+  jc.Last_Comment.Created AS Jira_Escalation_Last_Comment_Created_At,
+  jc.Last_Comment.Updated AS Jira_Escalation_Last_Comment_Updated_At,
+  jc.Last_Comment.Body AS Jira_Escalation_Last_Comment_Body,
+  jc.Last_Comment.SyncTime AS Jira_Escalation_Last_Comment_Sync_Time,
+  jc.Last_Comment.InsertedAt AS Jira_Escalation_Last_Comment_Inserted_At,
+  jc.Comments AS Jira_Escalation_Comments,
   wl.WorkLog_ID AS WorkLog_ID,
   wl.WorkLog_Type AS WorkLog_Type,
   wl.WorkLog_Submit_Date AS WorkLog_Submitted_At,
@@ -420,9 +459,12 @@ LEFT JOIN shr_people shr
 --  ON core.SR_Key = ci.SalesRecordKey
 LEFT JOIN worklog_latest wl
   ON core.Incident_Number = wl.Incident_Number
+LEFT JOIN jira_comments_agg jc
+  ON core.Jira_Key = jc.Issue_Key
 LEFT JOIN latest_ai ai
   ON core.Incident_Number = ai.Incident_Number
 LEFT JOIN feedback_latest fb
   ON core.SR_Key = fb.Feedback_SR_Key
 LEFT JOIN pagerduty_escalation_latest sc
   ON TRIM(CAST(core.Incident_Number AS STRING)) = TRIM(CAST(sc.PagerDuty_Escalation_Incident_Number AS STRING))
+

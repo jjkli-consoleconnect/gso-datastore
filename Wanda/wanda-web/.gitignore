@@ -1,0 +1,4 @@
+# Temporary files from recovered Cloud Build source
+.DS_Store
+source.tgz
+google-cloud-sdk/
