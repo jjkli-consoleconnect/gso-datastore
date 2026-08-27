@@ -2,6 +2,7 @@
 Cloud Function: Jira Comments Nightly Sync
 Nightly backfill of Jira comments routed via VPC; writes to BigQuery UAT.
 """
+
 import logging
 import uuid
 import time
@@ -14,9 +15,13 @@ from google.cloud import bigquery, secretmanager
 import functions_framework
 
 from jira_helpers import (
-    load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table,
-    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists,
-    execute_bq_query_with_retry
+    convert_timestamp,
+    create_or_replace_temp_table,
+    delete_temp_table,
+    wait_for_table,
+    insert_rows_with_retry,
+    table_exists,
+    execute_bq_query_with_retry,
 )
 from logging_config import setup_root_logging
 from pipeline_runs_logger import log_pipeline_run
@@ -28,53 +33,63 @@ MIN_PROGRESS_WINDOW_SEC = 600
 MIN_WINDOW_HOURS = 1  # Skip windows smaller than 1 hour
 OVERLAP_MINUTES = 10
 MIN_START = datetime(2024, 7, 1, tzinfo=timezone.utc)
-ENABLE_SOFT_DELETE_RECONCILIATION = os.environ.get('ENABLE_SOFT_DELETE_RECONCILIATION', '').strip().lower() == 'true'
-DEFAULT_BASE_WINDOW_DAYS = int(os.environ.get('BASE_WINDOW_DAYS', '1'))
-BACKFILL_MODE = os.environ.get('BACKFILL_MODE', '').strip().lower() == 'true'
-BACKFILL_BASE_WINDOW_DAYS = int(os.environ.get('BACKFILL_BASE_WINDOW_DAYS', '14'))
-MAX_BASE_WINDOW_DAYS = int(os.environ.get('MAX_BASE_WINDOW_DAYS', '30'))
-BASE_WINDOW_HOURS = float(os.environ.get('BASE_WINDOW_HOURS', str(DEFAULT_BASE_WINDOW_DAYS * 24)))
-MIN_ADAPTIVE_WINDOW_HOURS = float(os.environ.get('MIN_ADAPTIVE_WINDOW_HOURS', '2'))
-MAX_ADAPTIVE_WINDOW_HOURS = float(os.environ.get('MAX_ADAPTIVE_WINDOW_HOURS', str(MAX_BASE_WINDOW_DAYS * 24)))
-ADAPTIVE_TARGET_ROWS = int(os.environ.get('ADAPTIVE_TARGET_ROWS', '1500'))
-ADAPTIVE_LOW_WATERMARK_ROWS = int(os.environ.get('ADAPTIVE_LOW_WATERMARK_ROWS', '300'))
-ADAPTIVE_HIGH_WATERMARK_ROWS = int(os.environ.get('ADAPTIVE_HIGH_WATERMARK_ROWS', '5000'))
+ENABLE_SOFT_DELETE_RECONCILIATION = (
+    os.environ.get("ENABLE_SOFT_DELETE_RECONCILIATION", "").strip().lower() == "true"
+)
+DEFAULT_BASE_WINDOW_DAYS = int(os.environ.get("BASE_WINDOW_DAYS", "1"))
+BACKFILL_MODE = os.environ.get("BACKFILL_MODE", "").strip().lower() == "true"
+BACKFILL_BASE_WINDOW_DAYS = int(os.environ.get("BACKFILL_BASE_WINDOW_DAYS", "14"))
+MAX_BASE_WINDOW_DAYS = int(os.environ.get("MAX_BASE_WINDOW_DAYS", "30"))
+BASE_WINDOW_HOURS = float(
+    os.environ.get("BASE_WINDOW_HOURS", str(DEFAULT_BASE_WINDOW_DAYS * 24))
+)
+MIN_ADAPTIVE_WINDOW_HOURS = float(os.environ.get("MIN_ADAPTIVE_WINDOW_HOURS", "2"))
+MAX_ADAPTIVE_WINDOW_HOURS = float(
+    os.environ.get("MAX_ADAPTIVE_WINDOW_HOURS", str(MAX_BASE_WINDOW_DAYS * 24))
+)
+ADAPTIVE_TARGET_ROWS = int(os.environ.get("ADAPTIVE_TARGET_ROWS", "1500"))
+ADAPTIVE_LOW_WATERMARK_ROWS = int(os.environ.get("ADAPTIVE_LOW_WATERMARK_ROWS", "300"))
+ADAPTIVE_HIGH_WATERMARK_ROWS = int(
+    os.environ.get("ADAPTIVE_HIGH_WATERMARK_ROWS", "5000")
+)
 
 # Debug logging at module init
-logging.debug(f"ENV CONFIG: BASE_WINDOW_DAYS={DEFAULT_BASE_WINDOW_DAYS}, BACKFILL_MODE={BACKFILL_MODE}, BACKFILL_BASE_WINDOW_DAYS={BACKFILL_BASE_WINDOW_DAYS}, MAX_BASE_WINDOW_DAYS={MAX_BASE_WINDOW_DAYS}")
+logging.debug(
+    f"ENV CONFIG: BASE_WINDOW_DAYS={DEFAULT_BASE_WINDOW_DAYS}, BACKFILL_MODE={BACKFILL_MODE}, BACKFILL_BASE_WINDOW_DAYS={BACKFILL_BASE_WINDOW_DAYS}, MAX_BASE_WINDOW_DAYS={MAX_BASE_WINDOW_DAYS}"
+)
 
 DEFAULT_PROJECTS = [
-    'GS&O Data Analytics',
-    'Customer Success Management',
-    'GS&O Tool Automation',
-    'GS&O Knowledge Consolidation',
-    'TAC',
-    'VOICE - CE',
-    'IOT CE',
-    'Console Application Support',
-    'Console Connect Provisioning',
-    'Global Service Delivery Team',
-    'Transmission TX-CE',
-    'Mobility SMS - CE',
-    'Managed Security Services',
-    'Sherbet',
-    'Google Contact Center AI Solution',
-    'QMS Documentation',
-    'Operational Case Reviews',
-    'IT Helpdesk',
-    'Vendor Verification Team',
-    'IPECR',
-    'IPCE',
-    'Internal Knowledge Management',
-    'ITOPS',
-    'GS&O Strategic Initiatives'
+    "GS&O Data Analytics",
+    "Customer Success Management",
+    "GS&O Tool Automation",
+    "GS&O Knowledge Consolidation",
+    "TAC",
+    "VOICE - CE",
+    "IOT CE",
+    "Console Application Support",
+    "Console Connect Provisioning",
+    "Global Service Delivery Team",
+    "Transmission TX-CE",
+    "Mobility SMS - CE",
+    "Managed Security Services",
+    "Sherbet",
+    "Google Contact Center AI Solution",
+    "QMS Documentation",
+    "Operational Case Reviews",
+    "IT Helpdesk",
+    "Vendor Verification Team",
+    "IPECR",
+    "IPCE",
+    "Internal Knowledge Management",
+    "ITOPS",
+    "GS&O Strategic Initiatives",
 ]
 
 
 def to_utc_aware(dt):
     if dt is None:
         return None
-    if getattr(dt, 'tzinfo', None):
+    if getattr(dt, "tzinfo", None):
         try:
             return dt.astimezone(timezone.utc)
         except Exception:
@@ -111,8 +126,8 @@ def get_recent_window_metrics(client, dataset_id, table_id, project, sample_size
     """Return recent complete windows for adaptive sizing."""
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
-            bigquery.ScalarQueryParameter('p', 'STRING', project),
-            bigquery.ScalarQueryParameter('n', 'INT64', int(sample_size)),
+            bigquery.ScalarQueryParameter("p", "STRING", project),
+            bigquery.ScalarQueryParameter("n", "INT64", int(sample_size)),
         ]
     )
     rows = client.query(
@@ -151,8 +166,12 @@ def choose_window_hours(client, dataset_id, table_id, project):
     metrics = get_recent_window_metrics(client, dataset_id, table_id, project)
     if not metrics:
         if BACKFILL_MODE:
-            bootstrap_hours = min(max(BACKFILL_BASE_WINDOW_DAYS * 24.0, min_hours), max_hours)
-            logging.info(f"Adaptive window bootstrap (backfill mode): {bootstrap_hours:.2f}h")
+            bootstrap_hours = min(
+                max(BACKFILL_BASE_WINDOW_DAYS * 24.0, min_hours), max_hours
+            )
+            logging.info(
+                f"Adaptive window bootstrap (backfill mode): {bootstrap_hours:.2f}h"
+            )
             return bootstrap_hours
         logging.info(f"Adaptive window bootstrap (default): {base_hours:.2f}h")
         return base_hours
@@ -189,7 +208,7 @@ def select_window(client, dataset_id, table_id, project):
     ws = None
     we = None
     job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter('p', 'STRING', project)]
+        query_parameters=[bigquery.ScalarQueryParameter("p", "STRING", project)]
     )
     try:
         res = client.query(
@@ -240,10 +259,12 @@ def select_window(client, dataset_id, table_id, project):
     return start, end
 
 
-def mark_progress(client, dataset_id, table_id, project, ws, we, status, row_count=None):
-    rc_val = 'NULL' if row_count is None else row_count
-    ws_str = to_utc_aware(ws).strftime('%Y-%m-%d %H:%M:%S') if ws else None
-    we_str = to_utc_aware(we).strftime('%Y-%m-%d %H:%M:%S') if we else None
+def mark_progress(
+    client, dataset_id, table_id, project, ws, we, status, row_count=None
+):
+    rc_val = "NULL" if row_count is None else row_count
+    ws_str = to_utc_aware(ws).strftime("%Y-%m-%d %H:%M:%S") if ws else None
+    we_str = to_utc_aware(we).strftime("%Y-%m-%d %H:%M:%S") if we else None
     client.query(
         f"""
         MERGE `{dataset_id}.{table_id}` T
@@ -257,34 +278,82 @@ def mark_progress(client, dataset_id, table_id, project, ws, we, status, row_cou
 
 
 def get_secret(secret_id, project_id="pccw-internal-virtual-agent"):
+    """Retrieve a secret, falling back to the newest enabled version if the latest alias is destroyed."""
     client = secretmanager.SecretManagerServiceClient()
-    name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
-    response = client.access_secret_version(request={"name": name})
-    return response.payload.data.decode('UTF-8')
+    secret_path = f"projects/{project_id}/secrets/{secret_id}"
+    latest_name = f"{secret_path}/versions/latest"
+
+    try:
+        response = client.access_secret_version(request={"name": latest_name})
+        return response.payload.data.decode("UTF-8")
+    except Exception as exc:
+        logging.warning(
+            f"Latest secret alias failed for {secret_id}: {exc}. Trying newest enabled version."
+        )
+
+    try:
+        versions = list(client.list_secret_versions(request={"parent": secret_path}))
+        valid = []
+        for version in versions:
+            state = getattr(version, "state", None)
+            state_name = (
+                getattr(state, "name", str(state)).lower() if state is not None else ""
+            )
+            if state_name in {"enabled", "state.enabled"}:
+                version_num = int(version.name.rsplit("/", 1)[-1])
+                valid.append((version_num, version.name))
+        if valid:
+            _, chosen_name = max(valid, key=lambda item: item[0])
+            response = client.access_secret_version(request={"name": chosen_name})
+            return response.payload.data.decode("UTF-8")
+    except Exception as fallback_exc:
+        logging.error(
+            f"Failed to recover fallback secret for {secret_id}: {fallback_exc}"
+        )
+
+    raise
 
 
-def insert_rows_resilient(client, dataset_id, temp_table_id, rows, bq_schema, max_attempts=3):
+def insert_rows_resilient(
+    client, dataset_id, temp_table_id, rows, bq_schema, max_attempts=3
+):
     """Insert rows with resilience: retry, and recreate temp table if needed."""
     if not rows:
         return True
-    
+
     for attempt in range(max_attempts):
         # First, try to insert using the standard retry logic
-        if insert_rows_with_retry(client, dataset_id, temp_table_id, rows, bq_schema, retries=5, delay=3):
+        if insert_rows_with_retry(
+            client, dataset_id, temp_table_id, rows, bq_schema, retries=5, delay=3
+        ):
             return True
-        
+
         # If insert failed, check if table still exists; if not, recreate and retry
         if not table_exists(client, dataset_id, temp_table_id):
-            logging.warning(f"Temp table missing after failed insert attempt {attempt + 1}/{max_attempts}. Recreating...")
-            if create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
-                if wait_for_table(client, dataset_id, temp_table_id, retries=15, delay=1):
+            logging.warning(
+                f"Temp table missing after failed insert attempt {attempt + 1}/{max_attempts}. Recreating..."
+            )
+            if create_or_replace_temp_table(
+                client, dataset_id, temp_table_id, bq_schema
+            ):
+                if wait_for_table(
+                    client, dataset_id, temp_table_id, retries=15, delay=1
+                ):
                     # Retry insert after recreation
-                    if insert_rows_with_retry(client, dataset_id, temp_table_id, rows, bq_schema, retries=5, delay=3):
+                    if insert_rows_with_retry(
+                        client,
+                        dataset_id,
+                        temp_table_id,
+                        rows,
+                        bq_schema,
+                        retries=5,
+                        delay=3,
+                    ):
                         return True
-        
+
         if attempt < max_attempts - 1:
-            time.sleep(2 * (1.5 ** attempt))
-    
+            time.sleep(2 * (1.5**attempt))
+
     logging.error(f"Failed to insert rows after {max_attempts} resilient attempts")
     return False
 
@@ -305,8 +374,9 @@ def _body_to_string(body):
     if isinstance(body, str):
         return body
     try:
-        if isinstance(body, dict) and 'content' in body:
+        if isinstance(body, dict) and "content" in body:
             parts = []
+
             def walk(node):
                 if node is None:
                     return
@@ -314,9 +384,9 @@ def _body_to_string(body):
                     parts.append(node)
                     return
                 if isinstance(node, dict):
-                    if 'text' in node and isinstance(node['text'], str):
-                        parts.append(node['text'])
-                    for k in ('content', 'content_list'):
+                    if "text" in node and isinstance(node["text"], str):
+                        parts.append(node["text"])
+                    for k in ("content", "content_list"):
                         if k in node and isinstance(node[k], list):
                             for child in node[k]:
                                 walk(child)
@@ -324,13 +394,15 @@ def _body_to_string(body):
                 if isinstance(node, list):
                     for item in node:
                         walk(item)
-            walk(body.get('content'))
+
+            walk(body.get("content"))
             if parts:
-                return ' '.join(parts)
+                return " ".join(parts)
     except Exception:
         pass
     try:
         import json
+
         return json.dumps(body, ensure_ascii=False)
     except Exception:
         return str(body)
@@ -341,17 +413,21 @@ def fetch_and_sync_jira_comments_nightly():
     if config is None:
         return
 
-    jira_base_url = 'https://consoleconnect.atlassian.net'
+    jira_base_url = "https://consoleconnect.atlassian.net"
     search_url = f"{jira_base_url}/rest/api/3/search/jql"
-    username = config.get('jira_user') or config.get('jira_user_email') or 'jjkli@consoleconnect.com'
-    api_token = config.get('jira_api_token')
+    username = (
+        config.get("jira_user")
+        or config.get("jira_user_email")
+        or "jjkli@consoleconnect.com"
+    )
+    api_token = config.get("jira_api_token")
 
     run_id = str(uuid.uuid4())
-    table_id = 'JiraComments'
-    temp_table_id = 'JiraComments_temp'
+    table_id = "JiraComments"
+    temp_table_id = "JiraComments_temp"
     temp_table_id_run = f"{temp_table_id}_{run_id[:8]}"
-    progress_table_id = 'JiraComments_progress'
-    dataset_id = 'GSO'
+    progress_table_id = "JiraComments_progress"
+    dataset_id = "GSO"
     pipeline_name = "GCP - JiraCommentsNightly"
     client = None
     run_started = None
@@ -365,58 +441,78 @@ def fetch_and_sync_jira_comments_nightly():
     try:
         run_started = datetime.now(timezone.utc)
         client = bigquery.Client(project="pccw-internal-virt-agent-uat")
-        log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
+        log_pipeline_run(
+            client,
+            pipeline_name=pipeline_name,
+            run_id=run_id,
+            level="INFO",
+            message="Pipeline started",
+            status="RUNNING",
+        )
 
         ensure_soft_delete_columns(client, dataset_id, table_id)
 
         ensure_progress_table(client, dataset_id, progress_table_id)
         projects = DEFAULT_PROJECTS
-        env_single = os.environ.get('SINGLE_PROJECT') or os.environ.get('PROJECT')
-        env_projects = os.environ.get('PROJECTS')
+        env_single = os.environ.get("SINGLE_PROJECT") or os.environ.get("PROJECT")
+        env_projects = os.environ.get("PROJECTS")
         if env_single:
             projects = [env_single.strip()]
         elif env_projects:
-            projects = [p.strip() for p in env_projects.split(',') if p.strip()]
+            projects = [p.strip() for p in env_projects.split(",") if p.strip()]
         logging.info(f"Projects for comments nightly run: {projects}")
 
         bq_schema = [
-            bigquery.SchemaField('Issue_Key','STRING'),
-            bigquery.SchemaField('Comment_ID','STRING'),
-            bigquery.SchemaField('Author_Account_ID','STRING'),
-            bigquery.SchemaField('Author_Display_Name','STRING'),
-            bigquery.SchemaField('Created','TIMESTAMP'),
-            bigquery.SchemaField('Updated','TIMESTAMP'),
-            bigquery.SchemaField('Body','STRING'),
-            bigquery.SchemaField('Visibility_Type','STRING'),
-            bigquery.SchemaField('Visibility_Value','STRING'),
-            bigquery.SchemaField('SyncTime','TIMESTAMP'),
+            bigquery.SchemaField("Issue_Key", "STRING"),
+            bigquery.SchemaField("Comment_ID", "STRING"),
+            bigquery.SchemaField("Author_Account_ID", "STRING"),
+            bigquery.SchemaField("Author_Display_Name", "STRING"),
+            bigquery.SchemaField("Created", "TIMESTAMP"),
+            bigquery.SchemaField("Updated", "TIMESTAMP"),
+            bigquery.SchemaField("Body", "STRING"),
+            bigquery.SchemaField("Visibility_Type", "STRING"),
+            bigquery.SchemaField("Visibility_Value", "STRING"),
+            bigquery.SchemaField("SyncTime", "TIMESTAMP"),
         ]
 
-        headers = {'Accept': 'application/json'}
+        headers = {"Accept": "application/json"}
         auth = (username, api_token)
 
         def fetch_issue_keys_paginated(jql):
             start_at = 0
             max_results = 100
-            total = float('inf')
+            total = float("inf")
             keys = []
             had_error = False
             attempts = 0
             while start_at < total:
                 try:
-                    params = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
-                    resp = requests.get(search_url, headers=headers, auth=auth, params=params, timeout=30)
+                    params = {
+                        "jql": jql,
+                        "startAt": start_at,
+                        "maxResults": max_results,
+                        "fields": "key",
+                    }
+                    resp = requests.get(
+                        search_url,
+                        headers=headers,
+                        auth=auth,
+                        params=params,
+                        timeout=30,
+                    )
                     if resp.status_code == 429:
-                        ra = int(resp.headers.get('Retry-After', 30) or 30)
+                        ra = int(resp.headers.get("Retry-After", 30) or 30)
                         sleep_for = ra + random.uniform(0, JITTER_MAX_SECONDS)
-                        logging.warning(f"429 search startAt={start_at}; sleeping {sleep_for:.1f}s")
+                        logging.warning(
+                            f"429 search startAt={start_at}; sleeping {sleep_for:.1f}s"
+                        )
                         time.sleep(sleep_for)
                         continue
                     resp.raise_for_status()
                     data = resp.json()
-                    issues = data.get('issues', [])
-                    total = data.get('total', 0)
-                    keys.extend([i.get('key') for i in issues if i.get('key')])
+                    issues = data.get("issues", [])
+                    total = data.get("total", 0)
+                    keys.extend([i.get("key") for i in issues if i.get("key")])
                     start_at += len(issues)
                     attempts = 0  # Reset attempts on success
                     if not issues:
@@ -427,8 +523,10 @@ def fetch_and_sync_jira_comments_nightly():
                         logging.error(f"Issue search error: {e}")
                         had_error = True
                         break
-                    back = min(60, 2 ** attempts) + random.uniform(0, JITTER_MAX_SECONDS)
-                    logging.warning(f"Issue search error: {e}. Retrying ({attempts}/5) after {back:.1f}s")
+                    back = min(60, 2**attempts) + random.uniform(0, JITTER_MAX_SECONDS)
+                    logging.warning(
+                        f"Issue search error: {e}. Retrying ({attempts}/5) after {back:.1f}s"
+                    )
                     time.sleep(back)
             return keys, had_error
 
@@ -440,18 +538,26 @@ def fetch_and_sync_jira_comments_nightly():
             attempts = 0
             while True:
                 try:
-                    r = requests.get(url, headers=headers, auth=auth, params={'startAt': start, 'maxResults': size}, timeout=60)
+                    r = requests.get(
+                        url,
+                        headers=headers,
+                        auth=auth,
+                        params={"startAt": start, "maxResults": size},
+                        timeout=60,
+                    )
                     if r.status_code == 429:
-                        ra = int(r.headers.get('Retry-After', 10) or 10)
+                        ra = int(r.headers.get("Retry-After", 10) or 10)
                         sleep_for = ra + random.uniform(0, JITTER_MAX_SECONDS)
-                        logging.warning(f"429 comments {issue_key} startAt={start}; sleeping {sleep_for:.1f}s")
+                        logging.warning(
+                            f"429 comments {issue_key} startAt={start}; sleeping {sleep_for:.1f}s"
+                        )
                         time.sleep(sleep_for)
                         continue
                     r.raise_for_status()
                     data = r.json()
-                    cm = data.get('comments', [])
+                    cm = data.get("comments", [])
                     out.extend(cm)
-                    total = data.get('total', len(out))
+                    total = data.get("total", len(out))
                     if start + len(cm) >= total:
                         break
                     start += len(cm)
@@ -460,25 +566,36 @@ def fetch_and_sync_jira_comments_nightly():
                     attempts += 1
                     if attempts >= 5:
                         break
-                    back = min(60, 2 ** attempts) + random.uniform(0, JITTER_MAX_SECONDS)
+                    back = min(60, 2**attempts) + random.uniform(0, JITTER_MAX_SECONDS)
                     time.sleep(back)
             return out
 
         def generate_rows(issue_keys, ws_bound, we_bound):
-            now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+            now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
             # Ensure bounds are naive for comparison with parsed timestamps
-            ws_naive = ws_bound.replace(tzinfo=None) if getattr(ws_bound, 'tzinfo', None) else ws_bound
-            we_naive = we_bound.replace(tzinfo=None) if getattr(we_bound, 'tzinfo', None) else we_bound
-            
+            ws_naive = (
+                ws_bound.replace(tzinfo=None)
+                if getattr(ws_bound, "tzinfo", None)
+                else ws_bound
+            )
+            we_naive = (
+                we_bound.replace(tzinfo=None)
+                if getattr(we_bound, "tzinfo", None)
+                else we_bound
+            )
+
             # Handle empty issue_keys
             if not issue_keys:
                 return
-            
+
             # Parallel fetching of comments
             max_workers = min(10, len(issue_keys))
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_key = {executor.submit(fetch_comments_for_issue, key): key for key in issue_keys}
-                
+                future_to_key = {
+                    executor.submit(fetch_comments_for_issue, key): key
+                    for key in issue_keys
+                }
+
                 for future in as_completed(future_to_key):
                     key = future_to_key[future]
                     try:
@@ -486,81 +603,132 @@ def fetch_and_sync_jira_comments_nightly():
                     except Exception as e:
                         logging.warning(f"Failed to fetch comments for {key}: {e}")
                         continue
-                    
+
                     for c in comments:
-                        created = convert_timestamp(c.get('created'))
-                        updated = convert_timestamp(c.get('updated'))
+                        created = convert_timestamp(c.get("created"))
+                        updated = convert_timestamp(c.get("updated"))
                         ref = updated or created
                         if not ref:
                             continue
                         try:
-                            ref_dt = datetime.strptime(ref, '%Y-%m-%d %H:%M:%S')
+                            ref_dt = datetime.strptime(ref, "%Y-%m-%d %H:%M:%S")
                         except Exception:
                             continue
                         if not (ws_naive <= ref_dt < we_naive):
                             continue
-                        a = c.get('author', {})
-                        vis = c.get('visibility', {})
+                        a = c.get("author", {})
+                        vis = c.get("visibility", {})
                         yield {
-                            'Issue_Key': key,
-                            'Comment_ID': c.get('id'),
-                            'Author_Account_ID': a.get('accountId'),
-                            'Author_Display_Name': a.get('displayName'),
-                            'Created': created,
-                            'Updated': updated,
-                            'Body': _body_to_string(c.get('body')),
-                            'Visibility_Type': vis.get('type'),
-                            'Visibility_Value': vis.get('value'),
-                            'SyncTime': now_str,
+                            "Issue_Key": key,
+                            "Comment_ID": c.get("id"),
+                            "Author_Account_ID": a.get("accountId"),
+                            "Author_Display_Name": a.get("displayName"),
+                            "Created": created,
+                            "Updated": updated,
+                            "Body": _body_to_string(c.get("body")),
+                            "Visibility_Type": vis.get("type"),
+                            "Visibility_Value": vis.get("value"),
+                            "SyncTime": now_str,
                         }
 
         # Clean up orphaned temp tables from previous crashed runs (older than 2h)
         try:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
             for tbl in client.list_tables(f"{client.project}.{dataset_id}"):
-                if tbl.table_id.startswith(temp_table_id + '_') and tbl.table_id != temp_table_id_run:
+                if (
+                    tbl.table_id.startswith(temp_table_id + "_")
+                    and tbl.table_id != temp_table_id_run
+                ):
                     tbl_ref = client.get_table(f"{dataset_id}.{tbl.table_id}")
                     if tbl_ref.created.replace(tzinfo=timezone.utc) < cutoff:
                         client.delete_table(tbl_ref, not_found_ok=True)
                         logging.info(f"Cleaned up orphaned temp table: {tbl.table_id}")
         except Exception as _cleanup_ex:
-            logging.warning(f"Orphan temp table cleanup failed (non-fatal): {_cleanup_ex}")
+            logging.warning(
+                f"Orphan temp table cleanup failed (non-fatal): {_cleanup_ex}"
+            )
 
-        if not create_or_replace_temp_table(client, dataset_id, temp_table_id_run, bq_schema):
+        if not create_or_replace_temp_table(
+            client, dataset_id, temp_table_id_run, bq_schema
+        ):
             logging.error("Setup failed: Could not create run-scoped temp table.")
-            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Temp table create failed", status="ERROR")
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="ERROR",
+                message="Temp table create failed",
+                status="ERROR",
+            )
             return
-        if not wait_for_table(client, dataset_id, temp_table_id_run, retries=30, delay=2):
+        if not wait_for_table(
+            client, dataset_id, temp_table_id_run, retries=30, delay=2
+        ):
             logging.error("Setup failed: Temp table not available after create.")
-            log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="ERROR", message="Temp table wait failed", status="ERROR")
+            log_pipeline_run(
+                client,
+                pipeline_name=pipeline_name,
+                run_id=run_id,
+                level="ERROR",
+                message="Temp table wait failed",
+                status="ERROR",
+            )
             return
         for proj in projects:
             logging.info(f"Starting nightly window selection for project {proj}")
             while True:
                 ws, we = select_window(client, dataset_id, progress_table_id, proj)
                 if not ws or not we:
-                    logging.info(f"No further window for {proj} (too close to now or complete)")
+                    logging.info(
+                        f"No further window for {proj} (too close to now or complete)"
+                    )
                     break
                 now = datetime.now(timezone.utc)
                 if ws >= now:
                     logging.info(f"Window start >= now; stopping {proj}")
                     break
-                mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'in_progress')
-                log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Window in_progress", status="RUNNING", window_start=ws.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'))
+                mark_progress(
+                    client, dataset_id, progress_table_id, proj, ws, we, "in_progress"
+                )
+                log_pipeline_run(
+                    client,
+                    pipeline_name=pipeline_name,
+                    run_id=run_id,
+                    level="INFO",
+                    message="Window in_progress",
+                    status="RUNNING",
+                    window_start=ws.strftime("%Y-%m-%d %H:%M:%S"),
+                    window_end=we.strftime("%Y-%m-%d %H:%M:%S"),
+                )
 
-                proj_clause = f'project = "{proj}"' if (' ' in proj or '&' in proj) else f'project = {proj}'
+                proj_clause = (
+                    f'project = "{proj}"'
+                    if (" " in proj or "&" in proj)
+                    else f"project = {proj}"
+                )
                 time_clause = f"updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
                 jql_window = f"({proj_clause}) AND {time_clause}"
                 logging.info(f"JQL (comments nightly window): {jql_window}")
 
                 window_failed = False
 
-                issue_keys, issue_keys_had_error = fetch_issue_keys_paginated(jql_window)
+                issue_keys, issue_keys_had_error = fetch_issue_keys_paginated(
+                    jql_window
+                )
                 logging.info(f"Issue keys fetched for comments: {len(issue_keys)}")
 
                 if issue_keys_had_error:
                     run_had_errors = True
-                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=0)
+                    mark_progress(
+                        client,
+                        dataset_id,
+                        progress_table_id,
+                        proj,
+                        ws,
+                        we,
+                        "failed",
+                        row_count=0,
+                    )
                     break
 
                 rows_to_insert = []
@@ -569,8 +737,23 @@ def fetch_and_sync_jira_comments_nightly():
                 for row in generate_rows(issue_keys, ws, we):
                     rows_to_insert.append(row)
                     if len(rows_to_insert) >= batch:
-                        if not insert_rows_resilient(client, dataset_id, temp_table_id_run, rows_to_insert, bq_schema):
-                            mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=len(rows_to_insert))
+                        if not insert_rows_resilient(
+                            client,
+                            dataset_id,
+                            temp_table_id_run,
+                            rows_to_insert,
+                            bq_schema,
+                        ):
+                            mark_progress(
+                                client,
+                                dataset_id,
+                                progress_table_id,
+                                proj,
+                                ws,
+                                we,
+                                "failed",
+                                row_count=len(rows_to_insert),
+                            )
                             run_had_errors = True
                             window_failed = True
                             break
@@ -580,8 +763,19 @@ def fetch_and_sync_jira_comments_nightly():
                 if window_failed:
                     break
                 if rows_to_insert:
-                    if not insert_rows_resilient(client, dataset_id, temp_table_id_run, rows_to_insert, bq_schema):
-                        mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=len(rows_to_insert))
+                    if not insert_rows_resilient(
+                        client, dataset_id, temp_table_id_run, rows_to_insert, bq_schema
+                    ):
+                        mark_progress(
+                            client,
+                            dataset_id,
+                            progress_table_id,
+                            proj,
+                            ws,
+                            we,
+                            "failed",
+                            row_count=len(rows_to_insert),
+                        )
                         run_had_errors = True
                         window_failed = True
                     if window_failed:
@@ -600,26 +794,61 @@ def fetch_and_sync_jira_comments_nightly():
                                     VALUES (S.Issue_Key,S.Comment_ID,S.Author_Account_ID,S.Author_Display_Name,S.Created,S.Updated,S.Body,S.Visibility_Type,S.Visibility_Value,S.SyncTime,FALSE,NULL)
                 """
                 try:
-                    execute_bq_query_with_retry(client, merge, max_retries=5, initial_delay=10.0)
+                    execute_bq_query_with_retry(
+                        client, merge, max_retries=5, initial_delay=10.0
+                    )
                     logging.info("Merged comments temp table into final table.")
-                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'complete', row_count=rows_this_window)
+                    mark_progress(
+                        client,
+                        dataset_id,
+                        progress_table_id,
+                        proj,
+                        ws,
+                        we,
+                        "complete",
+                        row_count=rows_this_window,
+                    )
                     try:
-                        client.query(f"TRUNCATE TABLE `{dataset_id}.{temp_table_id_run}`").result()
+                        client.query(
+                            f"TRUNCATE TABLE `{dataset_id}.{temp_table_id_run}`"
+                        ).result()
                     except Exception as truncate_err:
-                        logging.warning(f"Failed to truncate temp table after merge: {truncate_err}")
+                        logging.warning(
+                            f"Failed to truncate temp table after merge: {truncate_err}"
+                        )
                 except Exception as e:
                     logging.error(f"Merge failed: {e}")
                     run_had_errors = True
-                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=rows_this_window)
+                    mark_progress(
+                        client,
+                        dataset_id,
+                        progress_table_id,
+                        proj,
+                        ws,
+                        we,
+                        "failed",
+                        row_count=rows_this_window,
+                    )
 
                 run_ended = datetime.now(timezone.utc)
                 duration_seconds = (run_ended - run_started).total_seconds()
-                log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Window complete", status="SUCCESS", rows_merged=int(rows_this_window), duration_seconds=duration_seconds, window_start=ws.strftime('%Y-%m-%d %H:%M:%S'), window_end=we.strftime('%Y-%m-%d %H:%M:%S'))
+                log_pipeline_run(
+                    client,
+                    pipeline_name=pipeline_name,
+                    run_id=run_id,
+                    level="INFO",
+                    message="Window complete",
+                    status="SUCCESS",
+                    rows_merged=int(rows_this_window),
+                    duration_seconds=duration_seconds,
+                    window_start=ws.strftime("%Y-%m-%d %H:%M:%S"),
+                    window_end=we.strftime("%Y-%m-%d %H:%M:%S"),
+                )
                 # Continue to next window if backlog remains
 
                 if ENABLE_SOFT_DELETE_RECONCILIATION:
-                        # Reconciliation step: soft-delete comments for deleted/missing tickets; restore when ticket is active.
-                        mark_deleted_query = f'''
+                    # Reconciliation step: soft-delete comments for deleted/missing tickets; restore when ticket is active.
+                    mark_deleted_query = f"""
                                 UPDATE `{dataset_id}.{table_id}` C
                                 SET IsDeleted = TRUE,
                                         DeletedAt = CURRENT_TIMESTAMP()
@@ -634,10 +863,10 @@ def fetch_and_sync_jira_comments_nightly():
                                             WHERE T.Key = C.Issue_Key AND COALESCE(T.IsDeleted, FALSE) = TRUE
                                         )
                                     )
-                        '''
-                        client.query(mark_deleted_query).result()
+                        """
+                    client.query(mark_deleted_query).result()
 
-                        clear_deleted_query = f'''
+                    clear_deleted_query = f"""
                                 UPDATE `{dataset_id}.{table_id}` C
                                 SET IsDeleted = FALSE,
                                         DeletedAt = NULL
@@ -646,10 +875,12 @@ def fetch_and_sync_jira_comments_nightly():
                                         SELECT 1 FROM `{dataset_id}.JiraTickets` T
                                         WHERE T.Key = C.Issue_Key AND COALESCE(T.IsDeleted, FALSE) = FALSE
                                     )
-                        '''
-                        client.query(clear_deleted_query).result()
+                        """
+                    client.query(clear_deleted_query).result()
                 else:
-                        logging.warning("Soft-delete reconciliation disabled; skipping comments nightly delete-marking")
+                    logging.warning(
+                        "Soft-delete reconciliation disabled; skipping comments nightly delete-marking"
+                    )
 
         if run_had_errors:
             final_status = "ERROR"
@@ -682,12 +913,16 @@ def fetch_and_sync_jira_comments_nightly():
                     duration_seconds=duration_seconds,
                 )
         except Exception as log_err:
-            logging.warning(f"Failed to write final pipeline status for {run_id}: {log_err}")
+            logging.warning(
+                f"Failed to write final pipeline status for {run_id}: {log_err}"
+            )
         try:
             if client:
                 delete_temp_table(client, dataset_id, temp_table_id_run)
         except Exception as cleanup_err:
-            logging.warning(f"Failed to cleanup temp table {temp_table_id_run}: {cleanup_err}")
+            logging.warning(
+                f"Failed to cleanup temp table {temp_table_id_run}: {cleanup_err}"
+            )
 
 
 @functions_framework.http
@@ -695,20 +930,23 @@ def main(request):
     # Cleanup stale RUNNING entries older than 2 hours
     try:
         client = bigquery.Client(project="pccw-internal-virt-agent-uat")
-        cleanup_query = '''
+        cleanup_query = """
             UPDATE `GSO.PipelineRuns`
             SET Status = 'ERROR', Message = 'Function timeout or crash (auto-cleaned)'
             WHERE PipelineName = 'GCP - JiraCommentsNightly'
               AND Status = 'RUNNING'
               AND RunTime < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
-        '''
+        """
         client.query(cleanup_query).result()
     except Exception as e:
         logging.warning(f"Failed to cleanup stale RUNNING entries: {e}")
 
     try:
         fetch_and_sync_jira_comments_nightly()
-        return {"status": "success", "message": "Jira comments nightly sync completed"}, 200
+        return {
+            "status": "success",
+            "message": "Jira comments nightly sync completed",
+        }, 200
     except Exception as e:
         logging.error(f"Cloud Function failed: {e}")
         return {"status": "error", "message": str(e)}, 500

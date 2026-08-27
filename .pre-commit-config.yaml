@@ -1,0 +1,37 @@
+exclude: '^(\.venv|\.git|\.gcloud|\.gcloud-config|node_modules|google-cloud-sdk|Temp|Archive|Backup|__pycache__|\.ruff_cache)/'
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.10
+    hooks:
+      - id: bandit
+        # Scan only real source files (skip node_modules, Temp, cloud SDK,
+        # venvs) via `files` regex instead of passing dirs: newer bandit
+        # rejects `-r <dir>` mixed with explicit file targets.
+        # Only HIGH severity findings block commits; lower severities are
+        # still scanned and reported.
+        files: '^(CloudFunctions|BigQuery|BigQuerySync|shared|GAS)/.*\.py$'
+        exclude: 'node_modules|google-cloud-sdk|Temp|Archive|__pycache__|\.venv|\.gcloud|\.tmp/'
+        args: [--severity-level, high]
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .detect-secrets-baseline]
+        files: \.(py|js|ts|sh|yml|yaml|toml|cfg|ini|env)\$
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: mixed-line-ending

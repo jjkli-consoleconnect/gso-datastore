@@ -13,6 +13,13 @@
 It is deployed as a managed service on **Google Cloud Run** and exposes a REST API
 that frontends can call to create sessions and run agent conversations.
 
+> **Current web application note (2026-08-25):** The deployed UAT web UI is the
+> `wanda-web` Cloud Run service, not the planned `wanda-frontend` service
+> described later in this document. It is a small Node.js server plus a single
+> HTML page. It proxies Wanda ADK requests and two Conversational Analytics
+> agents. See [docs/architecture.md](docs/architecture.md) and
+> [docs/deployment.md](docs/deployment.md) before modifying or deploying it.
+
 The goal of this project is to build a **modern, production-quality web frontend**
 for Wanda that supports:
 

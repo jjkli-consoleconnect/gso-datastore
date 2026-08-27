@@ -3,6 +3,7 @@ Cloud Function: Jira Tickets Sync
 Syncs Jira ticket data from consoleconnect.atlassian.net to BigQuery.
 Routes through VPC to access Jira behind VPN.
 """
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -15,14 +16,18 @@ import random
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery, secretmanager
-from google.api_core.exceptions import Conflict, NotFound, GoogleAPIError
 import functions_framework
 
 # Import shared helper functions from local copy
 from jira_helpers import (
-    load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table, 
-    delete_temp_table, wait_for_table, insert_rows_with_retry,
-    execute_bq_query_with_retry
+    load_base_jql,
+    build_jql,
+    convert_timestamp,
+    create_or_replace_temp_table,
+    delete_temp_table,
+    wait_for_table,
+    insert_rows_with_retry,
+    execute_bq_query_with_retry,
 )
 from logging_config import setup_root_logging
 from pipeline_runs_logger import log_pipeline_run
@@ -41,10 +46,12 @@ def handle_429_backoff(response, attempt=1, max_attempts=3):
     """Handle 429 rate limit with exponential backoff."""
     if response.status_code != 429 or attempt >= max_attempts:
         return False
-    retry_after = int(response.headers.get('Retry-After', 30) or 30)
+    retry_after = int(response.headers.get("Retry-After", 30) or 30)
     backoff_time = min(retry_after * (2 ** (attempt - 1)), 120)  # Cap at 2 minutes
     wait_time = backoff_time + random.uniform(0, JITTER_MAX_SECONDS)
-    logging.warning(f"429 Rate limit (attempt {attempt}/{max_attempts}). Waiting {wait_time:.1f}s")
+    logging.warning(
+        f"429 Rate limit (attempt {attempt}/{max_attempts}). Waiting {wait_time:.1f}s"
+    )
     time.sleep(wait_time)
     return True
 
@@ -52,29 +59,60 @@ def handle_429_backoff(response, attempt=1, max_attempts=3):
 def create_session_with_retries():
     """Create a requests Session with connection pooling and retry strategy."""
     session = requests.Session()
-    
+
     # Configure retry strategy for transient failures
     retry_strategy = Retry(
         total=3,
         backoff_factor=1,  # exponential backoff: 1s, 2s, 4s
         status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["GET", "POST"]
+        allowed_methods=["GET", "POST"],
     )
-    
+
     # Apply to both http and https - increased pool to match concurrency (20 parallel workers)
-    adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=30, pool_maxsize=30)
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy, pool_connections=30, pool_maxsize=30
+    )
     session.mount("https://", adapter)
     session.mount("http://", adapter)
-    
+
     return session
 
 
 def get_secret(secret_id, project_id="pccw-internal-virtual-agent"):
-    """Retrieve secret from Google Secret Manager."""
+    """Retrieve a secret, falling back to the newest enabled version if the latest alias is destroyed."""
     client = secretmanager.SecretManagerServiceClient()
-    name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
-    response = client.access_secret_version(request={"name": name})
-    return response.payload.data.decode('UTF-8')
+    secret_path = f"projects/{project_id}/secrets/{secret_id}"
+    latest_name = f"{secret_path}/versions/latest"
+
+    try:
+        response = client.access_secret_version(request={"name": latest_name})
+        return response.payload.data.decode("UTF-8")
+    except Exception as exc:
+        logging.warning(
+            f"Latest secret alias failed for {secret_id}: {exc}. Trying newest enabled version."
+        )
+
+    try:
+        versions = list(client.list_secret_versions(request={"parent": secret_path}))
+        valid = []
+        for version in versions:
+            state = getattr(version, "state", None)
+            state_name = (
+                getattr(state, "name", str(state)).lower() if state is not None else ""
+            )
+            if state_name in {"enabled", "state.enabled"}:
+                version_num = int(version.name.rsplit("/", 1)[-1])
+                valid.append((version_num, version.name))
+        if valid:
+            _, chosen_name = max(valid, key=lambda item: item[0])
+            response = client.access_secret_version(request={"name": chosen_name})
+            return response.payload.data.decode("UTF-8")
+    except Exception as fallback_exc:
+        logging.error(
+            f"Failed to recover fallback secret for {secret_id}: {fallback_exc}"
+        )
+
+    raise
 
 
 def ensure_ticket_columns(client, dataset_id, table_id):
@@ -84,8 +122,8 @@ def ensure_ticket_columns(client, dataset_id, table_id):
         table = client.get_table(table_ref)
         existing_fields = {
             field.name: {
-                'type': field.field_type.upper(),
-                'mode': (field.mode or 'NULLABLE').upper(),
+                "type": field.field_type.upper(),
+                "mode": (field.mode or "NULLABLE").upper(),
             }
             for field in table.schema
         }
@@ -97,32 +135,32 @@ def ensure_ticket_columns(client, dataset_id, table_id):
 
     # Only issue DDL when the column is genuinely absent — avoids quota burns on every run.
     simple_columns = [
-        ('AssociatedTeam', 'STRING'),
-        ('TransactionStatus', 'STRING'),
-        ('Service', 'STRING'),
-        ('Origin', 'STRING'),
-        ('RootCause', 'STRING'),
-        ('ResolutionSecurity', 'STRING'),
-        ('Symptoms', 'STRING'),
-        ('ATTCK', 'STRING'),
-        ('Description', 'STRING'),
-        ('IssueId', 'STRING'),
-        ('Creator', 'STRING'),
-        ('ReporterId', 'STRING'),
-        ('AssigneeId', 'STRING'),
-        ('DueDate', 'DATE'),
-        ('FeatureTeam', 'STRING'),
-        ('MaintenanceWindowStart', 'TIMESTAMP'),
-        ('MaintenanceWindowEnd', 'TIMESTAMP'),
-        ('KnowledgeManagement', 'STRING'),
-        ('DirectoryInternal', 'STRING'),
-        ('ConfluenceURL', 'STRING'),
-        ('IncludeChildPages', 'STRING'),
-        ('Verifier', 'STRING'),
-        ('VerifierId', 'STRING'),
-        ('Approvers', 'STRING'),
-        ('ApproversId', 'STRING'),
-        ('TimeSpentSeconds', 'INT64'),
+        ("AssociatedTeam", "STRING"),
+        ("TransactionStatus", "STRING"),
+        ("Service", "STRING"),
+        ("Origin", "STRING"),
+        ("RootCause", "STRING"),
+        ("ResolutionSecurity", "STRING"),
+        ("Symptoms", "STRING"),
+        ("ATTCK", "STRING"),
+        ("Description", "STRING"),
+        ("IssueId", "STRING"),
+        ("Creator", "STRING"),
+        ("ReporterId", "STRING"),
+        ("AssigneeId", "STRING"),
+        ("DueDate", "DATE"),
+        ("FeatureTeam", "STRING"),
+        ("MaintenanceWindowStart", "TIMESTAMP"),
+        ("MaintenanceWindowEnd", "TIMESTAMP"),
+        ("KnowledgeManagement", "STRING"),
+        ("DirectoryInternal", "STRING"),
+        ("ConfluenceURL", "STRING"),
+        ("IncludeChildPages", "STRING"),
+        ("Verifier", "STRING"),
+        ("VerifierId", "STRING"),
+        ("Approvers", "STRING"),
+        ("ApproversId", "STRING"),
+        ("TimeSpentSeconds", "INT64"),
     ]
     for col_name, col_type in simple_columns:
         if col_name not in existing_columns:
@@ -131,12 +169,12 @@ def ensure_ticket_columns(client, dataset_id, table_id):
             ).result()
             logging.info(f"Added missing column {col_name} to {table_id}")
 
-    labels_field = existing_fields.get('Labels')
+    labels_field = existing_fields.get("Labels")
     if labels_field is None:
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Labels ARRAY<STRING>"
         ).result()
-    elif labels_field['type'] == 'STRING' and labels_field['mode'] != 'REPEATED':
+    elif labels_field["type"] == "STRING" and labels_field["mode"] != "REPEATED":
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Labels_array ARRAY<STRING>"
         ).result()
@@ -161,12 +199,14 @@ def ensure_ticket_columns(client, dataset_id, table_id):
             f"ALTER TABLE `{dataset_id}.{table_id}` RENAME COLUMN Labels_array TO Labels"
         ).result()
 
-    attachment_field = existing_fields.get('Attachment')
+    attachment_field = existing_fields.get("Attachment")
     if attachment_field is None:
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Attachment JSON"
         ).result()
-    elif attachment_field['type'] == 'STRING' and attachment_field['mode'] != 'REPEATED':
+    elif (
+        attachment_field["type"] == "STRING" and attachment_field["mode"] != "REPEATED"
+    ):
         # One-time in-place migration from STRING to JSON while preserving non-JSON raw payloads.
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Attachment_json JSON"
@@ -189,7 +229,7 @@ def ensure_ticket_columns(client, dataset_id, table_id):
             f"ALTER TABLE `{dataset_id}.{table_id}` RENAME COLUMN Attachment_json TO Attachment"
         ).result()
 
-    if 'TranscationStatus' in existing_columns:
+    if "TranscationStatus" in existing_columns:
         client.query(
             f"""
             UPDATE `{dataset_id}.{table_id}`
@@ -206,9 +246,7 @@ def add_creator_insert_mapping(merge_query):
         raise ValueError("Unexpected JiraTickets MERGE insert shape")
     return merge_query.replace(
         column_anchor, "Resolved, DueDate, Creator, Reporter"
-    ).replace(
-        value_anchor, "S.Resolved, S.DueDate, S.Creator, S.Reporter"
-    )
+    ).replace(value_anchor, "S.Resolved, S.DueDate, S.Creator, S.Reporter")
 
 
 def load_config():
@@ -216,10 +254,7 @@ def load_config():
     try:
         api_token = get_secret("jira-api-token")
         user_email = get_secret("jira-user-email")
-        return {
-            'jira_api_token': api_token,
-            'jira_user': user_email
-        }
+        return {"jira_api_token": api_token, "jira_user": user_email}
     except Exception as e:
         logging.error(f"Failed to load config from Secret Manager: {e}")
         return None
@@ -230,9 +265,18 @@ def get_field_value(field):
     if field is None:
         return None
     elif isinstance(field, dict):
-        return field.get('value') or field.get('name') or field.get('displayName')
+        return field.get("value") or field.get("name") or field.get("displayName")
     elif isinstance(field, list):
-        return ', '.join([str(item.get('value') or item.get('name') or item.get('displayName') if isinstance(item, dict) else item) for item in field])
+        return ", ".join(
+            [
+                str(
+                    item.get("value") or item.get("name") or item.get("displayName")
+                    if isinstance(item, dict)
+                    else item
+                )
+                for item in field
+            ]
+        )
     elif isinstance(field, bool):
         return str(field)
     else:
@@ -248,11 +292,17 @@ def resolve_account_id_display_name(account_id, session, auth, cache):
 
     try:
         user_url = "https://consoleconnect.atlassian.net/rest/api/3/user"
-        response = session.get(user_url, auth=auth, params={"accountId": account_id}, timeout=20)
-        if response.status_code == 429 and handle_429_backoff(response, attempt=1, max_attempts=2):
-            response = session.get(user_url, auth=auth, params={"accountId": account_id}, timeout=20)
+        response = session.get(
+            user_url, auth=auth, params={"accountId": account_id}, timeout=20
+        )
+        if response.status_code == 429 and handle_429_backoff(
+            response, attempt=1, max_attempts=2
+        ):
+            response = session.get(
+                user_url, auth=auth, params={"accountId": account_id}, timeout=20
+            )
         response.raise_for_status()
-        display_name = (response.json() or {}).get('displayName')
+        display_name = (response.json() or {}).get("displayName")
         cache[account_id] = display_name
         return display_name
     except Exception:
@@ -274,8 +324,8 @@ def extract_user_names_and_ids(field_value, session=None, auth=None, cache=None)
         display_name = None
 
         if isinstance(item, dict):
-            account_id = item.get('accountId') or item.get('id')
-            display_name = item.get('displayName') or item.get('name')
+            account_id = item.get("accountId") or item.get("id")
+            display_name = item.get("displayName") or item.get("name")
         elif isinstance(item, str):
             text = item.strip()
             if not text:
@@ -286,13 +336,15 @@ def extract_user_names_and_ids(field_value, session=None, auth=None, cache=None)
             ids.append(account_id)
 
         if not display_name and account_id and session and auth and cache is not None:
-            display_name = resolve_account_id_display_name(account_id, session, auth, cache)
+            display_name = resolve_account_id_display_name(
+                account_id, session, auth, cache
+            )
 
         if display_name and display_name not in names:
             names.append(display_name)
 
-    names_csv = ', '.join(names) if names else None
-    ids_csv = ', '.join(ids) if ids else None
+    names_csv = ", ".join(names) if names else None
+    ids_csv = ", ".join(ids) if ids else None
     return names_csv, ids_csv
 
 
@@ -328,39 +380,49 @@ def extract_issue_links(issuelinks):
     if not issuelinks or not isinstance(issuelinks, list):
         return None
     links = []
+
     def get_status(issue):
         if not issue:
             return None
-        fields = issue.get('fields', {})
-        status = fields.get('status', {})
-        return status.get('name')
+        fields = issue.get("fields", {})
+        status = fields.get("status", {})
+        return status.get("name")
+
     for link in issuelinks:
-        outward = link.get('outwardIssue')
-        inward = link.get('inwardIssue')
+        outward = link.get("outwardIssue")
+        inward = link.get("inwardIssue")
         if outward:
-            key = outward.get('key')
+            key = outward.get("key")
             status = get_status(outward)
             if key:
                 if status:
-                    links.append(f"{link.get('type', {}).get('outward', 'links to')}: {key} [{status}]")
+                    links.append(
+                        f"{link.get('type', {}).get('outward', 'links to')}: {key} [{status}]"
+                    )
                 else:
-                    links.append(f"{link.get('type', {}).get('outward', 'links to')}: {key}")
+                    links.append(
+                        f"{link.get('type', {}).get('outward', 'links to')}: {key}"
+                    )
         if inward:
-            key = inward.get('key')
+            key = inward.get("key")
             status = get_status(inward)
             if key:
                 if status:
-                    links.append(f"{link.get('type', {}).get('inward', 'links to')}: {key} [{status}]")
+                    links.append(
+                        f"{link.get('type', {}).get('inward', 'links to')}: {key} [{status}]"
+                    )
                 else:
-                    links.append(f"{link.get('type', {}).get('inward', 'links to')}: {key}")
-    return ', '.join(links) if links else None
+                    links.append(
+                        f"{link.get('type', {}).get('inward', 'links to')}: {key}"
+                    )
+    return ", ".join(links) if links else None
 
 
 def extract_incident_numbers(remedy_ticket_number):
     """Extracts all incident numbers matching INC followed by 9+ digits."""
     if not remedy_ticket_number:
         return []
-    return re.findall(r'INC\d{9,}', str(remedy_ticket_number))
+    return re.findall(r"INC\d{9,}", str(remedy_ticket_number))
 
 
 def fetch_and_sync_jira_data():
@@ -369,98 +431,102 @@ def fetch_and_sync_jira_data():
     if config is None:
         return
 
-    jira_url = 'https://consoleconnect.atlassian.net/rest/api/3/search/jql'
-    username = config.get('jira_user', 'jjkli@consoleconnect.com')
-    api_token = config.get('jira_api_token')
-    
-    CHUNK_SIZE = 1000
-    RETRY_COUNT = 5
-    RETRY_DELAY = 5
+    jira_url = "https://consoleconnect.atlassian.net/rest/api/3/search/jql"
+    username = config.get("jira_user", "jjkli@consoleconnect.com")
+    api_token = config.get("jira_api_token")
 
     # Custom field configuration
-    SR_REF_JIRA_ID = 'customfield_10382'
-    SR_REF_BQ_NAME = 'SR_Ref'
-    ASSOCIATED_TEAM_JIRA_ID = 'customfield_11134'
-    ASSOCIATED_TEAM_BQ_NAME = 'AssociatedTeam'
-    TRANSACTION_STATUS_JIRA_ID = 'customfield_11170'
-    TRANSACTION_STATUS_BQ_NAME = 'TransactionStatus'
-    SERVICE_JIRA_ID = 'customfield_11350'
-    SERVICE_BQ_NAME = 'Service'
-    ORIGIN_JIRA_ID = 'customfield_11351'
-    ORIGIN_BQ_NAME = 'Origin'
-    ROOT_CAUSE_JIRA_ID = 'customfield_10775'
-    ROOT_CAUSE_BQ_NAME = 'RootCause'
-    RESOLUTION_SECURITY_JIRA_ID = 'customfield_11349'
-    RESOLUTION_SECURITY_BQ_NAME = 'ResolutionSecurity'
-    SYMPTOMS_JIRA_ID = 'customfield_11365'
-    SYMPTOMS_BQ_NAME = 'Symptoms'
-    ATTACK_JIRA_ID = 'customfield_15295'
-    ATTACK_BQ_NAME = 'ATTCK'
-    FEATURE_TEAM_JIRA_ID = 'customfield_10780'
-    REMEDY_TICKET_MIGRATED_JIRA_ID = 'customfield_10647'
-    MAINTENANCE_WINDOW_START_JIRA_ID = 'customfield_10514'
-    MAINTENANCE_WINDOW_END_JIRA_ID = 'customfield_10515'
-    KNOWLEDGE_MANAGEMENT_JIRA_ID = 'customfield_15761'
-    DIRECTORY_INTERNAL_JIRA_ID = 'customfield_15827'
-    CONFLUENCE_URL_JIRA_ID = 'customfield_11184'
-    INCLUDE_CHILD_PAGES_JIRA_ID = 'customfield_15829'
-    VERIFIER_JIRA_ID = 'customfield_10674'
-    APPROVERS_JIRA_ID = 'customfield_10516'
+    SR_REF_JIRA_ID = "customfield_10382"
+    SR_REF_BQ_NAME = "SR_Ref"
+    ASSOCIATED_TEAM_JIRA_ID = "customfield_11134"
+    ASSOCIATED_TEAM_BQ_NAME = "AssociatedTeam"
+    TRANSACTION_STATUS_JIRA_ID = "customfield_11170"
+    TRANSACTION_STATUS_BQ_NAME = "TransactionStatus"
+    SERVICE_JIRA_ID = "customfield_11350"
+    SERVICE_BQ_NAME = "Service"
+    ORIGIN_JIRA_ID = "customfield_11351"
+    ORIGIN_BQ_NAME = "Origin"
+    ROOT_CAUSE_JIRA_ID = "customfield_10775"
+    ROOT_CAUSE_BQ_NAME = "RootCause"
+    RESOLUTION_SECURITY_JIRA_ID = "customfield_11349"
+    RESOLUTION_SECURITY_BQ_NAME = "ResolutionSecurity"
+    SYMPTOMS_JIRA_ID = "customfield_11365"
+    SYMPTOMS_BQ_NAME = "Symptoms"
+    ATTACK_JIRA_ID = "customfield_15295"
+    ATTACK_BQ_NAME = "ATTCK"
+    FEATURE_TEAM_JIRA_ID = "customfield_10780"
+    REMEDY_TICKET_MIGRATED_JIRA_ID = "customfield_10647"
+    MAINTENANCE_WINDOW_START_JIRA_ID = "customfield_10514"
+    MAINTENANCE_WINDOW_END_JIRA_ID = "customfield_10515"
+    KNOWLEDGE_MANAGEMENT_JIRA_ID = "customfield_15761"
+    DIRECTORY_INTERNAL_JIRA_ID = "customfield_15827"
+    CONFLUENCE_URL_JIRA_ID = "customfield_11184"
+    INCLUDE_CHILD_PAGES_JIRA_ID = "customfield_15829"
+    VERIFIER_JIRA_ID = "customfield_10674"
+    APPROVERS_JIRA_ID = "customfield_10516"
 
-    table_id = 'JiraTickets'
-    temp_table_id = 'JiraTickets_temp'
+    table_id = "JiraTickets"
+    temp_table_id = "JiraTickets_temp"
     pipeline_name = "GCP - JiraTickets"
-    
+
     run_id = str(uuid.uuid4())
     client = None
-    
+
     try:
         run_started = datetime.now(timezone.utc)
-        
+
         # Use UAT project for BigQuery where GSO dataset exists
         client = bigquery.Client(project="pccw-internal-virt-agent-uat")
-        project_id = client.project
-        dataset_id = 'GSO'
+        dataset_id = "GSO"
 
         try:
             ensure_ticket_columns(client, dataset_id, table_id)
         except Exception as _schema_err:
-            logging.warning(f"ensure_ticket_columns non-fatal error (columns likely exist): {_schema_err}")
+            logging.warning(
+                f"ensure_ticket_columns non-fatal error (columns likely exist): {_schema_err}"
+            )
 
-        log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
+        log_pipeline_run(
+            client,
+            pipeline_name=pipeline_name,
+            run_id=run_id,
+            level="INFO",
+            message="Pipeline started",
+            status="RUNNING",
+        )
 
         # Load base JQL
         base_default = (
-            '('\
-            'project = "GS&O Data Analytics" OR '\
-            'project = "Customer Success Management" OR '\
-            'project = "GS&O Tool Automation" OR '\
-            'project = "GS&O Knowledge Consolidation" OR '\
-            'project = TAC OR '\
-            'project = "VOICE - CE" OR '\
-            'project = "IOT CE" OR '\
-            'project = "Console Application Support" OR '\
-            'project = "Console Connect Provisioning" OR '\
-            'project = "Global Service Delivery Team" OR '\
-            'project = "Transmission TX-CE" OR '\
-            'project = "Mobility SMS - CE" OR '\
-            'project = "Managed Security Services" OR '\
-            'project = Sherbet OR '\
-            'project = "Google Contact Center AI Solution" OR '\
-            'project = "QMS Documentation" OR '\
-            'project = "Operational Case Reviews" OR '\
-            'project = "IT Helpdesk" OR '\
-            'project = "Vendor Verification Team" OR '\
-            'project = IPECR OR '\
-            'project = IPCE OR '\
-            'project = "Internal Knowledge Management" OR '\
-            'project = ITOPS OR '\
+            "("
+            'project = "GS&O Data Analytics" OR '
+            'project = "Customer Success Management" OR '
+            'project = "GS&O Tool Automation" OR '
+            'project = "GS&O Knowledge Consolidation" OR '
+            "project = TAC OR "
+            'project = "VOICE - CE" OR '
+            'project = "IOT CE" OR '
+            'project = "Console Application Support" OR '
+            'project = "Console Connect Provisioning" OR '
+            'project = "Global Service Delivery Team" OR '
+            'project = "Transmission TX-CE" OR '
+            'project = "Mobility SMS - CE" OR '
+            'project = "Managed Security Services" OR '
+            "project = Sherbet OR "
+            'project = "Google Contact Center AI Solution" OR '
+            'project = "QMS Documentation" OR '
+            'project = "Operational Case Reviews" OR '
+            'project = "IT Helpdesk" OR '
+            'project = "Vendor Verification Team" OR '
+            "project = IPECR OR "
+            "project = IPCE OR "
+            'project = "Internal Knowledge Management" OR '
+            "project = ITOPS OR "
             'project = "GS&O Strategic Initiatives" '
-            ')'
+            ")"
         )
         base_jql = load_base_jql(default_text=base_default)
         logging.info(f"Resolved base_jql: {base_jql}")
-        
+
         if not base_jql:
             # Log and mark pipeline as ERROR before exiting
             run_ended = datetime.now(timezone.utc)
@@ -479,8 +545,14 @@ def fetch_and_sync_jira_data():
         lookback_minutes = 15
 
         # Optimized single-pass approach: capture any recent activity with a small safety overlap.
-        jql_any_activity = build_jql(base_jql, f"(updated >= -{lookback_minutes}m OR resolutiondate >= -{lookback_minutes}m OR comment.updated >= -{lookback_minutes}m)", joiner='AND')
-        logging.info(f"JQL (any activity in last {lookback_minutes}m): {jql_any_activity}")
+        jql_any_activity = build_jql(
+            base_jql,
+            f"(updated >= -{lookback_minutes}m OR resolutiondate >= -{lookback_minutes}m OR comment.updated >= -{lookback_minutes}m)",
+            joiner="AND",
+        )
+        logging.info(
+            f"JQL (any activity in last {lookback_minutes}m): {jql_any_activity}"
+        )
 
         jql_window_start = run_started - timedelta(minutes=lookback_minutes)
         jql_window_end = run_started
@@ -506,7 +578,9 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("AssigneeId", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Component", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("FeatureTeam", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("MaintenanceWindowStart", "TIMESTAMP", mode="NULLABLE"),
+            bigquery.SchemaField(
+                "MaintenanceWindowStart", "TIMESTAMP", mode="NULLABLE"
+            ),
             bigquery.SchemaField("MaintenanceWindowEnd", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("KnowledgeManagement", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("DirectoryInternal", "STRING", mode="NULLABLE"),
@@ -523,60 +597,124 @@ def fetch_and_sync_jira_data():
             bigquery.SchemaField("Attachment", "JSON", mode="NULLABLE"),
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToFirstResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToFirstResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToFirstResponse_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToResolve_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField(
+                "TimeToFirstResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToFirstResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToFirstResponse_Cycles", "INT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToResolve_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
             bigquery.SchemaField("TimeToResolve_Goal_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToResolve_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("TimeToResolve_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField(
+                "TimeToResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
             bigquery.SchemaField("TimeToResolution_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("TimeToResolution_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToApproveNormalChange_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToApproveNormalChange_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToApproveNormalChange_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToApproveNormalChange_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField(
+                "TimeToApproveNormalChange_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToApproveNormalChange_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToApproveNormalChange_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToApproveNormalChange_Cycles", "INT64", mode="NULLABLE"
+            ),
             bigquery.SchemaField("ProlongCase_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("ProlongCase_Goal_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("ProlongCase_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("ProlongCase_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToCloseAfterResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToCloseAfterResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToCloseAfterResolution_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToCloseAfterResolution_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField(
+                "TimeToCloseAfterResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToCloseAfterResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToCloseAfterResolution_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToCloseAfterResolution_Cycles", "INT64", mode="NULLABLE"
+            ),
             bigquery.SchemaField("AppSupEscalation", "STRING", mode="NULLABLE"),
             bigquery.SchemaField(ASSOCIATED_TEAM_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField(TRANSACTION_STATUS_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField(SERVICE_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField(ORIGIN_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField(ROOT_CAUSE_BQ_NAME, "STRING", mode="NULLABLE"),
-            bigquery.SchemaField(RESOLUTION_SECURITY_BQ_NAME, "STRING", mode="NULLABLE"),
+            bigquery.SchemaField(
+                RESOLUTION_SECURITY_BQ_NAME, "STRING", mode="NULLABLE"
+            ),
             bigquery.SchemaField(SYMPTOMS_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField(ATTACK_BQ_NAME, "STRING", mode="NULLABLE"),
             bigquery.SchemaField("StoryPoints", "INT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeSpentSeconds", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToFirstResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToFirstResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToFirstResponse_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToResolution_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToResolution_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField(
+                "ITHD_TimeToFirstResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToFirstResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToFirstResponse_Cycles", "INT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToResolution_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToResolution_Cycles", "INT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResponse_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResponse_Cycles", "INT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResolution_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResolution_Cycles", "INT64", mode="NULLABLE"
+            ),
             bigquery.SchemaField("ITHD_Resolution", "STRING", mode="NULLABLE"),
         ]
-        
+
         rows_to_insert = []
         issue_keys_total = set()
         BULK_FETCH_SIZE = 50
@@ -585,10 +723,10 @@ def fetch_and_sync_jira_data():
         def extract_sla_metrics(sla_field):
             if not isinstance(sla_field, dict):
                 return None, None, None, None
-            
-            ongoing = sla_field.get('ongoingCycle')
-            completed_cycles = sla_field.get('completedCycles', [])
-            
+
+            ongoing = sla_field.get("ongoingCycle")
+            completed_cycles = sla_field.get("completedCycles", [])
+
             if ongoing:
                 cycle = ongoing
                 num_cycles = len(completed_cycles)
@@ -597,58 +735,74 @@ def fetch_and_sync_jira_data():
                 num_cycles = len(completed_cycles)
             else:
                 return None, None, None, 0
-            
-            elapsed_millis = cycle.get('elapsedTime', {}).get('millis') if isinstance(cycle.get('elapsedTime'), dict) else None
-            goal_millis = cycle.get('goalDuration', {}).get('millis')
-            breached = cycle.get('breached', False)
-            
+
+            elapsed_millis = (
+                cycle.get("elapsedTime", {}).get("millis")
+                if isinstance(cycle.get("elapsedTime"), dict)
+                else None
+            )
+            goal_millis = cycle.get("goalDuration", {}).get("millis")
+            breached = cycle.get("breached", False)
+
             elapsed = elapsed_millis / 3600000.0 if elapsed_millis is not None else None
             goal = goal_millis / 3600000.0 if goal_millis else None
-            
+
             return elapsed, goal, breached, num_cycles
 
         def fetch_issue_detail(issue_key, session):
-            issue_url = f"https://consoleconnect.atlassian.net/rest/api/3/issue/{issue_key}"
+            issue_url = (
+                f"https://consoleconnect.atlassian.net/rest/api/3/issue/{issue_key}"
+            )
             headers = {"Accept": "application/json", "Content-Type": "application/json"}
             auth = (username, api_token)
             try:
-                issue_resp = session.get(issue_url, headers=headers, auth=auth, timeout=30)
+                issue_resp = session.get(
+                    issue_url, headers=headers, auth=auth, timeout=30
+                )
                 issue_resp.raise_for_status()
                 full_issue = issue_resp.json()
-                fields = full_issue.get('fields', {})
-                
+                fields = full_issue.get("fields", {})
+
                 # Extract SLA metrics
                 sla_fields = {
-                    'TimeToFirstResponse': fields.get('customfield_10627'),
-                    'TimeToResolve': fields.get('customfield_10686'),
-                    'TimeToResolution': fields.get('customfield_10668'),
-                    'TimeToApproveNormalChange': fields.get('customfield_10640'),
-                    'ProlongCase': fields.get('customfield_10560'),
-                    'TimeToCloseAfterResolution': fields.get('customfield_10552'),
-                    'ITHD_TimeToFirstResponse': fields.get('customfield_10627'),
-                    'ITHD_TimeToResolution': fields.get('customfield_10668'),
-                    'ITHD_ISMSIncidentResponse': fields.get('customfield_13449'),
-                    'ITHD_ISMSIncidentResolution': fields.get('customfield_13450'),
+                    "TimeToFirstResponse": fields.get("customfield_10627"),
+                    "TimeToResolve": fields.get("customfield_10686"),
+                    "TimeToResolution": fields.get("customfield_10668"),
+                    "TimeToApproveNormalChange": fields.get("customfield_10640"),
+                    "ProlongCase": fields.get("customfield_10560"),
+                    "TimeToCloseAfterResolution": fields.get("customfield_10552"),
+                    "ITHD_TimeToFirstResponse": fields.get("customfield_10627"),
+                    "ITHD_TimeToResolution": fields.get("customfield_10668"),
+                    "ITHD_ISMSIncidentResponse": fields.get("customfield_13449"),
+                    "ITHD_ISMSIncidentResolution": fields.get("customfield_13450"),
                 }
-                
+
                 sla_metrics = {}
                 for k, v in sla_fields.items():
                     elapsed, goal, breached, cycles = extract_sla_metrics(v)
-                    sla_metrics[f'{k}_Elapsed'] = elapsed
-                    sla_metrics[f'{k}_Goal'] = goal
-                    sla_metrics[f'{k}_Breached'] = breached
-                    sla_metrics[f'{k}_Cycles'] = cycles
+                    sla_metrics[f"{k}_Elapsed"] = elapsed
+                    sla_metrics[f"{k}_Goal"] = goal
+                    sla_metrics[f"{k}_Breached"] = breached
+                    sla_metrics[f"{k}_Cycles"] = cycles
 
-                issue_type = fields.get('issuetype', {}).get('name')
-                cf_val = get_field_value(fields.get(REMEDY_TICKET_MIGRATED_JIRA_ID)) or fields.get('customfield_10088')
-                remedy_source = ' | '.join([
-                    str(cf_val) if cf_val else '',
-                    str(fields.get('summary') or ''),
-                    str(fields.get('description') or ''),
-                ]).strip(' |')
+                issue_type = fields.get("issuetype", {}).get("name")
+                cf_val = get_field_value(
+                    fields.get(REMEDY_TICKET_MIGRATED_JIRA_ID)
+                ) or fields.get("customfield_10088")
+                remedy_source = " | ".join(
+                    [
+                        str(cf_val) if cf_val else "",
+                        str(fields.get("summary") or ""),
+                        str(fields.get("description") or ""),
+                    ]
+                ).strip(" |")
                 remedy_numbers = extract_incident_numbers(remedy_source)
 
-                labels = [label.strip() for label in fields.get('labels', []) if str(label).strip()]
+                labels = [
+                    label.strip()
+                    for label in fields.get("labels", [])
+                    if str(label).strip()
+                ]
                 verifier_name, verifier_id = extract_user_names_and_ids(
                     fields.get(VERIFIER_JIRA_ID),
                     session=session,
@@ -664,100 +818,204 @@ def fetch_and_sync_jira_data():
 
                 row = {
                     "T": issue_type,
-                    "Project": fields.get('project', {}).get('name'),
+                    "Project": fields.get("project", {}).get("name"),
                     "Key": issue_key,
-                    "IssueId": full_issue.get('id'),
-                    "Summary": fields.get('summary'),
-                    "Status": fields.get('status', {}).get('name'),
-                    "Created": convert_timestamp(fields.get('created')),
-                    "Updated": convert_timestamp(fields.get('updated')),
-                    "Resolved": convert_timestamp(fields.get('resolutiondate')),
-                    "DueDate": fields.get('duedate'),
-                    "Creator": get_field_value(fields.get('creator')),
-                    "Reporter": get_field_value(fields.get('reporter')),
-                    "ReporterId": (fields.get('reporter') or {}).get('accountId') if isinstance(fields.get('reporter'), dict) else None,
-                    "Assignee": get_field_value(fields.get('assignee')),
-                    "AssigneeId": (fields.get('assignee') or {}).get('accountId') if isinstance(fields.get('assignee'), dict) else None,
-                    "Component": ', '.join([get_field_value(c) for c in fields.get('components', [])]) if fields.get('components') else None,
+                    "IssueId": full_issue.get("id"),
+                    "Summary": fields.get("summary"),
+                    "Status": fields.get("status", {}).get("name"),
+                    "Created": convert_timestamp(fields.get("created")),
+                    "Updated": convert_timestamp(fields.get("updated")),
+                    "Resolved": convert_timestamp(fields.get("resolutiondate")),
+                    "DueDate": fields.get("duedate"),
+                    "Creator": get_field_value(fields.get("creator")),
+                    "Reporter": get_field_value(fields.get("reporter")),
+                    "ReporterId": (fields.get("reporter") or {}).get("accountId")
+                    if isinstance(fields.get("reporter"), dict)
+                    else None,
+                    "Assignee": get_field_value(fields.get("assignee")),
+                    "AssigneeId": (fields.get("assignee") or {}).get("accountId")
+                    if isinstance(fields.get("assignee"), dict)
+                    else None,
+                    "Component": ", ".join(
+                        [get_field_value(c) for c in fields.get("components", [])]
+                    )
+                    if fields.get("components")
+                    else None,
                     "FeatureTeam": get_field_value(fields.get(FEATURE_TEAM_JIRA_ID)),
-                    "MaintenanceWindowStart": convert_timestamp(fields.get(MAINTENANCE_WINDOW_START_JIRA_ID)),
-                    "MaintenanceWindowEnd": convert_timestamp(fields.get(MAINTENANCE_WINDOW_END_JIRA_ID)),
-                    "KnowledgeManagement": get_field_value(fields.get(KNOWLEDGE_MANAGEMENT_JIRA_ID)),
-                    "DirectoryInternal": get_field_value(fields.get(DIRECTORY_INTERNAL_JIRA_ID)),
-                    "ConfluenceURL": get_field_value(fields.get(CONFLUENCE_URL_JIRA_ID)),
-                    "IncludeChildPages": get_field_value(fields.get(INCLUDE_CHILD_PAGES_JIRA_ID)),
+                    "MaintenanceWindowStart": convert_timestamp(
+                        fields.get(MAINTENANCE_WINDOW_START_JIRA_ID)
+                    ),
+                    "MaintenanceWindowEnd": convert_timestamp(
+                        fields.get(MAINTENANCE_WINDOW_END_JIRA_ID)
+                    ),
+                    "KnowledgeManagement": get_field_value(
+                        fields.get(KNOWLEDGE_MANAGEMENT_JIRA_ID)
+                    ),
+                    "DirectoryInternal": get_field_value(
+                        fields.get(DIRECTORY_INTERNAL_JIRA_ID)
+                    ),
+                    "ConfluenceURL": get_field_value(
+                        fields.get(CONFLUENCE_URL_JIRA_ID)
+                    ),
+                    "IncludeChildPages": get_field_value(
+                        fields.get(INCLUDE_CHILD_PAGES_JIRA_ID)
+                    ),
                     "Verifier": verifier_name,
                     "VerifierId": verifier_id,
                     "Approvers": approver_names,
                     "ApproversId": approver_ids,
-                    "RemedyTicketNumber": ', '.join(remedy_numbers) if remedy_numbers else None,
-                    "Links": extract_issue_links(fields.get('issuelinks')),
-                    "Description": extract_adf_text(fields.get('description')),
-                    "Attachment": json.dumps(fields.get('attachment')) if fields.get('attachment') else None,
+                    "RemedyTicketNumber": ", ".join(remedy_numbers)
+                    if remedy_numbers
+                    else None,
+                    "Links": extract_issue_links(fields.get("issuelinks")),
+                    "Description": extract_adf_text(fields.get("description")),
+                    "Attachment": json.dumps(fields.get("attachment"))
+                    if fields.get("attachment")
+                    else None,
                     SR_REF_BQ_NAME: get_field_value(fields.get(SR_REF_JIRA_ID)),
-                    "Priority": get_field_value(fields.get('priority')),
-                    "Resolution": get_field_value(fields.get('resolution')),
-                    "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
-                    "TimeToFirstResponse_Elapsed_hrs": sla_metrics['TimeToFirstResponse_Elapsed'],
-                    "TimeToFirstResponse_Goal_hrs": sla_metrics['TimeToFirstResponse_Goal'],
-                    "TimeToFirstResponse_Breached": sla_metrics['TimeToFirstResponse_Breached'],
-                    "TimeToFirstResponse_Cycles": sla_metrics['TimeToFirstResponse_Cycles'],
-                    "TimeToResolve_Elapsed_hrs": sla_metrics['TimeToResolve_Elapsed'],
-                    "TimeToResolve_Goal_hrs": sla_metrics['TimeToResolve_Goal'],
-                    "TimeToResolve_Breached": sla_metrics['TimeToResolve_Breached'],
-                    "TimeToResolve_Cycles": sla_metrics['TimeToResolve_Cycles'],
-                    "TimeToResolution_Elapsed_hrs": sla_metrics['TimeToResolution_Elapsed'],
-                    "TimeToResolution_Goal_hrs": sla_metrics['TimeToResolution_Goal'],
-                    "TimeToResolution_Breached": sla_metrics['TimeToResolution_Breached'],
-                    "TimeToResolution_Cycles": sla_metrics['TimeToResolution_Cycles'],
-                    "TimeToApproveNormalChange_Elapsed_hrs": sla_metrics['TimeToApproveNormalChange_Elapsed'],
-                    "TimeToApproveNormalChange_Goal_hrs": sla_metrics['TimeToApproveNormalChange_Goal'],
-                    "TimeToApproveNormalChange_Breached": sla_metrics['TimeToApproveNormalChange_Breached'],
-                    "TimeToApproveNormalChange_Cycles": sla_metrics['TimeToApproveNormalChange_Cycles'],
-                    "ProlongCase_Elapsed_hrs": sla_metrics['ProlongCase_Elapsed'],
-                    "ProlongCase_Goal_hrs": sla_metrics['ProlongCase_Goal'],
-                    "ProlongCase_Breached": sla_metrics['ProlongCase_Breached'],
-                    "ProlongCase_Cycles": sla_metrics['ProlongCase_Cycles'],
-                    "TimeToCloseAfterResolution_Elapsed_hrs": sla_metrics['TimeToCloseAfterResolution_Elapsed'],
-                    "TimeToCloseAfterResolution_Goal_hrs": sla_metrics['TimeToCloseAfterResolution_Goal'],
-                    "TimeToCloseAfterResolution_Breached": sla_metrics['TimeToCloseAfterResolution_Breached'],
-                    "TimeToCloseAfterResolution_Cycles": sla_metrics['TimeToCloseAfterResolution_Cycles'],
-                    "AppSupEscalation": get_field_value(fields.get('customfield_11171')),
-                    ASSOCIATED_TEAM_BQ_NAME: get_field_value(fields.get(ASSOCIATED_TEAM_JIRA_ID)),
-                    TRANSACTION_STATUS_BQ_NAME: get_field_value(fields.get(TRANSACTION_STATUS_JIRA_ID)),
+                    "Priority": get_field_value(fields.get("priority")),
+                    "Resolution": get_field_value(fields.get("resolution")),
+                    "SyncTime": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                    "TimeToFirstResponse_Elapsed_hrs": sla_metrics[
+                        "TimeToFirstResponse_Elapsed"
+                    ],
+                    "TimeToFirstResponse_Goal_hrs": sla_metrics[
+                        "TimeToFirstResponse_Goal"
+                    ],
+                    "TimeToFirstResponse_Breached": sla_metrics[
+                        "TimeToFirstResponse_Breached"
+                    ],
+                    "TimeToFirstResponse_Cycles": sla_metrics[
+                        "TimeToFirstResponse_Cycles"
+                    ],
+                    "TimeToResolve_Elapsed_hrs": sla_metrics["TimeToResolve_Elapsed"],
+                    "TimeToResolve_Goal_hrs": sla_metrics["TimeToResolve_Goal"],
+                    "TimeToResolve_Breached": sla_metrics["TimeToResolve_Breached"],
+                    "TimeToResolve_Cycles": sla_metrics["TimeToResolve_Cycles"],
+                    "TimeToResolution_Elapsed_hrs": sla_metrics[
+                        "TimeToResolution_Elapsed"
+                    ],
+                    "TimeToResolution_Goal_hrs": sla_metrics["TimeToResolution_Goal"],
+                    "TimeToResolution_Breached": sla_metrics[
+                        "TimeToResolution_Breached"
+                    ],
+                    "TimeToResolution_Cycles": sla_metrics["TimeToResolution_Cycles"],
+                    "TimeToApproveNormalChange_Elapsed_hrs": sla_metrics[
+                        "TimeToApproveNormalChange_Elapsed"
+                    ],
+                    "TimeToApproveNormalChange_Goal_hrs": sla_metrics[
+                        "TimeToApproveNormalChange_Goal"
+                    ],
+                    "TimeToApproveNormalChange_Breached": sla_metrics[
+                        "TimeToApproveNormalChange_Breached"
+                    ],
+                    "TimeToApproveNormalChange_Cycles": sla_metrics[
+                        "TimeToApproveNormalChange_Cycles"
+                    ],
+                    "ProlongCase_Elapsed_hrs": sla_metrics["ProlongCase_Elapsed"],
+                    "ProlongCase_Goal_hrs": sla_metrics["ProlongCase_Goal"],
+                    "ProlongCase_Breached": sla_metrics["ProlongCase_Breached"],
+                    "ProlongCase_Cycles": sla_metrics["ProlongCase_Cycles"],
+                    "TimeToCloseAfterResolution_Elapsed_hrs": sla_metrics[
+                        "TimeToCloseAfterResolution_Elapsed"
+                    ],
+                    "TimeToCloseAfterResolution_Goal_hrs": sla_metrics[
+                        "TimeToCloseAfterResolution_Goal"
+                    ],
+                    "TimeToCloseAfterResolution_Breached": sla_metrics[
+                        "TimeToCloseAfterResolution_Breached"
+                    ],
+                    "TimeToCloseAfterResolution_Cycles": sla_metrics[
+                        "TimeToCloseAfterResolution_Cycles"
+                    ],
+                    "AppSupEscalation": get_field_value(
+                        fields.get("customfield_11171")
+                    ),
+                    ASSOCIATED_TEAM_BQ_NAME: get_field_value(
+                        fields.get(ASSOCIATED_TEAM_JIRA_ID)
+                    ),
+                    TRANSACTION_STATUS_BQ_NAME: get_field_value(
+                        fields.get(TRANSACTION_STATUS_JIRA_ID)
+                    ),
                     SERVICE_BQ_NAME: get_field_value(fields.get(SERVICE_JIRA_ID)),
                     ORIGIN_BQ_NAME: get_field_value(fields.get(ORIGIN_JIRA_ID)),
                     ROOT_CAUSE_BQ_NAME: get_field_value(fields.get(ROOT_CAUSE_JIRA_ID)),
-                    RESOLUTION_SECURITY_BQ_NAME: get_field_value(fields.get(RESOLUTION_SECURITY_JIRA_ID)),
+                    RESOLUTION_SECURITY_BQ_NAME: get_field_value(
+                        fields.get(RESOLUTION_SECURITY_JIRA_ID)
+                    ),
                     SYMPTOMS_BQ_NAME: get_field_value(fields.get(SYMPTOMS_JIRA_ID)),
                     ATTACK_BQ_NAME: get_field_value(fields.get(ATTACK_JIRA_ID)),
-                    "StoryPoints": (None if fields.get('customfield_10347') is None else (
-                        (lambda v: (int(float(v)) if v is not None else None))(get_field_value(fields.get('customfield_10347')))
-                    )),
-                    "TimeSpentSeconds": fields.get('timetracking', {}).get('timeSpentSeconds') if isinstance(fields.get('timetracking'), dict) else fields.get('timespent'),
-                    "ITHD_TimeToFirstResponse_Elapsed_hrs": sla_metrics['ITHD_TimeToFirstResponse_Elapsed'],
-                    "ITHD_TimeToFirstResponse_Goal_hrs": sla_metrics['ITHD_TimeToFirstResponse_Goal'],
-                    "ITHD_TimeToFirstResponse_Breached": sla_metrics['ITHD_TimeToFirstResponse_Breached'],
-                    "ITHD_TimeToFirstResponse_Cycles": sla_metrics['ITHD_TimeToFirstResponse_Cycles'],
-                    "ITHD_TimeToResolution_Elapsed_hrs": sla_metrics['ITHD_TimeToResolution_Elapsed'],
-                    "ITHD_TimeToResolution_Goal_hrs": sla_metrics['ITHD_TimeToResolution_Goal'],
-                    "ITHD_TimeToResolution_Breached": sla_metrics['ITHD_TimeToResolution_Breached'],
-                    "ITHD_TimeToResolution_Cycles": sla_metrics['ITHD_TimeToResolution_Cycles'],
-                    "ITHD_ISMSIncidentResponse_Elapsed_hrs": sla_metrics['ITHD_ISMSIncidentResponse_Elapsed'],
-                    "ITHD_ISMSIncidentResponse_Goal_hrs": sla_metrics['ITHD_ISMSIncidentResponse_Goal'],
-                    "ITHD_ISMSIncidentResponse_Breached": sla_metrics['ITHD_ISMSIncidentResponse_Breached'],
-                    "ITHD_ISMSIncidentResponse_Cycles": sla_metrics['ITHD_ISMSIncidentResponse_Cycles'],
-                    "ITHD_ISMSIncidentResolution_Elapsed_hrs": sla_metrics['ITHD_ISMSIncidentResolution_Elapsed'],
-                    "ITHD_ISMSIncidentResolution_Goal_hrs": sla_metrics['ITHD_ISMSIncidentResolution_Goal'],
-                    "ITHD_ISMSIncidentResolution_Breached": sla_metrics['ITHD_ISMSIncidentResolution_Breached'],
-                    "ITHD_ISMSIncidentResolution_Cycles": sla_metrics['ITHD_ISMSIncidentResolution_Cycles'],
-                    "ITHD_Resolution": get_field_value(fields.get('customfield_13448')),
+                    "StoryPoints": (
+                        None
+                        if fields.get("customfield_10347") is None
+                        else (
+                            (lambda v: (int(float(v)) if v is not None else None))(
+                                get_field_value(fields.get("customfield_10347"))
+                            )
+                        )
+                    ),
+                    "TimeSpentSeconds": fields.get("timetracking", {}).get(
+                        "timeSpentSeconds"
+                    )
+                    if isinstance(fields.get("timetracking"), dict)
+                    else fields.get("timespent"),
+                    "ITHD_TimeToFirstResponse_Elapsed_hrs": sla_metrics[
+                        "ITHD_TimeToFirstResponse_Elapsed"
+                    ],
+                    "ITHD_TimeToFirstResponse_Goal_hrs": sla_metrics[
+                        "ITHD_TimeToFirstResponse_Goal"
+                    ],
+                    "ITHD_TimeToFirstResponse_Breached": sla_metrics[
+                        "ITHD_TimeToFirstResponse_Breached"
+                    ],
+                    "ITHD_TimeToFirstResponse_Cycles": sla_metrics[
+                        "ITHD_TimeToFirstResponse_Cycles"
+                    ],
+                    "ITHD_TimeToResolution_Elapsed_hrs": sla_metrics[
+                        "ITHD_TimeToResolution_Elapsed"
+                    ],
+                    "ITHD_TimeToResolution_Goal_hrs": sla_metrics[
+                        "ITHD_TimeToResolution_Goal"
+                    ],
+                    "ITHD_TimeToResolution_Breached": sla_metrics[
+                        "ITHD_TimeToResolution_Breached"
+                    ],
+                    "ITHD_TimeToResolution_Cycles": sla_metrics[
+                        "ITHD_TimeToResolution_Cycles"
+                    ],
+                    "ITHD_ISMSIncidentResponse_Elapsed_hrs": sla_metrics[
+                        "ITHD_ISMSIncidentResponse_Elapsed"
+                    ],
+                    "ITHD_ISMSIncidentResponse_Goal_hrs": sla_metrics[
+                        "ITHD_ISMSIncidentResponse_Goal"
+                    ],
+                    "ITHD_ISMSIncidentResponse_Breached": sla_metrics[
+                        "ITHD_ISMSIncidentResponse_Breached"
+                    ],
+                    "ITHD_ISMSIncidentResponse_Cycles": sla_metrics[
+                        "ITHD_ISMSIncidentResponse_Cycles"
+                    ],
+                    "ITHD_ISMSIncidentResolution_Elapsed_hrs": sla_metrics[
+                        "ITHD_ISMSIncidentResolution_Elapsed"
+                    ],
+                    "ITHD_ISMSIncidentResolution_Goal_hrs": sla_metrics[
+                        "ITHD_ISMSIncidentResolution_Goal"
+                    ],
+                    "ITHD_ISMSIncidentResolution_Breached": sla_metrics[
+                        "ITHD_ISMSIncidentResolution_Breached"
+                    ],
+                    "ITHD_ISMSIncidentResolution_Cycles": sla_metrics[
+                        "ITHD_ISMSIncidentResolution_Cycles"
+                    ],
+                    "ITHD_Resolution": get_field_value(fields.get("customfield_13448")),
                 }
                 if labels:
                     row["Labels"] = labels
                 return row
             except Exception as e:
-                logging.warning(f"Could not fetch full details for issue {issue_key}: {e}")
+                logging.warning(
+                    f"Could not fetch full details for issue {issue_key}: {e}"
+                )
                 return None
 
         observed_min_updated = None
@@ -765,77 +1023,109 @@ def fetch_and_sync_jira_data():
 
         # Create persistent session with connection pooling and retry logic
         session = create_session_with_retries()
-        
+
         def search_issue_keys_paginated(jql: str, label: str):
             """Fetch ALL matching issue keys with pagination. CRITICAL: Prevents data loss!"""
             all_keys = []
             start_at = 0
             max_results = 100
-            headers_local = {'Accept': 'application/json'}
+            headers_local = {"Accept": "application/json"}
             auth_local = (username, api_token)
             attempt = 0
             max_attempts = 3
-            
+
             while True:
-                params_local = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': 'key'}
+                params_local = {
+                    "jql": jql,
+                    "startAt": start_at,
+                    "maxResults": max_results,
+                    "fields": "key",
+                }
                 try:
-                    resp = session.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=60)
-                    
+                    resp = session.get(
+                        jira_url,
+                        headers=headers_local,
+                        auth=auth_local,
+                        params=params_local,
+                        timeout=60,
+                    )
+
                     if resp.status_code == 429:
                         if handle_429_backoff(resp, attempt + 1, max_attempts):
                             attempt += 1
                             continue
                         else:
-                            logging.error(f"Failed after {max_attempts} 429 attempts on {label}")
+                            logging.error(
+                                f"Failed after {max_attempts} 429 attempts on {label}"
+                            )
                             break
-                    
+
                     resp.raise_for_status()
                     attempt = 0  # Reset on success
 
                     # Detect silent Jira auth failure (returns 200 with empty results)
-                    login_reason = resp.headers.get('x-seraph-loginreason', '')
-                    if 'AUTHENTICATED_FAILED' in login_reason or 'AUTHENTICATION_DENIED' in login_reason:
-                        logging.error(f"Jira auth FAILED for {label} (x-seraph-loginreason: {login_reason}). API token may be expired or revoked. Update 'jira-api-token' secret.")
+                    login_reason = resp.headers.get("x-seraph-loginreason", "")
+                    if (
+                        "AUTHENTICATED_FAILED" in login_reason
+                        or "AUTHENTICATION_DENIED" in login_reason
+                    ):
+                        logging.error(
+                            f"Jira auth FAILED for {label} (x-seraph-loginreason: {login_reason}). API token may be expired or revoked. Update 'jira-api-token' secret."
+                        )
                         break
 
                     data_local = resp.json()
-                    issues_local = data_local.get('issues', [])
+                    issues_local = data_local.get("issues", [])
                     if not issues_local:
                         break
-                    
-                    all_keys.extend([i.get('key') for i in issues_local if i.get('key')])
-                    total = data_local.get('total', 0)
-                    
+
+                    all_keys.extend(
+                        [i.get("key") for i in issues_local if i.get("key")]
+                    )
+                    total = data_local.get("total", 0)
+
                     if start_at + max_results >= total:
                         break
-                    
+
                     start_at += max_results
                     time.sleep(JIRA_RATE_LIMIT_PAUSE_SEC)  # Respect rate limits
-                    
+
                 except requests.exceptions.Timeout:
-                    logging.warning(f"Timeout fetching keys for {label} at startAt={start_at}")
+                    logging.warning(
+                        f"Timeout fetching keys for {label} at startAt={start_at}"
+                    )
                     break
                 except Exception as e:
                     logging.error(f"Error fetching keys for {label}: {e}")
                     break
-            
-            logging.info(f"{label}: Fetched {len(all_keys)} total issue keys (paginated)")
+
+            logging.info(
+                f"{label}: Fetched {len(all_keys)} total issue keys (paginated)"
+            )
             return all_keys
 
         # Single-pass optimized approach: captures any activity (updates, resolutions, comments)
         # CRITICAL: Using pagination to get ALL matching issues, not just first 100!
-        activity_keys = search_issue_keys_paginated(jql_any_activity, 'any_activity')
-        for k in activity_keys: issue_keys_total.add(k)
-        logging.info(f"Distinct issue keys to detail fetch (union): {len(issue_keys_total)}")
+        activity_keys = search_issue_keys_paginated(jql_any_activity, "any_activity")
+        for k in activity_keys:
+            issue_keys_total.add(k)
+        logging.info(
+            f"Distinct issue keys to detail fetch (union): {len(issue_keys_total)}"
+        )
 
         # Detail fetch in parallel with increased workers to match connection pool (30)
         issue_key_list = list(issue_keys_total)
         issues_processed = 0
         MAX_WORKERS = 20  # Increased from 10 to match pool_connections=30
         for i in range(0, len(issue_key_list), BULK_FETCH_SIZE):
-            batch_keys = issue_key_list[i:i+BULK_FETCH_SIZE]
-            with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(batch_keys))) as executor:
-                fut_map = {executor.submit(fetch_issue_detail, key, session): key for key in batch_keys}
+            batch_keys = issue_key_list[i : i + BULK_FETCH_SIZE]
+            with ThreadPoolExecutor(
+                max_workers=min(MAX_WORKERS, len(batch_keys))
+            ) as executor:
+                fut_map = {
+                    executor.submit(fetch_issue_detail, key, session): key
+                    for key in batch_keys
+                }
                 for fut in as_completed(fut_map):
                     row = fut.result()
                     if row:
@@ -844,14 +1134,24 @@ def fetch_and_sync_jira_data():
                         try:
                             upd_str = row.get("Updated")
                             if upd_str:
-                                dt = datetime.strptime(upd_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
-                                if observed_min_updated is None or dt < observed_min_updated:
+                                dt = datetime.strptime(
+                                    upd_str, "%Y-%m-%d %H:%M:%S"
+                                ).replace(tzinfo=timezone.utc)
+                                if (
+                                    observed_min_updated is None
+                                    or dt < observed_min_updated
+                                ):
                                     observed_min_updated = dt
-                                if observed_max_updated is None or dt > observed_max_updated:
+                                if (
+                                    observed_max_updated is None
+                                    or dt > observed_max_updated
+                                ):
                                     observed_max_updated = dt
                         except Exception:
                             pass
-            logging.info(f"Detail fetched batch {i//BULK_FETCH_SIZE + 1}; cumulative rows={issues_processed}")
+            logging.info(
+                f"Detail fetched batch {i//BULK_FETCH_SIZE + 1}; cumulative rows={issues_processed}"
+            )
 
         # Close session to release connections
         session.close()
@@ -874,7 +1174,9 @@ def fetch_and_sync_jira_data():
             )
             return
 
-        if not create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
+        if not create_or_replace_temp_table(
+            client, dataset_id, temp_table_id, bq_schema
+        ):
             logging.error("Setup failed: Could not create temp table.")
             run_ended = datetime.now(timezone.utc)
             duration_seconds = (run_ended - run_started).total_seconds()
@@ -904,7 +1206,15 @@ def fetch_and_sync_jira_data():
             return
 
         if rows_to_insert:
-            if not insert_rows_with_retry(client, dataset_id, temp_table_id, rows_to_insert, bq_schema, retries=5, delay=5):
+            if not insert_rows_with_retry(
+                client,
+                dataset_id,
+                temp_table_id,
+                rows_to_insert,
+                bq_schema,
+                retries=5,
+                delay=5,
+            ):
                 logging.error("Failed to insert rows into temp table after retries.")
                 delete_temp_table(client, dataset_id, temp_table_id)
                 run_ended = datetime.now(timezone.utc)
@@ -922,7 +1232,7 @@ def fetch_and_sync_jira_data():
 
         # Merge temp table into final table (exact same query as original)
         try:
-            merge_query = f'''
+            merge_query = f"""
                 MERGE `{dataset_id}.{table_id}` T
                 USING (
                     SELECT * EXCEPT(rownum) FROM (
@@ -1018,9 +1328,11 @@ def fetch_and_sync_jira_data():
                     T.ITHD_ISMSIncidentResolution_Cycles = COALESCE(S.ITHD_ISMSIncidentResolution_Cycles, T.ITHD_ISMSIncidentResolution_Cycles),
                     T.ITHD_Resolution = S.ITHD_Resolution
                 WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, KnowledgeManagement, DirectoryInternal, ConfluenceURL, IncludeChildPages, Verifier, VerifierId, Approvers, ApproversId, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, SyncTime, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, AppSupEscalation, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, StoryPoints, TimeSpentSeconds, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution) VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, S.KnowledgeManagement, S.DirectoryInternal, S.ConfluenceURL, S.IncludeChildPages, S.Verifier, S.VerifierId, S.Approvers, S.ApproversId, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.SyncTime, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.AppSupEscalation, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.StoryPoints, S.TimeSpentSeconds, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution)
-            '''
+            """
             merge_query = add_creator_insert_mapping(merge_query)
-            execute_bq_query_with_retry(client, merge_query, max_retries=5, initial_delay=10.0)
+            execute_bq_query_with_retry(
+                client, merge_query, max_retries=5, initial_delay=10.0
+            )
             logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")
         except Exception as e:
             logging.error(f"Error merging temp table: {e}")
@@ -1061,7 +1373,7 @@ def fetch_and_sync_jira_data():
     except Exception as e:
         run_ended = datetime.now(timezone.utc)
         duration_seconds = (run_ended - run_started).total_seconds()
-        
+
         log_pipeline_run(
             client,
             pipeline_name=pipeline_name,
@@ -1081,17 +1393,17 @@ def main(request):
     # Cleanup: Mark stale RUNNING entries as ERROR (older than 10 minutes)
     try:
         client = bigquery.Client(project="pccw-internal-virt-agent-uat")
-        cleanup_query = '''
+        cleanup_query = """
             UPDATE `GSO.PipelineRuns`
             SET Status = 'ERROR', Message = 'Function timeout or crash (auto-cleaned)'
             WHERE PipelineName = 'GCP - JiraTickets'
             AND Status = 'RUNNING'
             AND RunTime < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 10 MINUTE)
-        '''
+        """
         client.query(cleanup_query).result()
     except Exception as e:
         logging.warning(f"Failed to cleanup stale RUNNING entries: {e}")
-    
+
     try:
         fetch_and_sync_jira_data()
         return {"status": "success", "message": "Jira tickets sync completed"}, 200
