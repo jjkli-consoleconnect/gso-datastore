@@ -70,7 +70,8 @@ WITH base AS (
 		STMRequestDate,
 		STMID, 
 		STMAssignPerson AS STMAssignee,
-		OperationD AS OperationStartDate
+		OperationD AS OperationStartDate,
+		project_manager AS ProjectManager
 	FROM `edp-prod-lake-data-warehouse.Cost_Items.all_cost_items_report`
 	WHERE ItemCode = 'MRC'
 		AND MRC_USD > 0

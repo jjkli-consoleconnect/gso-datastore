@@ -1,3 +1,5 @@
+node_modules/
+
 # Ignore only specific directories
 /Backup/
 /.tmp.driveupload/
@@ -52,7 +54,7 @@ Archive/
 .venv*/
 venv/
 venv*/
-.cleanup_backup_venv-1_*/
+.cleanup_backup_venv-*/
 
 # Local BigQuerySync overrides
 BigQuerySync/bq-sync.config.local.json
@@ -62,3 +64,11 @@ config.local.json
 .config.json
 **/config.local.json
 **/.config.json
+
+# Large files and archives to improve performance
+*.tgz
+*.pack
+*.idx
+*.original
+*.filtered
+/Wanda/wanda-web/google-cloud-sdk/

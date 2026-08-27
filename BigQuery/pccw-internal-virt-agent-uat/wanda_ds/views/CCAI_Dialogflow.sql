@@ -15,6 +15,7 @@ WITH UserFirstUse AS (
 TrainingData AS (
   SELECT
     TRIM(UPPER(UserID)) AS UserID,
+    LOWER(TRIM(ConsoleConnectEmailAddress)) AS ConsoleConnectEmailAddress,
     REGEXP_REPLACE(LOWER(TRIM(UserID)), r'[^a-z0-9]', '') AS UserID_compact,
     REGEXP_REPLACE(LOWER(TRIM(ANY_VALUE(First_Name))), r'[^a-z0-9]', '') AS First_Name_compact,
     REGEXP_REPLACE(LOWER(TRIM(ANY_VALUE(Last_Name))), r'[^a-z0-9]', '') AS Last_Name_compact,
@@ -54,7 +55,8 @@ TrainingData AS (
     UserID IS NOT NULL
   GROUP BY
     1,
-    2
+    2,
+    3
 ),
 TrainingDataByName AS (
   SELECT
@@ -333,9 +335,9 @@ SELECT
     b.platform_channel,
     b.slack_email,
     b.slack_UserID,
-    COALESCE(td_id.Department, td_override.Department, td_name.Department) AS Department,
-    COALESCE(td_id.Division, td_override.Division, td_name.Division) AS Division,
-    COALESCE(td_id.Team, td_override.Team, td_name.Team) AS Team,
+    COALESCE(td_email.Department, td_override.Department, td_name.Department) AS Department,
+    COALESCE(td_email.Division, td_override.Division, td_name.Division) AS Division,
+    COALESCE(td_email.Team, td_override.Team, td_name.Team) AS Team,
     b.slack_attached_files,
     b.slack_fullname,
     b.slack_team_id,
@@ -407,13 +409,13 @@ FROM
 LEFT JOIN
     UserFirstUse ufu ON b.slack_user_id = ufu.slack_user_id
 LEFT JOIN
-  TrainingData td_id ON TRIM(UPPER(b.slack_UserID)) = td_id.UserID
+  TrainingData td_email ON LOWER(TRIM(b.slack_email)) = td_email.ConsoleConnectEmailAddress
 LEFT JOIN
   ManualOverrides mo ON TRIM(UPPER(b.slack_UserID)) = mo.slack_userid
 LEFT JOIN
   TrainingData td_override ON mo.override_userid = td_override.UserID
 LEFT JOIN
-  TrainingDataByName td_name ON td_id.UserID IS NULL
+  TrainingDataByName td_name ON td_email.UserID IS NULL
     AND td_override.UserID IS NULL
     AND REGEXP_REPLACE(
       LOWER(TRIM(REGEXP_REPLACE(b.slack_fullname, r'\s*\([^)]*\)\s*', ''))),
@@ -421,4 +423,5 @@ LEFT JOIN
     ) = td_name.FullName_compact
 
 ORDER BY b.requisitionStartTime DESC
+
 

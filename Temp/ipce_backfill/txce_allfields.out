@@ -1,6 +1,0 @@
-CSV rows serialized: 7267
-temp loaded rows: 7267
-merge affected rows (updates + inserts): 7267
-
-VERIFY TXCE: total=7272 still_null_creator=5
-CLEANUP DONE

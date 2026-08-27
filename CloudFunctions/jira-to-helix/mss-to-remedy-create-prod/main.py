@@ -3,6 +3,7 @@ Cloud Function: Jira to Helix Create (PROD)
 Receives Jira webhook when MSS ticket created, transforms to Helix incident payload,
 creates Helix ticket with assigned_group=ASOC, backllinks to Jira with incident ID.
 """
+
 import json
 import logging
 import uuid
@@ -26,9 +27,15 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 PROJECT_ID = "pccw-internal-virtual-agent"
 DATASET_ID = os.environ.get("JIRA_TO_HELIX_DATASET_ID", "Testing").strip()
 TABLE_ID = os.environ.get("JIRA_TO_HELIX_TABLE_ID", "jira_to_helix_sync").strip()
-COMMENT_TABLE_ID = os.environ.get("JIRA_TO_HELIX_COMMENT_TABLE_ID", "jira_to_helix_comment_sync").strip()
-CLOSE_DUP_TABLE_ID = os.environ.get("JIRA_TO_HELIX_CLOSE_DUP_TABLE_ID", "jira_to_helix_close_dup_sync").strip()
-SLACK_EMAIL = "jjkli-consoleconnect-aaaat6e6tqjcdqmox62y2vcqfi@consoleconnect.org.slack.com"
+COMMENT_TABLE_ID = os.environ.get(
+    "JIRA_TO_HELIX_COMMENT_TABLE_ID", "jira_to_helix_comment_sync"
+).strip()
+CLOSE_DUP_TABLE_ID = os.environ.get(
+    "JIRA_TO_HELIX_CLOSE_DUP_TABLE_ID", "jira_to_helix_close_dup_sync"
+).strip()
+SLACK_EMAIL = (
+    "jjkli-consoleconnect-aaaat6e6tqjcdqmox62y2vcqfi@consoleconnect.org.slack.com"
+)
 
 JIRA_TO_HELIX_JIRA_USER_EMAIL_SECRET = "jira-user-email"
 JIRA_TO_HELIX_JIRA_API_TOKEN_SECRET = "jira-api-token"
@@ -53,7 +60,9 @@ HELIX_PRIORITY = "Low"
 HELIX_ASSIGNED_GROUP = "ASOC"
 HELIX_CHANNEL = "API"
 HELIX_WORKLOG_TYPE = "JIRA Work Log"
-DEFAULT_MSS_CUSTOMER_ID = os.environ.get("JIRA_TO_HELIX_DEFAULT_CUSTOMER_ID", "TMSTKL").strip()
+DEFAULT_MSS_CUSTOMER_ID = os.environ.get(
+    "JIRA_TO_HELIX_DEFAULT_CUSTOMER_ID", "TMSTKL"
+).strip()
 DEFAULT_ASOC_SR_NO = "SR128190"
 
 # Jira custom fields for Helix ID backlink.
@@ -66,9 +75,9 @@ JIRA_REMEDY_TICKET_NUMBER_FIELDS = [
 ]
 JIRA_MSS_CUSTOMER_FIELD = "customfield_16097"  # Customer ID (preferred in production)
 JIRA_CUSTOMER_ID_FIELD = "customfield_11364"  # MSS customer label fallback
-JIRA_SR_NUMBER_FIELD = "customfield_10638"    # SR Number
-JIRA_SR_REF_FIELD = "customfield_10382"       # SR Ref
-JIRA_SP_SR_FIELD = "customfield_11627"        # SP # / SR #
+JIRA_SR_NUMBER_FIELD = "customfield_10638"  # SR Number
+JIRA_SR_REF_FIELD = "customfield_10382"  # SR Ref
+JIRA_SP_SR_FIELD = "customfield_11627"  # SP # / SR #
 JIRA_USN_FIELDS = [
     "customfield_10638",  # SR Number
     "customfield_10382",  # SR Ref
@@ -79,10 +88,18 @@ JIRA_USN_FIELDS = [
 
 # Feature flags
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
-DUPLICATE_ON_CLOSE_ENABLED = os.environ.get("DUPLICATE_ON_CLOSE_ENABLED", "true").lower() == "true"
-ENABLE_HELIX_CLOSE_PATCH = os.environ.get("ENABLE_HELIX_CLOSE_PATCH", "true").lower() == "true"
-ENABLE_HELIX_BACKDATE_FIELDS = os.environ.get("ENABLE_HELIX_BACKDATE_FIELDS", "false").lower() == "true"
-ENFORCE_HELIX_ASSIGNED_GROUP = os.environ.get("ENFORCE_HELIX_ASSIGNED_GROUP", "true").lower() == "true"
+DUPLICATE_ON_CLOSE_ENABLED = (
+    os.environ.get("DUPLICATE_ON_CLOSE_ENABLED", "true").lower() == "true"
+)
+ENABLE_HELIX_CLOSE_PATCH = (
+    os.environ.get("ENABLE_HELIX_CLOSE_PATCH", "true").lower() == "true"
+)
+ENABLE_HELIX_BACKDATE_FIELDS = (
+    os.environ.get("ENABLE_HELIX_BACKDATE_FIELDS", "false").lower() == "true"
+)
+ENFORCE_HELIX_ASSIGNED_GROUP = (
+    os.environ.get("ENFORCE_HELIX_ASSIGNED_GROUP", "true").lower() == "true"
+)
 CLOSE_DUP_CREATE_COOLDOWN_SECONDS = int(
     os.environ.get("JIRA_TO_HELIX_CLOSE_DUP_CREATE_COOLDOWN_SECONDS", "600")
 )
@@ -95,20 +112,35 @@ CLOSE_DUP_PHASE_REPLAY_DONE = "WORKLOG_REPLAY_DONE"
 
 # ===== SECRET MANAGEMENT =====
 def get_secret(secret_id: str) -> str:
-    """
-    Fetch secret from Google Secret Manager.
-    
-    Args:
-        secret_id: Name of secret (without version)
-        
-    Returns:
-        Secret value as string
-    """
+    """Fetch an enabled secret, falling back from a destroyed latest alias."""
     try:
         client = secretmanager.SecretManagerServiceClient()
-        secret_name = f"projects/{PROJECT_ID}/secrets/{secret_id}/versions/latest"
-        response = client.access_secret_version(request={"name": secret_name})
-        return response.payload.data.decode("UTF-8").strip()
+        secret_path = f"projects/{PROJECT_ID}/secrets/{secret_id}"
+        latest_name = f"{secret_path}/versions/latest"
+
+        try:
+            response = client.access_secret_version(request={"name": latest_name})
+            return response.payload.data.decode("UTF-8").strip()
+        except Exception as exc:
+            logger.warning(
+                f"Latest alias failed for {secret_id}: {exc}. Trying newest enabled version."
+            )
+
+        versions = list(client.list_secret_versions(request={"parent": secret_path}))
+        enabled = []
+        for version in versions:
+            state = getattr(version, "state", None)
+            state_name = (
+                getattr(state, "name", str(state)).lower() if state is not None else ""
+            )
+            if state_name in {"enabled", "state.enabled"}:
+                enabled.append((int(version.name.rsplit("/", 1)[-1]), version.name))
+        if enabled:
+            _, chosen = max(enabled, key=lambda item: item[0])
+            response = client.access_secret_version(request={"name": chosen})
+            return response.payload.data.decode("UTF-8").strip()
+
+        raise RuntimeError(f"No enabled secret versions found for {secret_id}")
     except Exception as e:
         logger.error(f"Failed to fetch secret {secret_id}: {e}")
         raise
@@ -118,7 +150,7 @@ def get_secret(secret_id: str) -> str:
 def get_helix_token() -> str:
     """
     Obtain OAuth2 token for Helix API.
-    
+
     Returns:
         Bearer token string
     """
@@ -127,14 +159,14 @@ def get_helix_token() -> str:
 
     client_id = get_secret(JIRA_TO_HELIX_HELIX_CLIENT_ID_SECRET)
     client_secret = get_secret(JIRA_TO_HELIX_HELIX_CLIENT_SECRET)
-    
+
     payload = {
         "grant_type": "client_credentials",
         "client_id": client_id,
         "client_secret": client_secret,
-        "audience": HELIX_OAUTH_AUDIENCE
+        "audience": HELIX_OAUTH_AUDIENCE,
     }
-    
+
     try:
         # Helix auth endpoint expects form-encoded OAuth payload.
         resp = requests.post(HELIX_AUTH_URL, data=payload, timeout=10)
@@ -146,21 +178,25 @@ def get_helix_token() -> str:
         raise
 
 
-def create_helix_ticket(payload: Dict[str, Any], token: str, dry_run: bool = False) -> Optional[str]:
+def create_helix_ticket(
+    payload: Dict[str, Any], token: str, dry_run: bool = False
+) -> Optional[str]:
     """
     Create Helix trouble ticket.
-    
+
     Args:
         payload: Helix ticket payload (dict)
         token: OAuth2 bearer token
         dry_run: If True, log payload without posting
-        
+
     Returns:
         Helix incident ID (e.g., INC000006741116) or None on error
     """
     if dry_run:
         dry_url = HELIX_API_BASE + "troubleTicket"
-        logger.info(f"[DRY-RUN] Would POST to {dry_url} with payload: {json.dumps(payload, indent=2)}")
+        logger.info(
+            f"[DRY-RUN] Would POST to {dry_url} with payload: {json.dumps(payload, indent=2)}"
+        )
         return None
 
     host_name = get_secret(JIRA_TO_HELIX_HOST_NAME_SECRET)
@@ -187,9 +223,11 @@ def create_helix_ticket(payload: Dict[str, Any], token: str, dry_run: bool = Fal
         "Content-Type": "application/json",
         "Host": HELIX_HOST_HEADER,
     }
-    
+
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=30, verify=verify_tls)
+        resp = requests.post(
+            url, json=payload, headers=headers, timeout=30, verify=verify_tls
+        )
         if resp.status_code >= 400:
             logger.error(
                 "Helix create failed status=%s body=%s externalId=%s",
@@ -207,7 +245,9 @@ def create_helix_ticket(payload: Dict[str, Any], token: str, dry_run: bool = Fal
         raise
 
 
-def get_helix_ticket(ticket_id: str, token: str, dry_run: bool = False) -> Optional[Dict[str, Any]]:
+def get_helix_ticket(
+    ticket_id: str, token: str, dry_run: bool = False
+) -> Optional[Dict[str, Any]]:
     """
     Retrieve a Helix trouble ticket by ID.
 
@@ -317,7 +357,9 @@ def create_helix_worklog(
     }
 
     try:
-        resp = requests.patch(url, json=payload, headers=headers, timeout=30, verify=verify_tls)
+        resp = requests.patch(
+            url, json=payload, headers=headers, timeout=30, verify=verify_tls
+        )
         if resp.status_code >= 400:
             logger.error(
                 f"Helix worklog PATCH failed status={resp.status_code} body={resp.text}"
@@ -371,7 +413,9 @@ def patch_helix_ticket(
     }
 
     try:
-        resp = requests.patch(url, json=payload, headers=headers, timeout=30, verify=verify_tls)
+        resp = requests.patch(
+            url, json=payload, headers=headers, timeout=30, verify=verify_tls
+        )
         if resp.status_code >= 400:
             logger.error(
                 f"Helix PATCH failed status={resp.status_code} body={resp.text}"
@@ -430,7 +474,9 @@ def close_helix_ticket(helix_id: str, token: str, dry_run: bool = False) -> str:
             return path[-1]
         except Exception as e:
             last_err = e
-            logger.warning(f"Helix close workflow path failed on {helix_id} path={path}: {e}")
+            logger.warning(
+                f"Helix close workflow path failed on {helix_id} path={path}: {e}"
+            )
 
     fallback_statuses = ["RESOLVED", "IN PROGRESS"]
     for fallback_status in fallback_statuses:
@@ -470,7 +516,9 @@ def enforce_helix_assigned_group(
         "assignedGroup": assigned_group,
     }
     patch_helix_ticket(helix_id, payload, token, dry_run=dry_run)
-    logger.info(f"Helix assignedGroup enforcement applied on {helix_id}: {assigned_group}")
+    logger.info(
+        f"Helix assignedGroup enforcement applied on {helix_id}: {assigned_group}"
+    )
     return True
 
 
@@ -478,7 +526,7 @@ def enforce_helix_assigned_group(
 def get_jira_credentials() -> Tuple[str, str]:
     """
     Fetch Jira API credentials.
-    
+
     Returns:
         (email, api_token)
     """
@@ -490,17 +538,17 @@ def get_jira_credentials() -> Tuple[str, str]:
 def get_jira_issue(jira_key: str, jira_url: str) -> Dict[str, Any]:
     """
     Fetch Jira issue details via REST API.
-    
+
     Args:
         jira_key: Issue key (e.g., MSS-123)
         jira_url: Base Jira URL (sandbox or prod)
-        
+
     Returns:
         Issue data dict
     """
     email, token = get_jira_credentials()
     url = f"{jira_url}/rest/api/3/issue/{jira_key}"
-    
+
     try:
         resp = requests.get(url, auth=(email, token), timeout=10)
         resp.raise_for_status()
@@ -510,7 +558,9 @@ def get_jira_issue(jira_key: str, jira_url: str) -> Dict[str, Any]:
         raise
 
 
-def get_jira_comments(jira_key: str, jira_url: str, page_size: int = 100) -> list[Dict[str, Any]]:
+def get_jira_comments(
+    jira_key: str, jira_url: str, page_size: int = 100
+) -> list[Dict[str, Any]]:
     """
     Fetch all Jira comments with pagination.
     """
@@ -541,37 +591,39 @@ def get_jira_comments(jira_key: str, jira_url: str, page_size: int = 100) -> lis
     return comments
 
 
-def update_jira_issue_field(jira_key: str, field_ids: list[str], value: str, jira_url: str) -> bool:
+def update_jira_issue_field(
+    jira_key: str, field_ids: list[str], value: str, jira_url: str
+) -> bool:
     """
     Update Jira issue custom field.
-    
+
     Args:
         jira_key: Issue key (e.g., MSS-123)
         field_ids: Candidate custom field IDs
         value: New field value (e.g., Helix incident ID)
         jira_url: Base Jira URL
-        
+
     Returns:
         True if successful
     """
     email, token = get_jira_credentials()
     url = f"{jira_url}/rest/api/3/issue/{jira_key}"
-    
+
     for field_id in field_ids:
-        payload = {
-            "fields": {
-                field_id: value
-            }
-        }
+        payload = {"fields": {field_id: value}}
         try:
             resp = requests.put(url, json=payload, auth=(email, token), timeout=10)
             resp.raise_for_status()
             logger.info(f"Updated Jira {jira_key} field {field_id} = {value}")
             return True
         except Exception as e:
-            logger.warning(f"Jira field update attempt failed for {jira_key} field {field_id}: {e}")
+            logger.warning(
+                f"Jira field update attempt failed for {jira_key} field {field_id}: {e}"
+            )
 
-    logger.error(f"Jira update failed for {jira_key}: no candidate field accepted value")
+    logger.error(
+        f"Jira update failed for {jira_key}: no candidate field accepted value"
+    )
     return False
 
 
@@ -599,7 +651,10 @@ def is_issue_created_event(webhook_event: Any, issue_event_type_name: str) -> bo
     """
     webhook_event_text = str(webhook_event or "").strip().lower()
     issue_event_text = str(issue_event_type_name or "").strip().lower()
-    return webhook_event_text == "jira:issue_created" or issue_event_text == "issue_created"
+    return (
+        webhook_event_text == "jira:issue_created"
+        or issue_event_text == "issue_created"
+    )
 
 
 def is_comment_event(webhook_event: Any, issue_event_type_name: str) -> bool:
@@ -824,7 +879,9 @@ def build_helix_worklog_note(comment_data: Dict[str, str]) -> Dict[str, Any]:
     }
 
 
-def build_helix_worklog_note_from_jira_comment(comment: Dict[str, Any]) -> Dict[str, Any]:
+def build_helix_worklog_note_from_jira_comment(
+    comment: Dict[str, Any],
+) -> Dict[str, Any]:
     """
     Build Helix worklog payload from Jira issue comment.
     """
@@ -845,7 +902,9 @@ def build_helix_worklog_note_from_jira_comment(comment: Dict[str, Any]) -> Dict[
     if not body_text:
         body_text = "(Empty Jira comment)"
 
-    attachment_lines = [f"- {label}" for label in extract_jira_attachment_labels(comment)]
+    attachment_lines = [
+        f"- {label}" for label in extract_jira_attachment_labels(comment)
+    ]
 
     comment_id = str(comment.get("id", "")).strip() or "unknown"
     attachment_block = ""
@@ -869,7 +928,9 @@ def build_helix_worklog_note_from_jira_comment(comment: Dict[str, Any]) -> Dict[
     }
 
 
-def build_close_dup_comment_phase_key(comment: Dict[str, Any], close_cycle_key: str) -> str:
+def build_close_dup_comment_phase_key(
+    comment: Dict[str, Any], close_cycle_key: str
+) -> str:
     """
     Build idempotency phase key for comment replay version.
     """
@@ -945,7 +1006,11 @@ def parse_loose_jira_webhook_payload(raw_payload: str) -> Optional[Dict[str, Any
     Jira can emit invalid JSON when comment body contains literal newlines.
     This parser extracts required fields from raw text so processing can continue.
     """
-    if not raw_payload or "\"comment\"" not in raw_payload or "\"issue\"" not in raw_payload:
+    if (
+        not raw_payload
+        or '"comment"' not in raw_payload
+        or '"issue"' not in raw_payload
+    ):
         return None
 
     def extract(pattern: str) -> str:
@@ -968,12 +1033,19 @@ def parse_loose_jira_webhook_payload(raw_payload: str) -> Optional[Dict[str, Any
     if body_start:
         start = body_start.end()
         tail = raw_payload[start:]
-        body_end = re.search(r'"\s*,\s*"author"\s*:', tail, flags=re.IGNORECASE | re.DOTALL)
+        body_end = re.search(
+            r'"\s*,\s*"author"\s*:', tail, flags=re.IGNORECASE | re.DOTALL
+        )
         if body_end:
-            body_text = tail[:body_end.start()]
+            body_text = tail[: body_end.start()]
         else:
             body_text = tail
-        body_text = body_text.replace('\\"', '"').replace('\\n', '\n').replace('\\r', '\r').strip()
+        body_text = (
+            body_text.replace('\\"', '"')
+            .replace("\\n", "\n")
+            .replace("\\r", "\r")
+            .strip()
+        )
 
     if not issue_key or not comment_id:
         return None
@@ -1029,7 +1101,9 @@ def extract_jira_key_fallback(webhook_data: Dict[str, Any], raw_payload: str) ->
         return match.group(1)
 
     # Last-resort fallback: capture an MSS-style issue key anywhere in payload text.
-    broad_match = re.search(rf'\b{project_prefix}-\d+\b', raw_payload or "", flags=re.IGNORECASE)
+    broad_match = re.search(
+        rf"\b{project_prefix}-\d+\b", raw_payload or "", flags=re.IGNORECASE
+    )
     if broad_match:
         return broad_match.group(0).upper()
 
@@ -1118,16 +1192,16 @@ def map_jira_to_helix(
 ) -> Dict[str, Any]:
     """
     Transform Jira MSS issue to Helix ticket payload.
-    
+
     Args:
         jira_issue: Raw Jira issue data from API
         jira_key: Issue key for external reference
-        
+
     Returns:
         Helix payload dict
     """
     fields = jira_issue.get("fields", {})
-    
+
     # Extract Jira fields
     summary = fields.get("summary", "No title")
     description = fields.get("description", {})
@@ -1143,7 +1217,7 @@ def map_jira_to_helix(
                     desc_text += str(text_part)
     elif description is not None:
         desc_text = str(description)
-    
+
     jira_customer_id = jira_customer_id_override.strip()
     if not jira_customer_id:
         for field_id in (JIRA_MSS_CUSTOMER_FIELD, JIRA_CUSTOMER_ID_FIELD):
@@ -1164,7 +1238,12 @@ def map_jira_to_helix(
 
     jira_sr_no = jira_sr_no_override.strip()
     if not jira_sr_no:
-        for field_id in (JIRA_SR_NUMBER_FIELD, JIRA_SR_REF_FIELD, JIRA_SP_SR_FIELD, *JIRA_USN_FIELDS):
+        for field_id in (
+            JIRA_SR_NUMBER_FIELD,
+            JIRA_SR_REF_FIELD,
+            JIRA_SP_SR_FIELD,
+            *JIRA_USN_FIELDS,
+        ):
             raw_value = fields.get(field_id)
             if isinstance(raw_value, str):
                 value = raw_value.strip()
@@ -1180,7 +1259,9 @@ def map_jira_to_helix(
                 if jira_sr_no:
                     break
 
-    source_description = build_jira_source_description(fields, jira_key, jira_customer_id, jira_sr_no)
+    source_description = build_jira_source_description(
+        fields, jira_key, jira_customer_id, jira_sr_no
+    )
     if desc_text:
         desc_text = f"{desc_text}\n\n{source_description}"
     else:
@@ -1194,14 +1275,14 @@ def map_jira_to_helix(
             "name": DEFAULT_MSS_CUSTOMER_ID,
             "role": "customerId",
             "@type": "RelatedEntity",
-            "@referredType": "Profile"
+            "@referredType": "Profile",
         },
         {
             "name": DEFAULT_ASOC_SR_NO,
             "role": "srId",
             "@type": "RelatedEntity",
-            "@referredType": "Profile"
-        }
+            "@referredType": "Profile",
+        },
     ]
 
     resolved_status = ""
@@ -1222,32 +1303,17 @@ def map_jira_to_helix(
         "externalId": jira_key,
         "relatedEntity": related_entity,
         "assignedGroup": HELIX_ASSIGNED_GROUP,
-        "channel": {
-            "name": HELIX_CHANNEL,
-            "@type": "Customer"
-        },
+        "channel": {"name": HELIX_CHANNEL, "@type": "Customer"},
         "notes": [
-            {
-                "id": "category",
-                "@type": "faultsymptom",
-                "text": "Others"
-            },
-            {
-                "id": "item",
-                "@type": "faultsymptom",
-                "text": "Others"
-            },
-            {
-                "id": "type",
-                "@type": "faultsymptom",
-                "text": "Others"
-            }
-        ]
+            {"id": "category", "@type": "faultsymptom", "text": "Others"},
+            {"id": "item", "@type": "faultsymptom", "text": "Others"},
+            {"id": "type", "@type": "faultsymptom", "text": "Others"},
+        ],
     }
 
     if resolved_status:
         payload["status"] = resolved_status
-    
+
     return payload
 
 
@@ -1268,7 +1334,9 @@ def map_jira_closed_issue_to_helix(
 
     # Re-close workflows can happen for the same Jira key; use a close-event
     # specific externalId to avoid Helix uniqueness collisions with prior creates.
-    close_marker_source = closed_ts or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    close_marker_source = closed_ts or datetime.now(timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
     close_marker = re.sub(r"[^0-9]", "", close_marker_source)[:14]
     payload["externalId"] = f"{jira_key}-C{close_marker}"
 
@@ -1281,7 +1349,9 @@ def map_jira_closed_issue_to_helix(
     if closed_ts:
         details.append(f"Jira Closed: {closed_ts}")
 
-    payload["description"] = (payload.get("description", "") + "\n".join(details)).strip()
+    payload["description"] = (
+        payload.get("description", "") + "\n".join(details)
+    ).strip()
     payload["status"] = "CLOSED"
     if ENABLE_HELIX_BACKDATE_FIELDS and created_ts:
         payload["creationDate"] = created_ts
@@ -1293,10 +1363,10 @@ def map_jira_closed_issue_to_helix(
 def check_idempotency(jira_key: str) -> Optional[str]:
     """
     Check if Jira key already synced to Helix (returns cached Helix ID).
-    
+
     Args:
         jira_key: Jira issue key
-        
+
     Returns:
         Helix ID if found, None otherwise
     """
@@ -1308,27 +1378,31 @@ def check_idempotency(jira_key: str) -> Optional[str]:
         LIMIT 1
         """
         job_config = bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("jira_key", "STRING", jira_key)]
+            query_parameters=[
+                bigquery.ScalarQueryParameter("jira_key", "STRING", jira_key)
+            ]
         )
         results = client.query(query, job_config=job_config).result()
         for row in results:
             return row["helix_id"]
     except Exception as e:
         logger.warning(f"Idempotency check failed: {e}")
-    
+
     return None
 
 
-def record_sync(jira_key: str, helix_id: Optional[str], status: str, error_msg: str = "") -> bool:
+def record_sync(
+    jira_key: str, helix_id: Optional[str], status: str, error_msg: str = ""
+) -> bool:
     """
     Store sync result in BigQuery.
-    
+
     Args:
         jira_key: Jira issue key
         helix_id: Helix incident ID (nullable)
         status: 'success' or 'failed'
         error_msg: Error message if failed
-        
+
     Returns:
         True if successful
     """
@@ -1336,17 +1410,17 @@ def record_sync(jira_key: str, helix_id: Optional[str], status: str, error_msg: 
         client = bigquery.Client(project=PROJECT_ID)
         table_id = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
         table = client.get_table(table_id)
-        
+
         rows = [
             {
                 "jira_key": jira_key,
                 "helix_id": helix_id,
                 "created_timestamp": datetime.now(timezone.utc).isoformat(),
                 "sync_status": status,
-                "error_message": error_msg
+                "error_message": error_msg,
             }
         ]
-        
+
         errors = client.insert_rows_json(table, rows)
         if errors:
             logger.error(f"BQ insert errors: {errors}")
@@ -1397,7 +1471,9 @@ def check_comment_idempotency(comment_id: str) -> bool:
         LIMIT 1
         """
         job_config = bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("comment_id", "STRING", comment_id)]
+            query_parameters=[
+                bigquery.ScalarQueryParameter("comment_id", "STRING", comment_id)
+            ]
         )
         results = client.query(query, job_config=job_config).result()
         for _ in results:
@@ -1498,7 +1574,9 @@ def get_close_dup_phase_success(jira_key: str, phase_key: str) -> Optional[str]:
                 return str(helix_id)
             return ""
     except Exception as e:
-        logger.warning(f"Close dup phase check failed jira_key={jira_key} phase={phase_key}: {e}")
+        logger.warning(
+            f"Close dup phase check failed jira_key={jira_key} phase={phase_key}: {e}"
+        )
     return None
 
 
@@ -1520,7 +1598,9 @@ def get_latest_close_dup_create_success(jira_key: str) -> Optional[Dict[str, Any
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("jira_key", "STRING", jira_key),
-                bigquery.ScalarQueryParameter("phase_like", "STRING", f"{CLOSE_DUP_PHASE_CREATE}:%"),
+                bigquery.ScalarQueryParameter(
+                    "phase_like", "STRING", f"{CLOSE_DUP_PHASE_CREATE}:%"
+                ),
             ]
         )
         results = client.query(query, job_config=job_config).result()
@@ -1589,7 +1669,9 @@ def acquire_close_dup_window_lock(
         job.result()
         return int(getattr(job, "num_dml_affected_rows", 0) or 0) > 0
     except Exception as e:
-        logger.warning(f"Close dup lock acquire failed jira_key={jira_key} phase={lock_phase_key}: {e}")
+        logger.warning(
+            f"Close dup lock acquire failed jira_key={jira_key} phase={lock_phase_key}: {e}"
+        )
         return False
 
 
@@ -1618,7 +1700,9 @@ def release_close_dup_window_lock(
         client.query(query, job_config=job_config).result()
         return True
     except Exception as e:
-        logger.warning(f"Close dup lock release failed jira_key={jira_key} phase={lock_phase_key}: {e}")
+        logger.warning(
+            f"Close dup lock release failed jira_key={jira_key} phase={lock_phase_key}: {e}"
+        )
         return False
 
 
@@ -1700,7 +1784,11 @@ def process_closed_ticket_duplication(
         latest_close_ts = str(latest_meta.get("close_ts") or "").strip()
         latest_created_ts = latest_success.get("created_timestamp")
 
-        if incoming_close_ts and latest_close_ts and incoming_close_ts <= latest_close_ts:
+        if (
+            incoming_close_ts
+            and latest_close_ts
+            and incoming_close_ts <= latest_close_ts
+        ):
             logger.warning(
                 f"[{correlation_id}] Suppressing stale close event for {jira_key}: "
                 f"incoming_close_ts={incoming_close_ts} <= latest_close_ts={latest_close_ts}"
@@ -1715,7 +1803,9 @@ def process_closed_ticket_duplication(
 
         if latest_created_ts is not None:
             try:
-                age_seconds = (datetime.now(timezone.utc) - latest_created_ts).total_seconds()
+                age_seconds = (
+                    datetime.now(timezone.utc) - latest_created_ts
+                ).total_seconds()
             except Exception:
                 age_seconds = None
             if age_seconds is not None and age_seconds < cooldown_window:
@@ -1761,12 +1851,18 @@ def process_closed_ticket_duplication(
             }, 200
 
         helix_payload = map_jira_closed_issue_to_helix(jira_issue, jira_key)
-        logger.info(f"[{correlation_id}] Close-dup create payload: {json.dumps(helix_payload, indent=2)}")
+        logger.info(
+            f"[{correlation_id}] Close-dup create payload: {json.dumps(helix_payload, indent=2)}"
+        )
         try:
-            helix_id = create_helix_ticket(helix_payload, helix_token, dry_run=DRY_RUN) or ""
+            helix_id = (
+                create_helix_ticket(helix_payload, helix_token, dry_run=DRY_RUN) or ""
+            )
         except Exception as e:
             if not DRY_RUN:
-                release_close_dup_window_lock(jira_key, create_window_lock_phase_key, str(e))
+                release_close_dup_window_lock(
+                    jira_key, create_window_lock_phase_key, str(e)
+                )
                 record_close_dup_phase(
                     jira_key,
                     None,
@@ -1849,7 +1945,10 @@ def process_closed_ticket_duplication(
                         helix_id,
                         phase_key,
                         "success",
-                        phase_meta={"comment_id": comment_id, "close_cycle_key": close_cycle_key},
+                        phase_meta={
+                            "comment_id": comment_id,
+                            "close_cycle_key": close_cycle_key,
+                        },
                     )
             except Exception as e:
                 failed += 1
@@ -1860,7 +1959,10 @@ def process_closed_ticket_duplication(
                         phase_key,
                         "failed",
                         str(e),
-                        phase_meta={"comment_id": comment_id, "close_cycle_key": close_cycle_key},
+                        phase_meta={
+                            "comment_id": comment_id,
+                            "close_cycle_key": close_cycle_key,
+                        },
                     )
 
         if failed == 0 and not DRY_RUN:
@@ -1877,7 +1979,9 @@ def process_closed_ticket_duplication(
             )
     else:
         skipped += 1
-        logger.info(f"[{correlation_id}] Replay already completed for cycle {close_cycle_key}; skip")
+        logger.info(
+            f"[{correlation_id}] Replay already completed for cycle {close_cycle_key}; skip"
+        )
 
     if failed > 0:
         return {
@@ -1895,7 +1999,9 @@ def process_closed_ticket_duplication(
     helix_final_status = "UNKNOWN"
     if close_phase_hit is None and ENABLE_HELIX_CLOSE_PATCH:
         try:
-            helix_final_status = close_helix_ticket(helix_id, helix_token, dry_run=DRY_RUN)
+            helix_final_status = close_helix_ticket(
+                helix_id, helix_token, dry_run=DRY_RUN
+            )
             if not DRY_RUN:
                 record_close_dup_phase(
                     jira_key,
@@ -1944,26 +2050,30 @@ def process_closed_ticket_duplication(
 
 
 # ===== EMAIL ALERT =====
-def send_slack_email_alert(jira_key: str, helix_id: Optional[str], status: str, error_msg: str = "") -> bool:
+def send_slack_email_alert(
+    jira_key: str, helix_id: Optional[str], status: str, error_msg: str = ""
+) -> bool:
     """
     Send email alert to Slack channel.
-    
+
     Args:
         jira_key: Jira issue key
         helix_id: Helix incident ID (nullable)
         status: 'success' or 'failed'
         error_msg: Error message if failed
-        
+
     Returns:
         True if successful
     """
     if DRY_RUN:
-        logger.info(f"[DRY-RUN] Would send email alert for {jira_key} → {helix_id} ({status})")
+        logger.info(
+            f"[DRY-RUN] Would send email alert for {jira_key} → {helix_id} ({status})"
+        )
         return True
-    
+
     try:
         subject = f"Jira-to-Helix Sync: {jira_key} - {status.upper()}"
-        
+
         if status == "success":
             body = f"""
             Jira-to-Helix sync completed successfully.
@@ -1984,11 +2094,13 @@ def send_slack_email_alert(jira_key: str, helix_id: Optional[str], status: str, 
             
             Please investigate.
             """
-        
+
         # For now, just log the message
         # TODO: Integrate with SendGrid or SMTP
-        logger.info(f"Email Alert:\nTo: {SLACK_EMAIL}\nSubject: {subject}\nBody: {body}")
-        
+        logger.info(
+            f"Email Alert:\nTo: {SLACK_EMAIL}\nSubject: {subject}\nBody: {body}"
+        )
+
         return True
     except Exception as e:
         logger.error(f"Failed to send alert: {e}")
@@ -2000,7 +2112,7 @@ def send_slack_email_alert(jira_key: str, helix_id: Optional[str], status: str, 
 def jira_to_helix_create_prod(request):
     """
     HTTP Cloud Function: Jira webhook receiver for MSS issue creation and comments.
-    
+
     Expected webhook payload (Jira):
     {
         "webhookEvent": "jira:issue_created",
@@ -2015,9 +2127,16 @@ def jira_to_helix_create_prod(request):
     """
     correlation_id = str(uuid.uuid4())
     logger.info(f"[{correlation_id}] Webhook received")
-    force_reprocess = str(request.args.get("force", "")).strip().lower() in {"1", "true", "yes", "y"}
+    force_reprocess = str(request.args.get("force", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }
     if force_reprocess:
-        logger.info(f"[{correlation_id}] Force reprocess enabled; bypassing idempotency cache")
+        logger.info(
+            f"[{correlation_id}] Force reprocess enabled; bypassing idempotency cache"
+        )
 
     if request.method == "GET" and request.args.get("action") == "get_ticket":
         ticket_id = (request.args.get("ticket_id") or "").strip()
@@ -2029,12 +2148,14 @@ def jira_to_helix_create_prod(request):
             return {
                 "status": "success",
                 "ticket_id": ticket_id,
-                "ticket_status": ticket.get("status") if isinstance(ticket, dict) else None,
+                "ticket_status": ticket.get("status")
+                if isinstance(ticket, dict)
+                else None,
                 "ticket": ticket,
             }, 200
         except Exception as e:
             return {"status": "error", "message": str(e)}, 500
-    
+
     jira_key = ""
 
     try:
@@ -2060,9 +2181,11 @@ def jira_to_helix_create_prod(request):
                     "status": "error",
                     "message": "Invalid JSON payload",
                 }, 400
-        
+
         webhook_event = webhook_data.get("webhookEvent")
-        issue_event_type_name = str(webhook_data.get("issue_event_type_name", "")).lower()
+        issue_event_type_name = str(
+            webhook_data.get("issue_event_type_name", "")
+        ).lower()
 
         # Jira Automation can send issue payloads without webhookEvent.
         issue_data = webhook_data.get("issue", {})
@@ -2125,8 +2248,12 @@ def jira_to_helix_create_prod(request):
                 logger.error(f"[{correlation_id}] No Jira key in close webhook")
                 return {"status": "error", "message": "Missing issue key"}, 400
 
-            logger.info(f"[{correlation_id}] Processing closed-ticket duplication for {jira_key}")
-            return process_closed_ticket_duplication(correlation_id, jira_key, issue_data)
+            logger.info(
+                f"[{correlation_id}] Processing closed-ticket duplication for {jira_key}"
+            )
+            return process_closed_ticket_duplication(
+                correlation_id, jira_key, issue_data
+            )
 
         if has_comment:
             jira_key = str(issue_key_hint or "").strip()
@@ -2134,9 +2261,14 @@ def jira_to_helix_create_prod(request):
                 logger.error(f"[{correlation_id}] No Jira key in comment webhook")
                 return {"status": "error", "message": "Missing issue key"}, 400
 
-            logger.info(f"[{correlation_id}] Processing Jira comment webhook for {jira_key}")
+            logger.info(
+                f"[{correlation_id}] Processing Jira comment webhook for {jira_key}"
+            )
             if not ensure_comment_sync_table():
-                return {"status": "error", "message": "Comment sync table unavailable"}, 500
+                return {
+                    "status": "error",
+                    "message": "Comment sync table unavailable",
+                }, 500
 
             comment_data = extract_jira_comment_data(webhook_data)
             source_comment_id = comment_data.get("comment_id", "")
@@ -2147,7 +2279,9 @@ def jira_to_helix_create_prod(request):
             comment_sync_key = build_comment_sync_key(comment_data)
 
             if check_comment_idempotency(comment_sync_key):
-                logger.info(f"[{correlation_id}] Comment version already synced: {comment_sync_key}")
+                logger.info(
+                    f"[{correlation_id}] Comment version already synced: {comment_sync_key}"
+                )
                 return {
                     "status": "cached",
                     "jira_key": jira_key,
@@ -2156,7 +2290,9 @@ def jira_to_helix_create_prod(request):
                     "message": "Comment version already synced",
                 }, 200
 
-            issue_fields = issue_data.get("fields") if isinstance(issue_data, dict) else None
+            issue_fields = (
+                issue_data.get("fields") if isinstance(issue_data, dict) else None
+            )
             if not isinstance(issue_fields, dict) or not issue_fields:
                 jira_issue = get_jira_issue(jira_key, JIRA_BASE_URL)
                 issue_fields = jira_issue.get("fields", {})
@@ -2174,7 +2310,9 @@ def jira_to_helix_create_prod(request):
             if not helix_id:
                 error_msg = "No Remedy ticket number found on Jira issue"
                 if not DRY_RUN:
-                    record_comment_sync(jira_key, None, comment_sync_key, "failed", error_msg)
+                    record_comment_sync(
+                        jira_key, None, comment_sync_key, "failed", error_msg
+                    )
                 logger.error(f"[{correlation_id}] {error_msg} for {jira_key}")
                 return {
                     "status": "error",
@@ -2213,31 +2351,37 @@ def jira_to_helix_create_prod(request):
             )
             return {
                 "status": "ignored",
-                "message": f"Event {webhook_event or issue_event_type_name or 'unknown'} not handled"
+                "message": f"Event {webhook_event or issue_event_type_name or 'unknown'} not handled",
             }, 200
-        
-        issue_data = webhook_data.get("issue", {}) if isinstance(webhook_data.get("issue"), dict) else {}
+
+        issue_data = (
+            webhook_data.get("issue", {})
+            if isinstance(webhook_data.get("issue"), dict)
+            else {}
+        )
         jira_key = str(issue_data.get("key") or issue_key_hint or "").strip()
 
         if not jira_key:
             jira_key = extract_jira_key_fallback(webhook_data, raw_payload)
-        
+
         if not jira_key:
             logger.error(
                 f"[{correlation_id}] No Jira key in webhook. "
                 f"Top-level keys: {list(webhook_data.keys())[:20]}"
             )
             return {"status": "error", "message": "Missing issue key"}, 400
-        
+
         logger.info(f"[{correlation_id}] Processing {jira_key}")
-        
+
         # Check idempotency unless explicitly bypassed for testing.
         cached_helix_id = ""
         if not force_reprocess:
             cached_helix_id = check_idempotency(jira_key)
         if cached_helix_id:
             # Avoid clobbering an existing Remedy ID on Jira with stale cached values.
-            existing_issue_fields = issue_data.get("fields") if isinstance(issue_data, dict) else {}
+            existing_issue_fields = (
+                issue_data.get("fields") if isinstance(issue_data, dict) else {}
+            )
             existing_helix_id = extract_existing_jira_helix_id(existing_issue_fields)
             if not existing_helix_id:
                 update_jira_issue_field(
@@ -2251,9 +2395,15 @@ def jira_to_helix_create_prod(request):
                     f"[{correlation_id}] Cached Helix ID differs from Jira field for {jira_key}; "
                     f"keep existing Jira value existing={existing_helix_id} cached={cached_helix_id}"
                 )
-            logger.info(f"[{correlation_id}] {jira_key} already synced → {cached_helix_id}")
-            return {"status": "cached", "jira_key": jira_key, "helix_id": cached_helix_id}, 200
-        
+            logger.info(
+                f"[{correlation_id}] {jira_key} already synced → {cached_helix_id}"
+            )
+            return {
+                "status": "cached",
+                "jira_key": jira_key,
+                "helix_id": cached_helix_id,
+            }, 200
+
         # Prefer issue fields from webhook payload when they contain the mapped fields.
         # Otherwise fetch the full Jira issue so customer/SR values are not lost.
         jira_issue = resolve_jira_issue_for_mapping(issue_data, jira_key, JIRA_BASE_URL)
@@ -2263,21 +2413,23 @@ def jira_to_helix_create_prod(request):
         logger.info(
             f"[{correlation_id}] Forcing default Helix customer/SR pair customer={customer_id} sr={sr_no}; Jira customer/SR fields are ignored"
         )
-        
+
         # Map to Helix payload
         helix_payload = map_jira_to_helix(jira_issue, jira_key)
         logger.info(
             f"[{correlation_id}] Mapped payload customer={customer_id} sr={sr_no} "
             f"assignedGroup={helix_payload.get('assignedGroup')} relatedEntity={helix_payload.get('relatedEntity')}"
         )
-        logger.info(f"[{correlation_id}] Helix payload to post: {json.dumps(helix_payload, indent=2)}")
-        
+        logger.info(
+            f"[{correlation_id}] Helix payload to post: {json.dumps(helix_payload, indent=2)}"
+        )
+
         # Get Helix token
         helix_token = get_helix_token()
-        
+
         # Create Helix ticket
         helix_id = create_helix_ticket(helix_payload, helix_token, dry_run=DRY_RUN)
-        
+
         if helix_id and not DRY_RUN:
             try:
                 helix_ticket = get_helix_ticket(helix_id, helix_token, dry_run=DRY_RUN)
@@ -2296,7 +2448,9 @@ def jira_to_helix_create_prod(request):
                         f"assignedGroup={helix_ticket.get('assignedGroup')}"
                     )
             except Exception as e:
-                logger.warning(f"[{correlation_id}] Helix ticket verification failed for {helix_id}: {e}")
+                logger.warning(
+                    f"[{correlation_id}] Helix ticket verification failed for {helix_id}: {e}"
+                )
 
             try:
                 jira_comments = get_jira_comments(jira_key, JIRA_BASE_URL)
@@ -2309,7 +2463,9 @@ def jira_to_helix_create_prod(request):
                         if not comment_id:
                             continue
                         note = build_helix_worklog_note_from_jira_comment(comment)
-                        create_helix_worklog(helix_id, note, helix_token, dry_run=DRY_RUN)
+                        create_helix_worklog(
+                            helix_id, note, helix_token, dry_run=DRY_RUN
+                        )
                         logger.info(
                             f"[{correlation_id}] Replayed Jira comment {comment_id} to Helix ticket {helix_id}"
                         )
@@ -2319,7 +2475,9 @@ def jira_to_helix_create_prod(request):
                 )
 
             # Backlink Jira
-            update_jira_issue_field(jira_key, JIRA_REMEDY_TICKET_NUMBER_FIELDS, helix_id, JIRA_BASE_URL)
+            update_jira_issue_field(
+                jira_key, JIRA_REMEDY_TICKET_NUMBER_FIELDS, helix_id, JIRA_BASE_URL
+            )
             if ENFORCE_HELIX_ASSIGNED_GROUP:
                 try:
                     enforce_helix_assigned_group(
@@ -2332,10 +2490,10 @@ def jira_to_helix_create_prod(request):
                     logger.warning(
                         f"[{correlation_id}] Helix assignedGroup enforcement failed for {helix_id}: {e}"
                     )
-            
+
             # Record success
             record_sync(jira_key, helix_id, "success")
-            
+
             # Alert
             send_slack_email_alert(jira_key, helix_id, "success")
 
@@ -2344,7 +2502,7 @@ def jira_to_helix_create_prod(request):
                 "status": "success",
                 "jira_key": jira_key,
                 "helix_id": helix_id,
-                "correlation_id": correlation_id
+                "correlation_id": correlation_id,
             }, 200
         elif DRY_RUN:
             logger.info(f"[{correlation_id}] [DRY-RUN] Would complete: {jira_key}")
@@ -2352,28 +2510,28 @@ def jira_to_helix_create_prod(request):
                 "status": "dry_run",
                 "jira_key": jira_key,
                 "payload": helix_payload,
-                "correlation_id": correlation_id
+                "correlation_id": correlation_id,
             }, 200
         else:
             # Record failure
             error_msg = "Helix ticket creation returned no ID"
             record_sync(jira_key, None, "failed", error_msg)
             send_slack_email_alert(jira_key, None, "failed", error_msg)
-            
+
             logger.error(f"[{correlation_id}] ✗ Failed: {jira_key}")
             return {"status": "error", "message": error_msg}, 500
-    
+
     except Exception as e:
         logger.error(f"[{correlation_id}] Exception: {e}", exc_info=True)
-        
+
         # Best-effort failure recording
         try:
             if jira_key and not DRY_RUN:
                 record_sync(jira_key, None, "failed", str(e))
                 send_slack_email_alert(jira_key, None, "failed", str(e))
-        except:
+        except Exception:
             pass
-        
+
         return {"status": "error", "message": str(e)}, 500
 
 
@@ -2381,4 +2539,3 @@ def jira_to_helix_create_prod(request):
 def main(request):
     """HTTP entrypoint for Cloud Functions."""
     return jira_to_helix_create_prod(request)
-

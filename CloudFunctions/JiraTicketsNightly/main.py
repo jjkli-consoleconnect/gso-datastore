@@ -2,6 +2,7 @@
 Cloud Function: Jira Tickets Nightly Sync
 Nightly backfill of Jira ticket data routed via VPC; writes to BigQuery UAT.
 """
+
 import requests
 import json
 import logging
@@ -16,9 +17,13 @@ import functions_framework
 
 # Import shared helper functions (files in same directory)
 from jira_helpers import (
-    load_base_jql, build_jql, convert_timestamp, create_or_replace_temp_table,
-    delete_temp_table, wait_for_table, insert_rows_with_retry, table_exists,
-    execute_bq_query_with_retry
+    convert_timestamp,
+    create_or_replace_temp_table,
+    delete_temp_table,
+    wait_for_table,
+    insert_rows_with_retry,
+    table_exists,
+    execute_bq_query_with_retry,
 )
 from logging_config import setup_root_logging
 from pipeline_runs_logger import log_pipeline_run
@@ -29,87 +34,103 @@ JITTER_MAX_SECONDS = 0.3
 MIN_PROGRESS_WINDOW_SEC = 600  # 10 minutes to avoid thrashing tiny windows
 MIN_WINDOW_HOURS = 1  # Skip windows smaller than 1 hour
 OVERLAP_MINUTES = 10
-MIN_START_ENV = os.environ.get('MIN_START', '2023-01-01T00:00:00Z')
-MIN_START = datetime.fromisoformat(MIN_START_ENV.replace('Z', '+00:00'))
-ENABLE_SOFT_DELETE_RECONCILIATION = os.environ.get('ENABLE_SOFT_DELETE_RECONCILIATION', '').strip().lower() == 'true'
-MISSING_KEY_CATCHUP_PER_PROJECT = int(os.environ.get('MISSING_KEY_CATCHUP_PER_PROJECT', '50000'))
-CACHE_BATCHED_FETCH_SIZE = int(os.environ.get('CACHE_BATCHED_FETCH_SIZE', '500'))  # Issues cached in each batch
-CACHE_BATCH_DURATION_SEC = int(os.environ.get('CACHE_BATCH_DURATION_SEC', '120'))  # 2-minute window
-MAX_RUN_SECONDS = int(os.environ.get('MAX_RUN_SECONDS', '3300'))  # Exit before 3600s hard timeout
-RUNNING_STALE_MINUTES = int(os.environ.get('RUNNING_STALE_MINUTES', '70'))  # Auto-clean stale RUNNING rows sooner
-BASE_WINDOW_DAYS = int(os.environ.get('BASE_WINDOW_DAYS', '1'))
-BASE_WINDOW_HOURS = float(os.environ.get('BASE_WINDOW_HOURS', str(BASE_WINDOW_DAYS * 24)))
-MIN_ADAPTIVE_WINDOW_HOURS = float(os.environ.get('MIN_ADAPTIVE_WINDOW_HOURS', '2'))
-MAX_ADAPTIVE_WINDOW_HOURS = float(os.environ.get('MAX_ADAPTIVE_WINDOW_HOURS', '720'))
-ADAPTIVE_TARGET_ROWS = int(os.environ.get('ADAPTIVE_TARGET_ROWS', '4000'))
-ADAPTIVE_LOW_WATERMARK_ROWS = int(os.environ.get('ADAPTIVE_LOW_WATERMARK_ROWS', '800'))
-ADAPTIVE_HIGH_WATERMARK_ROWS = int(os.environ.get('ADAPTIVE_HIGH_WATERMARK_ROWS', '12000'))
+MIN_START_ENV = os.environ.get("MIN_START", "2023-01-01T00:00:00Z")
+MIN_START = datetime.fromisoformat(MIN_START_ENV.replace("Z", "+00:00"))
+ENABLE_SOFT_DELETE_RECONCILIATION = (
+    os.environ.get("ENABLE_SOFT_DELETE_RECONCILIATION", "").strip().lower() == "true"
+)
+MISSING_KEY_CATCHUP_PER_PROJECT = int(
+    os.environ.get("MISSING_KEY_CATCHUP_PER_PROJECT", "50000")
+)
+CACHE_BATCHED_FETCH_SIZE = int(
+    os.environ.get("CACHE_BATCHED_FETCH_SIZE", "500")
+)  # Issues cached in each batch
+CACHE_BATCH_DURATION_SEC = int(
+    os.environ.get("CACHE_BATCH_DURATION_SEC", "120")
+)  # 2-minute window
+MAX_RUN_SECONDS = int(
+    os.environ.get("MAX_RUN_SECONDS", "3300")
+)  # Exit before 3600s hard timeout
+RUNNING_STALE_MINUTES = int(
+    os.environ.get("RUNNING_STALE_MINUTES", "70")
+)  # Auto-clean stale RUNNING rows sooner
+BASE_WINDOW_DAYS = int(os.environ.get("BASE_WINDOW_DAYS", "1"))
+BASE_WINDOW_HOURS = float(
+    os.environ.get("BASE_WINDOW_HOURS", str(BASE_WINDOW_DAYS * 24))
+)
+MIN_ADAPTIVE_WINDOW_HOURS = float(os.environ.get("MIN_ADAPTIVE_WINDOW_HOURS", "2"))
+MAX_ADAPTIVE_WINDOW_HOURS = float(os.environ.get("MAX_ADAPTIVE_WINDOW_HOURS", "720"))
+ADAPTIVE_TARGET_ROWS = int(os.environ.get("ADAPTIVE_TARGET_ROWS", "4000"))
+ADAPTIVE_LOW_WATERMARK_ROWS = int(os.environ.get("ADAPTIVE_LOW_WATERMARK_ROWS", "800"))
+ADAPTIVE_HIGH_WATERMARK_ROWS = int(
+    os.environ.get("ADAPTIVE_HIGH_WATERMARK_ROWS", "12000")
+)
 
 DEFAULT_PROJECTS = [
-    'GS&O Data Analytics',
-    'Customer Success Management',
-    'GS&O Tool Automation',
-    'GS&O Knowledge Consolidation',
-    'TAC',
-    'VOICE - CE',
-    'IOT CE',
-    'Console Application Support',
-    'Console Connect Provisioning',
-    'Global Service Delivery Team',
-    'Transmission TX-CE',
-    'Mobility SMS - CE',
-    'Managed Security Services',
-    'Sherbet',
-    'Google Contact Center AI Solution',
-    'QMS Documentation',
-    'Operational Case Reviews',
-    'IT Helpdesk',
-    'Vendor Verification Team',
-    'IPECR',
-    'IPCE',
-    'Internal Knowledge Management',
-    'ITOPS',
-    'GS&O Strategic Initiatives'
+    "GS&O Data Analytics",
+    "Customer Success Management",
+    "GS&O Tool Automation",
+    "GS&O Knowledge Consolidation",
+    "TAC",
+    "VOICE - CE",
+    "IOT CE",
+    "Console Application Support",
+    "Console Connect Provisioning",
+    "Global Service Delivery Team",
+    "Transmission TX-CE",
+    "Mobility SMS - CE",
+    "Managed Security Services",
+    "Sherbet",
+    "Google Contact Center AI Solution",
+    "QMS Documentation",
+    "Operational Case Reviews",
+    "IT Helpdesk",
+    "Vendor Verification Team",
+    "IPECR",
+    "IPCE",
+    "Internal Knowledge Management",
+    "ITOPS",
+    "GS&O Strategic Initiatives",
 ]
 
 PROJECT_NAME_ALIASES = {
-    'ITOPS': ['IT Operations'],
-    'IPECR': ['IP Engineering Change Request Project'],
+    "ITOPS": ["IT Operations"],
+    "IPECR": ["IP Engineering Change Request Project"],
 }
 
-SERVICE_JIRA_ID = 'customfield_11350'
-ORIGIN_JIRA_ID = 'customfield_11351'
-ROOT_CAUSE_JIRA_ID = 'customfield_10775'
-RESOLUTION_SECURITY_JIRA_ID = 'customfield_11349'
-SYMPTOMS_JIRA_ID = 'customfield_11365'
-ATTACK_JIRA_ID = 'customfield_15295'
-FEATURE_TEAM_JIRA_ID = 'customfield_10780'
-REMEDY_TICKET_MIGRATED_JIRA_ID = 'customfield_10647'
-MAINTENANCE_WINDOW_START_JIRA_ID = 'customfield_10514'
-MAINTENANCE_WINDOW_END_JIRA_ID = 'customfield_10515'
-TIME_TO_FIRST_RESPONSE_JIRA_ID = 'customfield_10627'
-TIME_TO_RESOLVE_JIRA_ID = 'customfield_10686'
-TIME_TO_RESOLUTION_JIRA_ID = 'customfield_10668'
-TIME_TO_APPROVE_NORMAL_CHANGE_JIRA_ID = 'customfield_10640'
-PROLONG_CASE_JIRA_ID = 'customfield_10560'
-TIME_TO_CLOSE_AFTER_RESOLUTION_JIRA_ID = 'customfield_10552'
-APP_SUP_ESCALATION_JIRA_ID = 'customfield_11171'
-STORY_POINTS_JIRA_ID = 'customfield_10347'
-ITHD_ISMS_INCIDENT_RESPONSE_JIRA_ID = 'customfield_13449'
-ITHD_ISMS_INCIDENT_RESOLUTION_JIRA_ID = 'customfield_13450'
-ITHD_RESOLUTION_JIRA_ID = 'customfield_13448'
-KNOWLEDGE_MANAGEMENT_JIRA_ID = 'customfield_15761'
-DIRECTORY_INTERNAL_JIRA_ID = 'customfield_15827'
-CONFLUENCE_URL_JIRA_ID = 'customfield_11184'
-INCLUDE_CHILD_PAGES_JIRA_ID = 'customfield_15829'
-VERIFIER_JIRA_ID = 'customfield_10674'
-APPROVERS_JIRA_ID = 'customfield_10516'
+SERVICE_JIRA_ID = "customfield_11350"
+ORIGIN_JIRA_ID = "customfield_11351"
+ROOT_CAUSE_JIRA_ID = "customfield_10775"
+RESOLUTION_SECURITY_JIRA_ID = "customfield_11349"
+SYMPTOMS_JIRA_ID = "customfield_11365"
+ATTACK_JIRA_ID = "customfield_15295"
+FEATURE_TEAM_JIRA_ID = "customfield_10780"
+REMEDY_TICKET_MIGRATED_JIRA_ID = "customfield_10647"
+MAINTENANCE_WINDOW_START_JIRA_ID = "customfield_10514"
+MAINTENANCE_WINDOW_END_JIRA_ID = "customfield_10515"
+TIME_TO_FIRST_RESPONSE_JIRA_ID = "customfield_10627"
+TIME_TO_RESOLVE_JIRA_ID = "customfield_10686"
+TIME_TO_RESOLUTION_JIRA_ID = "customfield_10668"
+TIME_TO_APPROVE_NORMAL_CHANGE_JIRA_ID = "customfield_10640"
+PROLONG_CASE_JIRA_ID = "customfield_10560"
+TIME_TO_CLOSE_AFTER_RESOLUTION_JIRA_ID = "customfield_10552"
+APP_SUP_ESCALATION_JIRA_ID = "customfield_11171"
+STORY_POINTS_JIRA_ID = "customfield_10347"
+ITHD_ISMS_INCIDENT_RESPONSE_JIRA_ID = "customfield_13449"
+ITHD_ISMS_INCIDENT_RESOLUTION_JIRA_ID = "customfield_13450"
+ITHD_RESOLUTION_JIRA_ID = "customfield_13448"
+KNOWLEDGE_MANAGEMENT_JIRA_ID = "customfield_15761"
+DIRECTORY_INTERNAL_JIRA_ID = "customfield_15827"
+CONFLUENCE_URL_JIRA_ID = "customfield_11184"
+INCLUDE_CHILD_PAGES_JIRA_ID = "customfield_15829"
+VERIFIER_JIRA_ID = "customfield_10674"
+APPROVERS_JIRA_ID = "customfield_10516"
 
 
 def to_utc_aware(dt):
     if dt is None:
         return None
-    if getattr(dt, 'tzinfo', None):
+    if getattr(dt, "tzinfo", None):
         try:
             return dt.astimezone(timezone.utc)
         except Exception:
@@ -134,8 +155,8 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
         table = client.get_table(table_ref)
         existing_fields = {
             field.name: {
-                'type': field.field_type.upper(),
-                'mode': (field.mode or 'NULLABLE').upper(),
+                "type": field.field_type.upper(),
+                "mode": (field.mode or "NULLABLE").upper(),
             }
             for field in table.schema
         }
@@ -147,77 +168,77 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
 
     # Only issue DDL when the column is genuinely absent — avoids quota burns on every run.
     simple_columns = [
-        ('IsDeleted', 'BOOL'),
-        ('DeletedAt', 'TIMESTAMP'),
-        ('AssociatedTeam', 'STRING'),
-        ('TransactionStatus', 'STRING'),
-        ('Service', 'STRING'),
-        ('Origin', 'STRING'),
-        ('RootCause', 'STRING'),
-        ('ResolutionSecurity', 'STRING'),
-        ('Symptoms', 'STRING'),
-        ('ATTCK', 'STRING'),
-        ('Description', 'STRING'),
-        ('IssueId', 'STRING'),
-        ('Creator', 'STRING'),
-        ('ReporterId', 'STRING'),
-        ('AssigneeId', 'STRING'),
-        ('DueDate', 'DATE'),
-        ('FeatureTeam', 'STRING'),
-        ('MaintenanceWindowStart', 'TIMESTAMP'),
-        ('MaintenanceWindowEnd', 'TIMESTAMP'),
-        ('KnowledgeManagement', 'STRING'),
-        ('DirectoryInternal', 'STRING'),
-        ('ConfluenceURL', 'STRING'),
-        ('IncludeChildPages', 'STRING'),
-        ('Verifier', 'STRING'),
-        ('VerifierId', 'STRING'),
-        ('Approvers', 'STRING'),
-        ('ApproversId', 'STRING'),
-        ('StoryPoints', 'INT64'),
-        ('TimeSpentSeconds', 'INT64'),
-        ('TimeToFirstResponse_Elapsed_hrs', 'FLOAT64'),
-        ('TimeToFirstResponse_Goal_hrs', 'FLOAT64'),
-        ('TimeToFirstResponse_Breached', 'BOOL'),
-        ('TimeToFirstResponse_Cycles', 'INT64'),
-        ('TimeToResolve_Elapsed_hrs', 'FLOAT64'),
-        ('TimeToResolve_Goal_hrs', 'FLOAT64'),
-        ('TimeToResolve_Breached', 'BOOL'),
-        ('TimeToResolve_Cycles', 'INT64'),
-        ('TimeToResolution_Elapsed_hrs', 'FLOAT64'),
-        ('TimeToResolution_Goal_hrs', 'FLOAT64'),
-        ('TimeToResolution_Breached', 'BOOL'),
-        ('TimeToResolution_Cycles', 'INT64'),
-        ('TimeToApproveNormalChange_Elapsed_hrs', 'FLOAT64'),
-        ('TimeToApproveNormalChange_Goal_hrs', 'FLOAT64'),
-        ('TimeToApproveNormalChange_Breached', 'BOOL'),
-        ('TimeToApproveNormalChange_Cycles', 'INT64'),
-        ('ProlongCase_Elapsed_hrs', 'FLOAT64'),
-        ('ProlongCase_Goal_hrs', 'FLOAT64'),
-        ('ProlongCase_Breached', 'BOOL'),
-        ('ProlongCase_Cycles', 'INT64'),
-        ('TimeToCloseAfterResolution_Elapsed_hrs', 'FLOAT64'),
-        ('TimeToCloseAfterResolution_Goal_hrs', 'FLOAT64'),
-        ('TimeToCloseAfterResolution_Breached', 'BOOL'),
-        ('TimeToCloseAfterResolution_Cycles', 'INT64'),
-        ('ITHD_TimeToFirstResponse_Elapsed_hrs', 'FLOAT64'),
-        ('ITHD_TimeToFirstResponse_Goal_hrs', 'FLOAT64'),
-        ('ITHD_TimeToFirstResponse_Breached', 'BOOL'),
-        ('ITHD_TimeToFirstResponse_Cycles', 'INT64'),
-        ('ITHD_TimeToResolution_Elapsed_hrs', 'FLOAT64'),
-        ('ITHD_TimeToResolution_Goal_hrs', 'FLOAT64'),
-        ('ITHD_TimeToResolution_Breached', 'BOOL'),
-        ('ITHD_TimeToResolution_Cycles', 'INT64'),
-        ('ITHD_ISMSIncidentResponse_Elapsed_hrs', 'FLOAT64'),
-        ('ITHD_ISMSIncidentResponse_Goal_hrs', 'FLOAT64'),
-        ('ITHD_ISMSIncidentResponse_Breached', 'BOOL'),
-        ('ITHD_ISMSIncidentResponse_Cycles', 'INT64'),
-        ('ITHD_ISMSIncidentResolution_Elapsed_hrs', 'FLOAT64'),
-        ('ITHD_ISMSIncidentResolution_Goal_hrs', 'FLOAT64'),
-        ('ITHD_ISMSIncidentResolution_Breached', 'BOOL'),
-        ('ITHD_ISMSIncidentResolution_Cycles', 'INT64'),
-        ('ITHD_Resolution', 'STRING'),
-        ('AppSupEscalation', 'STRING'),
+        ("IsDeleted", "BOOL"),
+        ("DeletedAt", "TIMESTAMP"),
+        ("AssociatedTeam", "STRING"),
+        ("TransactionStatus", "STRING"),
+        ("Service", "STRING"),
+        ("Origin", "STRING"),
+        ("RootCause", "STRING"),
+        ("ResolutionSecurity", "STRING"),
+        ("Symptoms", "STRING"),
+        ("ATTCK", "STRING"),
+        ("Description", "STRING"),
+        ("IssueId", "STRING"),
+        ("Creator", "STRING"),
+        ("ReporterId", "STRING"),
+        ("AssigneeId", "STRING"),
+        ("DueDate", "DATE"),
+        ("FeatureTeam", "STRING"),
+        ("MaintenanceWindowStart", "TIMESTAMP"),
+        ("MaintenanceWindowEnd", "TIMESTAMP"),
+        ("KnowledgeManagement", "STRING"),
+        ("DirectoryInternal", "STRING"),
+        ("ConfluenceURL", "STRING"),
+        ("IncludeChildPages", "STRING"),
+        ("Verifier", "STRING"),
+        ("VerifierId", "STRING"),
+        ("Approvers", "STRING"),
+        ("ApproversId", "STRING"),
+        ("StoryPoints", "INT64"),
+        ("TimeSpentSeconds", "INT64"),
+        ("TimeToFirstResponse_Elapsed_hrs", "FLOAT64"),
+        ("TimeToFirstResponse_Goal_hrs", "FLOAT64"),
+        ("TimeToFirstResponse_Breached", "BOOL"),
+        ("TimeToFirstResponse_Cycles", "INT64"),
+        ("TimeToResolve_Elapsed_hrs", "FLOAT64"),
+        ("TimeToResolve_Goal_hrs", "FLOAT64"),
+        ("TimeToResolve_Breached", "BOOL"),
+        ("TimeToResolve_Cycles", "INT64"),
+        ("TimeToResolution_Elapsed_hrs", "FLOAT64"),
+        ("TimeToResolution_Goal_hrs", "FLOAT64"),
+        ("TimeToResolution_Breached", "BOOL"),
+        ("TimeToResolution_Cycles", "INT64"),
+        ("TimeToApproveNormalChange_Elapsed_hrs", "FLOAT64"),
+        ("TimeToApproveNormalChange_Goal_hrs", "FLOAT64"),
+        ("TimeToApproveNormalChange_Breached", "BOOL"),
+        ("TimeToApproveNormalChange_Cycles", "INT64"),
+        ("ProlongCase_Elapsed_hrs", "FLOAT64"),
+        ("ProlongCase_Goal_hrs", "FLOAT64"),
+        ("ProlongCase_Breached", "BOOL"),
+        ("ProlongCase_Cycles", "INT64"),
+        ("TimeToCloseAfterResolution_Elapsed_hrs", "FLOAT64"),
+        ("TimeToCloseAfterResolution_Goal_hrs", "FLOAT64"),
+        ("TimeToCloseAfterResolution_Breached", "BOOL"),
+        ("TimeToCloseAfterResolution_Cycles", "INT64"),
+        ("ITHD_TimeToFirstResponse_Elapsed_hrs", "FLOAT64"),
+        ("ITHD_TimeToFirstResponse_Goal_hrs", "FLOAT64"),
+        ("ITHD_TimeToFirstResponse_Breached", "BOOL"),
+        ("ITHD_TimeToFirstResponse_Cycles", "INT64"),
+        ("ITHD_TimeToResolution_Elapsed_hrs", "FLOAT64"),
+        ("ITHD_TimeToResolution_Goal_hrs", "FLOAT64"),
+        ("ITHD_TimeToResolution_Breached", "BOOL"),
+        ("ITHD_TimeToResolution_Cycles", "INT64"),
+        ("ITHD_ISMSIncidentResponse_Elapsed_hrs", "FLOAT64"),
+        ("ITHD_ISMSIncidentResponse_Goal_hrs", "FLOAT64"),
+        ("ITHD_ISMSIncidentResponse_Breached", "BOOL"),
+        ("ITHD_ISMSIncidentResponse_Cycles", "INT64"),
+        ("ITHD_ISMSIncidentResolution_Elapsed_hrs", "FLOAT64"),
+        ("ITHD_ISMSIncidentResolution_Goal_hrs", "FLOAT64"),
+        ("ITHD_ISMSIncidentResolution_Breached", "BOOL"),
+        ("ITHD_ISMSIncidentResolution_Cycles", "INT64"),
+        ("ITHD_Resolution", "STRING"),
+        ("AppSupEscalation", "STRING"),
     ]
     for col_name, col_type in simple_columns:
         if col_name not in existing_columns:
@@ -226,12 +247,12 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
             ).result()
             logging.info(f"Added missing column {col_name} to {table_id}")
 
-    labels_field = existing_fields.get('Labels')
+    labels_field = existing_fields.get("Labels")
     if labels_field is None:
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Labels ARRAY<STRING>"
         ).result()
-    elif labels_field['type'] == 'STRING' and labels_field['mode'] != 'REPEATED':
+    elif labels_field["type"] == "STRING" and labels_field["mode"] != "REPEATED":
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Labels_array ARRAY<STRING>"
         ).result()
@@ -256,12 +277,14 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
             f"ALTER TABLE `{dataset_id}.{table_id}` RENAME COLUMN Labels_array TO Labels"
         ).result()
 
-    attachment_field = existing_fields.get('Attachment')
+    attachment_field = existing_fields.get("Attachment")
     if attachment_field is None:
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Attachment JSON"
         ).result()
-    elif attachment_field['type'] == 'STRING' and attachment_field['mode'] != 'REPEATED':
+    elif (
+        attachment_field["type"] == "STRING" and attachment_field["mode"] != "REPEATED"
+    ):
         # One-time in-place migration from STRING to JSON while preserving non-JSON raw payloads.
         client.query(
             f"ALTER TABLE `{dataset_id}.{table_id}` ADD COLUMN IF NOT EXISTS Attachment_json JSON"
@@ -284,7 +307,7 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
             f"ALTER TABLE `{dataset_id}.{table_id}` RENAME COLUMN Attachment_json TO Attachment"
         ).result()
 
-    if 'TranscationStatus' in existing_columns:
+    if "TranscationStatus" in existing_columns:
         client.query(
             f"""
             UPDATE `{dataset_id}.{table_id}`
@@ -309,7 +332,7 @@ def get_project_name_variants(project):
     return variants
 
 
-def get_project_filter_sql(project, column_name='Project'):
+def get_project_filter_sql(project, column_name="Project"):
     variants = get_project_name_variants(project)
     return f"{column_name} IN ({_to_sql_string_list(variants)})"
 
@@ -318,7 +341,9 @@ def get_known_project_keys(client, dataset_id, table_id, project):
     """Return known non-empty keys already present in BQ for a project."""
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
-            bigquery.ArrayQueryParameter('project_names', 'STRING', get_project_name_variants(project)),
+            bigquery.ArrayQueryParameter(
+                "project_names", "STRING", get_project_name_variants(project)
+            ),
         ]
     )
     rows = client.query(
@@ -331,13 +356,15 @@ def get_known_project_keys(client, dataset_id, table_id, project):
         """,
         job_config=job_config,
     ).result()
-    return {r.Key for r in rows if getattr(r, 'Key', None)}
+    return {r.Key for r in rows if getattr(r, "Key", None)}
 
 
 def get_project_keys_missing_creator(client, dataset_id, table_id, project):
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
-            bigquery.ArrayQueryParameter('project_names', 'STRING', get_project_name_variants(project)),
+            bigquery.ArrayQueryParameter(
+                "project_names", "STRING", get_project_name_variants(project)
+            ),
         ]
     )
     rows = client.query(
@@ -351,7 +378,7 @@ def get_project_keys_missing_creator(client, dataset_id, table_id, project):
         """,
         job_config=job_config,
     ).result()
-    return {r.Key for r in rows if getattr(r, 'Key', None)}
+    return {r.Key for r in rows if getattr(r, "Key", None)}
 
 
 def add_creator_insert_mapping(merge_query):
@@ -361,17 +388,15 @@ def add_creator_insert_mapping(merge_query):
         raise ValueError("Unexpected JiraTicketsNightly MERGE insert shape")
     return merge_query.replace(
         column_anchor, "Resolved, DueDate, Creator, Reporter"
-    ).replace(
-        value_anchor, "S.Resolved, S.DueDate, S.Creator, S.Reporter"
-    )
+    ).replace(value_anchor, "S.Resolved, S.DueDate, S.Creator, S.Reporter")
 
 
 def get_recent_window_metrics(client, dataset_id, table_id, project, sample_size=5):
     """Return recent complete windows for adaptive sizing."""
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
-            bigquery.ScalarQueryParameter('p', 'STRING', project),
-            bigquery.ScalarQueryParameter('n', 'INT64', int(sample_size)),
+            bigquery.ScalarQueryParameter("p", "STRING", project),
+            bigquery.ScalarQueryParameter("n", "INT64", int(sample_size)),
         ]
     )
     rows = client.query(
@@ -445,7 +470,7 @@ def select_window(client, dataset_id, table_id, project):
     ws = None
     we = None
     job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter('p', 'STRING', project)]
+        query_parameters=[bigquery.ScalarQueryParameter("p", "STRING", project)]
     )
     try:
         res = client.query(
@@ -502,10 +527,12 @@ def select_window(client, dataset_id, table_id, project):
     return start, end
 
 
-def mark_progress(client, dataset_id, table_id, project, ws, we, status, row_count=None):
-    rc_val = 'NULL' if row_count is None else row_count
-    ws_str = to_utc_aware(ws).strftime('%Y-%m-%d %H:%M:%S') if ws else None
-    we_str = to_utc_aware(we).strftime('%Y-%m-%d %H:%M:%S') if we else None
+def mark_progress(
+    client, dataset_id, table_id, project, ws, we, status, row_count=None
+):
+    rc_val = "NULL" if row_count is None else row_count
+    ws_str = to_utc_aware(ws).strftime("%Y-%m-%d %H:%M:%S") if ws else None
+    we_str = to_utc_aware(we).strftime("%Y-%m-%d %H:%M:%S") if we else None
     client.query(
         f"""
         MERGE `{dataset_id}.{table_id}` T
@@ -519,34 +546,82 @@ def mark_progress(client, dataset_id, table_id, project, ws, we, status, row_cou
 
 
 def get_secret(secret_id, project_id="pccw-internal-virtual-agent"):
+    """Retrieve a secret, falling back to the newest enabled version if the latest alias is destroyed."""
     client = secretmanager.SecretManagerServiceClient()
-    name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
-    response = client.access_secret_version(request={"name": name})
-    return response.payload.data.decode('UTF-8')
+    secret_path = f"projects/{project_id}/secrets/{secret_id}"
+    latest_name = f"{secret_path}/versions/latest"
+
+    try:
+        response = client.access_secret_version(request={"name": latest_name})
+        return response.payload.data.decode("UTF-8")
+    except Exception as exc:
+        logging.warning(
+            f"Latest secret alias failed for {secret_id}: {exc}. Trying newest enabled version."
+        )
+
+    try:
+        versions = list(client.list_secret_versions(request={"parent": secret_path}))
+        valid = []
+        for version in versions:
+            state = getattr(version, "state", None)
+            state_name = (
+                getattr(state, "name", str(state)).lower() if state is not None else ""
+            )
+            if state_name in {"enabled", "state.enabled"}:
+                version_num = int(version.name.rsplit("/", 1)[-1])
+                valid.append((version_num, version.name))
+        if valid:
+            _, chosen_name = max(valid, key=lambda item: item[0])
+            response = client.access_secret_version(request={"name": chosen_name})
+            return response.payload.data.decode("UTF-8")
+    except Exception as fallback_exc:
+        logging.error(
+            f"Failed to recover fallback secret for {secret_id}: {fallback_exc}"
+        )
+
+    raise
 
 
-def insert_rows_resilient(client, dataset_id, temp_table_id, rows, bq_schema, max_attempts=3):
+def insert_rows_resilient(
+    client, dataset_id, temp_table_id, rows, bq_schema, max_attempts=3
+):
     """Insert rows with resilience: retry, and recreate temp table if needed."""
     if not rows:
         return True
-    
+
     for attempt in range(max_attempts):
         # First, try to insert using the standard retry logic
-        if insert_rows_with_retry(client, dataset_id, temp_table_id, rows, bq_schema, retries=5, delay=3):
+        if insert_rows_with_retry(
+            client, dataset_id, temp_table_id, rows, bq_schema, retries=5, delay=3
+        ):
             return True
-        
+
         # If insert failed, check if table still exists; if not, recreate and retry
         if not table_exists(client, dataset_id, temp_table_id):
-            logging.warning(f"Temp table missing after failed insert attempt {attempt + 1}/{max_attempts}. Recreating...")
-            if create_or_replace_temp_table(client, dataset_id, temp_table_id, bq_schema):
-                if wait_for_table(client, dataset_id, temp_table_id, retries=15, delay=1):
+            logging.warning(
+                f"Temp table missing after failed insert attempt {attempt + 1}/{max_attempts}. Recreating..."
+            )
+            if create_or_replace_temp_table(
+                client, dataset_id, temp_table_id, bq_schema
+            ):
+                if wait_for_table(
+                    client, dataset_id, temp_table_id, retries=15, delay=1
+                ):
                     # Retry insert after recreation
-                    if insert_rows_with_retry(client, dataset_id, temp_table_id, rows, bq_schema, retries=5, delay=3):
+                    if insert_rows_with_retry(
+                        client,
+                        dataset_id,
+                        temp_table_id,
+                        rows,
+                        bq_schema,
+                        retries=5,
+                        delay=3,
+                    ):
                         return True
-        
+
         if attempt < max_attempts - 1:
-            time.sleep(2 * (1.5 ** attempt))
-    
+            time.sleep(2 * (1.5**attempt))
+
     logging.error(f"Failed to insert rows after {max_attempts} resilient attempts")
     return False
 
@@ -565,9 +640,18 @@ def get_field_value(field):
     if field is None:
         return None
     elif isinstance(field, dict):
-        return field.get('value') or field.get('name') or field.get('displayName')
+        return field.get("value") or field.get("name") or field.get("displayName")
     elif isinstance(field, list):
-        return ', '.join([str(item.get('value') or item.get('name') or item.get('displayName') if isinstance(item, dict) else item) for item in field])
+        return ", ".join(
+            [
+                str(
+                    item.get("value") or item.get("name") or item.get("displayName")
+                    if isinstance(item, dict)
+                    else item
+                )
+                for item in field
+            ]
+        )
     elif isinstance(field, bool):
         return str(field)
     else:
@@ -583,13 +667,17 @@ def resolve_account_id_display_name(account_id, auth, cache):
 
     try:
         user_url = "https://consoleconnect.atlassian.net/rest/api/3/user"
-        response = requests.get(user_url, auth=auth, params={"accountId": account_id}, timeout=20)
+        response = requests.get(
+            user_url, auth=auth, params={"accountId": account_id}, timeout=20
+        )
         if response.status_code == 429:
-            retry_after = int(response.headers.get('Retry-After', 30) or 30)
+            retry_after = int(response.headers.get("Retry-After", 30) or 30)
             time.sleep(retry_after + random.uniform(0, JITTER_MAX_SECONDS))
-            response = requests.get(user_url, auth=auth, params={"accountId": account_id}, timeout=20)
+            response = requests.get(
+                user_url, auth=auth, params={"accountId": account_id}, timeout=20
+            )
         response.raise_for_status()
-        display_name = (response.json() or {}).get('displayName')
+        display_name = (response.json() or {}).get("displayName")
         cache[account_id] = display_name
         return display_name
     except Exception:
@@ -611,8 +699,8 @@ def extract_user_names_and_ids(field_value, auth=None, cache=None):
         display_name = None
 
         if isinstance(item, dict):
-            account_id = item.get('accountId') or item.get('id')
-            display_name = item.get('displayName') or item.get('name')
+            account_id = item.get("accountId") or item.get("id")
+            display_name = item.get("displayName") or item.get("name")
         elif isinstance(item, str):
             text = item.strip()
             if not text:
@@ -628,8 +716,8 @@ def extract_user_names_and_ids(field_value, auth=None, cache=None):
         if display_name and display_name not in names:
             names.append(display_name)
 
-    names_csv = ', '.join(names) if names else None
-    ids_csv = ', '.join(ids) if ids else None
+    names_csv = ", ".join(names) if names else None
+    ids_csv = ", ".join(ids) if ids else None
     return names_csv, ids_csv
 
 
@@ -662,38 +750,48 @@ def extract_issue_links(issuelinks):
     if not issuelinks or not isinstance(issuelinks, list):
         return None
     links = []
+
     def get_status(issue):
         if not issue:
             return None
-        fields = issue.get('fields', {})
-        status = fields.get('status', {})
-        return status.get('name')
+        fields = issue.get("fields", {})
+        status = fields.get("status", {})
+        return status.get("name")
+
     for link in issuelinks:
-        outward = link.get('outwardIssue')
-        inward = link.get('inwardIssue')
+        outward = link.get("outwardIssue")
+        inward = link.get("inwardIssue")
         if outward:
-            key = outward.get('key')
+            key = outward.get("key")
             status = get_status(outward)
             if key:
                 if status:
-                    links.append(f"{link.get('type', {}).get('outward', 'links to')}: {key} [{status}]")
+                    links.append(
+                        f"{link.get('type', {}).get('outward', 'links to')}: {key} [{status}]"
+                    )
                 else:
-                    links.append(f"{link.get('type', {}).get('outward', 'links to')}: {key}")
+                    links.append(
+                        f"{link.get('type', {}).get('outward', 'links to')}: {key}"
+                    )
         if inward:
-            key = inward.get('key')
+            key = inward.get("key")
             status = get_status(inward)
             if key:
                 if status:
-                    links.append(f"{link.get('type', {}).get('inward', 'links to')}: {key} [{status}]")
+                    links.append(
+                        f"{link.get('type', {}).get('inward', 'links to')}: {key} [{status}]"
+                    )
                 else:
-                    links.append(f"{link.get('type', {}).get('inward', 'links to')}: {key}")
-    return ', '.join(links) if links else None
+                    links.append(
+                        f"{link.get('type', {}).get('inward', 'links to')}: {key}"
+                    )
+    return ", ".join(links) if links else None
 
 
 def extract_incident_numbers(remedy_ticket_number):
     if not remedy_ticket_number:
         return []
-    return re.findall(r'INC\d{9,}', str(remedy_ticket_number))
+    return re.findall(r"INC\d{9,}", str(remedy_ticket_number))
 
 
 def extract_sla_metrics(sla_field):
@@ -701,8 +799,8 @@ def extract_sla_metrics(sla_field):
     if not isinstance(sla_field, dict):
         return None, None, None, None
 
-    ongoing = sla_field.get('ongoingCycle')
-    completed_cycles = sla_field.get('completedCycles', [])
+    ongoing = sla_field.get("ongoingCycle")
+    completed_cycles = sla_field.get("completedCycles", [])
 
     if ongoing:
         cycle = ongoing
@@ -713,9 +811,13 @@ def extract_sla_metrics(sla_field):
     else:
         return None, None, None, 0
 
-    elapsed_millis = cycle.get('elapsedTime', {}).get('millis') if isinstance(cycle.get('elapsedTime'), dict) else None
-    goal_millis = cycle.get('goalDuration', {}).get('millis')
-    breached = cycle.get('breached', False)
+    elapsed_millis = (
+        cycle.get("elapsedTime", {}).get("millis")
+        if isinstance(cycle.get("elapsedTime"), dict)
+        else None
+    )
+    goal_millis = cycle.get("goalDuration", {}).get("millis")
+    breached = cycle.get("breached", False)
 
     elapsed = elapsed_millis / 3600000.0 if elapsed_millis is not None else None
     goal = goal_millis / 3600000.0 if goal_millis else None
@@ -723,14 +825,16 @@ def extract_sla_metrics(sla_field):
     return elapsed, goal, breached, num_cycles
 
 
-def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name, auth=None, account_name_cache=None):
+def build_ticket_row(
+    issue, sr_ref_jira_id, sr_ref_bq_name, auth=None, account_name_cache=None
+):
     if not issue:
         return None
-    key = issue.get('key')
+    key = issue.get("key")
     if not key or not str(key).strip():
         return None
-    fields = issue.get('fields', {})
-    labels = [label.strip() for label in fields.get('labels', []) if str(label).strip()]
+    fields = issue.get("fields", {})
+    labels = [label.strip() for label in fields.get("labels", []) if str(label).strip()]
     verifier_name, verifier_id = extract_user_names_and_ids(
         fields.get(VERIFIER_JIRA_ID),
         auth=auth,
@@ -743,25 +847,29 @@ def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name, auth=None, account_n
     )
 
     sla_fields = {
-        'TimeToFirstResponse': fields.get(TIME_TO_FIRST_RESPONSE_JIRA_ID),
-        'TimeToResolve': fields.get(TIME_TO_RESOLVE_JIRA_ID),
-        'TimeToResolution': fields.get(TIME_TO_RESOLUTION_JIRA_ID),
-        'TimeToApproveNormalChange': fields.get(TIME_TO_APPROVE_NORMAL_CHANGE_JIRA_ID),
-        'ProlongCase': fields.get(PROLONG_CASE_JIRA_ID),
-        'TimeToCloseAfterResolution': fields.get(TIME_TO_CLOSE_AFTER_RESOLUTION_JIRA_ID),
-        'ITHD_TimeToFirstResponse': fields.get(TIME_TO_FIRST_RESPONSE_JIRA_ID),
-        'ITHD_TimeToResolution': fields.get(TIME_TO_RESOLUTION_JIRA_ID),
-        'ITHD_ISMSIncidentResponse': fields.get(ITHD_ISMS_INCIDENT_RESPONSE_JIRA_ID),
-        'ITHD_ISMSIncidentResolution': fields.get(ITHD_ISMS_INCIDENT_RESOLUTION_JIRA_ID),
+        "TimeToFirstResponse": fields.get(TIME_TO_FIRST_RESPONSE_JIRA_ID),
+        "TimeToResolve": fields.get(TIME_TO_RESOLVE_JIRA_ID),
+        "TimeToResolution": fields.get(TIME_TO_RESOLUTION_JIRA_ID),
+        "TimeToApproveNormalChange": fields.get(TIME_TO_APPROVE_NORMAL_CHANGE_JIRA_ID),
+        "ProlongCase": fields.get(PROLONG_CASE_JIRA_ID),
+        "TimeToCloseAfterResolution": fields.get(
+            TIME_TO_CLOSE_AFTER_RESOLUTION_JIRA_ID
+        ),
+        "ITHD_TimeToFirstResponse": fields.get(TIME_TO_FIRST_RESPONSE_JIRA_ID),
+        "ITHD_TimeToResolution": fields.get(TIME_TO_RESOLUTION_JIRA_ID),
+        "ITHD_ISMSIncidentResponse": fields.get(ITHD_ISMS_INCIDENT_RESPONSE_JIRA_ID),
+        "ITHD_ISMSIncidentResolution": fields.get(
+            ITHD_ISMS_INCIDENT_RESOLUTION_JIRA_ID
+        ),
     }
 
     sla_metrics = {}
     for k, v in sla_fields.items():
         elapsed, goal, breached, cycles = extract_sla_metrics(v)
-        sla_metrics[f'{k}_Elapsed'] = elapsed
-        sla_metrics[f'{k}_Goal'] = goal
-        sla_metrics[f'{k}_Breached'] = breached
-        sla_metrics[f'{k}_Cycles'] = cycles
+        sla_metrics[f"{k}_Elapsed"] = elapsed
+        sla_metrics[f"{k}_Goal"] = goal
+        sla_metrics[f"{k}_Breached"] = breached
+        sla_metrics[f"{k}_Cycles"] = cycles
 
     story_points = None
     raw_story_points = get_field_value(fields.get(STORY_POINTS_JIRA_ID))
@@ -772,26 +880,40 @@ def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name, auth=None, account_n
             story_points = None
 
     row = {
-        "T": fields.get('issuetype', {}).get('name'),
-        "Project": fields.get('project', {}).get('name'),
+        "T": fields.get("issuetype", {}).get("name"),
+        "Project": fields.get("project", {}).get("name"),
         "Key": key,
-        "IssueId": issue.get('id'),
-        "Summary": fields.get('summary'),
-        "Status": fields.get('status', {}).get('name'),
-        "Created": convert_timestamp(fields.get('created')),
-        "Updated": convert_timestamp(fields.get('updated')),
-        "Resolved": convert_timestamp(fields.get('resolutiondate')),
-        "DueDate": fields.get('duedate'),
-        "Creator": get_field_value(fields.get('creator')),
-        "Reporter": get_field_value(fields.get('reporter')),
-        "ReporterId": (fields.get('reporter') or {}).get('accountId') if isinstance(fields.get('reporter'), dict) else None,
-        "Assignee": get_field_value(fields.get('assignee')),
-        "AssigneeId": (fields.get('assignee') or {}).get('accountId') if isinstance(fields.get('assignee'), dict) else None,
-        "Component": ', '.join([get_field_value(component) for component in fields.get('components', [])]) if fields.get('components') else None,
+        "IssueId": issue.get("id"),
+        "Summary": fields.get("summary"),
+        "Status": fields.get("status", {}).get("name"),
+        "Created": convert_timestamp(fields.get("created")),
+        "Updated": convert_timestamp(fields.get("updated")),
+        "Resolved": convert_timestamp(fields.get("resolutiondate")),
+        "DueDate": fields.get("duedate"),
+        "Creator": get_field_value(fields.get("creator")),
+        "Reporter": get_field_value(fields.get("reporter")),
+        "ReporterId": (fields.get("reporter") or {}).get("accountId")
+        if isinstance(fields.get("reporter"), dict)
+        else None,
+        "Assignee": get_field_value(fields.get("assignee")),
+        "AssigneeId": (fields.get("assignee") or {}).get("accountId")
+        if isinstance(fields.get("assignee"), dict)
+        else None,
+        "Component": ", ".join(
+            [get_field_value(component) for component in fields.get("components", [])]
+        )
+        if fields.get("components")
+        else None,
         "FeatureTeam": get_field_value(fields.get(FEATURE_TEAM_JIRA_ID)),
-        "MaintenanceWindowStart": convert_timestamp(fields.get(MAINTENANCE_WINDOW_START_JIRA_ID)),
-        "MaintenanceWindowEnd": convert_timestamp(fields.get(MAINTENANCE_WINDOW_END_JIRA_ID)),
-        "KnowledgeManagement": get_field_value(fields.get(KNOWLEDGE_MANAGEMENT_JIRA_ID)),
+        "MaintenanceWindowStart": convert_timestamp(
+            fields.get(MAINTENANCE_WINDOW_START_JIRA_ID)
+        ),
+        "MaintenanceWindowEnd": convert_timestamp(
+            fields.get(MAINTENANCE_WINDOW_END_JIRA_ID)
+        ),
+        "KnowledgeManagement": get_field_value(
+            fields.get(KNOWLEDGE_MANAGEMENT_JIRA_ID)
+        ),
         "DirectoryInternal": get_field_value(fields.get(DIRECTORY_INTERNAL_JIRA_ID)),
         "ConfluenceURL": get_field_value(fields.get(CONFLUENCE_URL_JIRA_ID)),
         "IncludeChildPages": get_field_value(fields.get(INCLUDE_CHILD_PAGES_JIRA_ID)),
@@ -799,13 +921,22 @@ def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name, auth=None, account_n
         "VerifierId": verifier_id,
         "Approvers": approver_names,
         "ApproversId": approver_ids,
-        "RemedyTicketNumber": ', '.join(extract_incident_numbers(get_field_value(fields.get(REMEDY_TICKET_MIGRATED_JIRA_ID)) or get_field_value(fields.get('customfield_10088')))) or get_field_value(fields.get(REMEDY_TICKET_MIGRATED_JIRA_ID)) or get_field_value(fields.get('customfield_10088')),
-        "Links": extract_issue_links(fields.get('issuelinks')),
-        "Description": extract_adf_text(fields.get('description')),
-        "Attachment": json.dumps(fields.get('attachment')) if fields.get('attachment') else None,
+        "RemedyTicketNumber": ", ".join(
+            extract_incident_numbers(
+                get_field_value(fields.get(REMEDY_TICKET_MIGRATED_JIRA_ID))
+                or get_field_value(fields.get("customfield_10088"))
+            )
+        )
+        or get_field_value(fields.get(REMEDY_TICKET_MIGRATED_JIRA_ID))
+        or get_field_value(fields.get("customfield_10088")),
+        "Links": extract_issue_links(fields.get("issuelinks")),
+        "Description": extract_adf_text(fields.get("description")),
+        "Attachment": json.dumps(fields.get("attachment"))
+        if fields.get("attachment")
+        else None,
         sr_ref_bq_name: get_field_value(fields.get(sr_ref_jira_id)),
-        "AssociatedTeam": get_field_value(fields.get('customfield_11134')),
-        "TransactionStatus": get_field_value(fields.get('customfield_11170')),
+        "AssociatedTeam": get_field_value(fields.get("customfield_11134")),
+        "TransactionStatus": get_field_value(fields.get("customfield_11170")),
         "Service": get_field_value(fields.get(SERVICE_JIRA_ID)),
         "Origin": get_field_value(fields.get(ORIGIN_JIRA_ID)),
         "RootCause": get_field_value(fields.get(ROOT_CAUSE_JIRA_ID)),
@@ -813,52 +944,96 @@ def build_ticket_row(issue, sr_ref_jira_id, sr_ref_bq_name, auth=None, account_n
         "Symptoms": get_field_value(fields.get(SYMPTOMS_JIRA_ID)),
         "ATTCK": get_field_value(fields.get(ATTACK_JIRA_ID)),
         "StoryPoints": story_points,
-        "TimeSpentSeconds": fields.get('timetracking', {}).get('timeSpentSeconds') if isinstance(fields.get('timetracking'), dict) else fields.get('timespent'),
-        "TimeToFirstResponse_Elapsed_hrs": sla_metrics['TimeToFirstResponse_Elapsed'],
-        "TimeToFirstResponse_Goal_hrs": sla_metrics['TimeToFirstResponse_Goal'],
-        "TimeToFirstResponse_Breached": sla_metrics['TimeToFirstResponse_Breached'],
-        "TimeToFirstResponse_Cycles": sla_metrics['TimeToFirstResponse_Cycles'],
-        "TimeToResolve_Elapsed_hrs": sla_metrics['TimeToResolve_Elapsed'],
-        "TimeToResolve_Goal_hrs": sla_metrics['TimeToResolve_Goal'],
-        "TimeToResolve_Breached": sla_metrics['TimeToResolve_Breached'],
-        "TimeToResolve_Cycles": sla_metrics['TimeToResolve_Cycles'],
-        "TimeToResolution_Elapsed_hrs": sla_metrics['TimeToResolution_Elapsed'],
-        "TimeToResolution_Goal_hrs": sla_metrics['TimeToResolution_Goal'],
-        "TimeToResolution_Breached": sla_metrics['TimeToResolution_Breached'],
-        "TimeToResolution_Cycles": sla_metrics['TimeToResolution_Cycles'],
-        "TimeToApproveNormalChange_Elapsed_hrs": sla_metrics['TimeToApproveNormalChange_Elapsed'],
-        "TimeToApproveNormalChange_Goal_hrs": sla_metrics['TimeToApproveNormalChange_Goal'],
-        "TimeToApproveNormalChange_Breached": sla_metrics['TimeToApproveNormalChange_Breached'],
-        "TimeToApproveNormalChange_Cycles": sla_metrics['TimeToApproveNormalChange_Cycles'],
-        "ProlongCase_Elapsed_hrs": sla_metrics['ProlongCase_Elapsed'],
-        "ProlongCase_Goal_hrs": sla_metrics['ProlongCase_Goal'],
-        "ProlongCase_Breached": sla_metrics['ProlongCase_Breached'],
-        "ProlongCase_Cycles": sla_metrics['ProlongCase_Cycles'],
-        "TimeToCloseAfterResolution_Elapsed_hrs": sla_metrics['TimeToCloseAfterResolution_Elapsed'],
-        "TimeToCloseAfterResolution_Goal_hrs": sla_metrics['TimeToCloseAfterResolution_Goal'],
-        "TimeToCloseAfterResolution_Breached": sla_metrics['TimeToCloseAfterResolution_Breached'],
-        "TimeToCloseAfterResolution_Cycles": sla_metrics['TimeToCloseAfterResolution_Cycles'],
-        "ITHD_TimeToFirstResponse_Elapsed_hrs": sla_metrics['ITHD_TimeToFirstResponse_Elapsed'],
-        "ITHD_TimeToFirstResponse_Goal_hrs": sla_metrics['ITHD_TimeToFirstResponse_Goal'],
-        "ITHD_TimeToFirstResponse_Breached": sla_metrics['ITHD_TimeToFirstResponse_Breached'],
-        "ITHD_TimeToFirstResponse_Cycles": sla_metrics['ITHD_TimeToFirstResponse_Cycles'],
-        "ITHD_TimeToResolution_Elapsed_hrs": sla_metrics['ITHD_TimeToResolution_Elapsed'],
-        "ITHD_TimeToResolution_Goal_hrs": sla_metrics['ITHD_TimeToResolution_Goal'],
-        "ITHD_TimeToResolution_Breached": sla_metrics['ITHD_TimeToResolution_Breached'],
-        "ITHD_TimeToResolution_Cycles": sla_metrics['ITHD_TimeToResolution_Cycles'],
-        "ITHD_ISMSIncidentResponse_Elapsed_hrs": sla_metrics['ITHD_ISMSIncidentResponse_Elapsed'],
-        "ITHD_ISMSIncidentResponse_Goal_hrs": sla_metrics['ITHD_ISMSIncidentResponse_Goal'],
-        "ITHD_ISMSIncidentResponse_Breached": sla_metrics['ITHD_ISMSIncidentResponse_Breached'],
-        "ITHD_ISMSIncidentResponse_Cycles": sla_metrics['ITHD_ISMSIncidentResponse_Cycles'],
-        "ITHD_ISMSIncidentResolution_Elapsed_hrs": sla_metrics['ITHD_ISMSIncidentResolution_Elapsed'],
-        "ITHD_ISMSIncidentResolution_Goal_hrs": sla_metrics['ITHD_ISMSIncidentResolution_Goal'],
-        "ITHD_ISMSIncidentResolution_Breached": sla_metrics['ITHD_ISMSIncidentResolution_Breached'],
-        "ITHD_ISMSIncidentResolution_Cycles": sla_metrics['ITHD_ISMSIncidentResolution_Cycles'],
+        "TimeSpentSeconds": fields.get("timetracking", {}).get("timeSpentSeconds")
+        if isinstance(fields.get("timetracking"), dict)
+        else fields.get("timespent"),
+        "TimeToFirstResponse_Elapsed_hrs": sla_metrics["TimeToFirstResponse_Elapsed"],
+        "TimeToFirstResponse_Goal_hrs": sla_metrics["TimeToFirstResponse_Goal"],
+        "TimeToFirstResponse_Breached": sla_metrics["TimeToFirstResponse_Breached"],
+        "TimeToFirstResponse_Cycles": sla_metrics["TimeToFirstResponse_Cycles"],
+        "TimeToResolve_Elapsed_hrs": sla_metrics["TimeToResolve_Elapsed"],
+        "TimeToResolve_Goal_hrs": sla_metrics["TimeToResolve_Goal"],
+        "TimeToResolve_Breached": sla_metrics["TimeToResolve_Breached"],
+        "TimeToResolve_Cycles": sla_metrics["TimeToResolve_Cycles"],
+        "TimeToResolution_Elapsed_hrs": sla_metrics["TimeToResolution_Elapsed"],
+        "TimeToResolution_Goal_hrs": sla_metrics["TimeToResolution_Goal"],
+        "TimeToResolution_Breached": sla_metrics["TimeToResolution_Breached"],
+        "TimeToResolution_Cycles": sla_metrics["TimeToResolution_Cycles"],
+        "TimeToApproveNormalChange_Elapsed_hrs": sla_metrics[
+            "TimeToApproveNormalChange_Elapsed"
+        ],
+        "TimeToApproveNormalChange_Goal_hrs": sla_metrics[
+            "TimeToApproveNormalChange_Goal"
+        ],
+        "TimeToApproveNormalChange_Breached": sla_metrics[
+            "TimeToApproveNormalChange_Breached"
+        ],
+        "TimeToApproveNormalChange_Cycles": sla_metrics[
+            "TimeToApproveNormalChange_Cycles"
+        ],
+        "ProlongCase_Elapsed_hrs": sla_metrics["ProlongCase_Elapsed"],
+        "ProlongCase_Goal_hrs": sla_metrics["ProlongCase_Goal"],
+        "ProlongCase_Breached": sla_metrics["ProlongCase_Breached"],
+        "ProlongCase_Cycles": sla_metrics["ProlongCase_Cycles"],
+        "TimeToCloseAfterResolution_Elapsed_hrs": sla_metrics[
+            "TimeToCloseAfterResolution_Elapsed"
+        ],
+        "TimeToCloseAfterResolution_Goal_hrs": sla_metrics[
+            "TimeToCloseAfterResolution_Goal"
+        ],
+        "TimeToCloseAfterResolution_Breached": sla_metrics[
+            "TimeToCloseAfterResolution_Breached"
+        ],
+        "TimeToCloseAfterResolution_Cycles": sla_metrics[
+            "TimeToCloseAfterResolution_Cycles"
+        ],
+        "ITHD_TimeToFirstResponse_Elapsed_hrs": sla_metrics[
+            "ITHD_TimeToFirstResponse_Elapsed"
+        ],
+        "ITHD_TimeToFirstResponse_Goal_hrs": sla_metrics[
+            "ITHD_TimeToFirstResponse_Goal"
+        ],
+        "ITHD_TimeToFirstResponse_Breached": sla_metrics[
+            "ITHD_TimeToFirstResponse_Breached"
+        ],
+        "ITHD_TimeToFirstResponse_Cycles": sla_metrics[
+            "ITHD_TimeToFirstResponse_Cycles"
+        ],
+        "ITHD_TimeToResolution_Elapsed_hrs": sla_metrics[
+            "ITHD_TimeToResolution_Elapsed"
+        ],
+        "ITHD_TimeToResolution_Goal_hrs": sla_metrics["ITHD_TimeToResolution_Goal"],
+        "ITHD_TimeToResolution_Breached": sla_metrics["ITHD_TimeToResolution_Breached"],
+        "ITHD_TimeToResolution_Cycles": sla_metrics["ITHD_TimeToResolution_Cycles"],
+        "ITHD_ISMSIncidentResponse_Elapsed_hrs": sla_metrics[
+            "ITHD_ISMSIncidentResponse_Elapsed"
+        ],
+        "ITHD_ISMSIncidentResponse_Goal_hrs": sla_metrics[
+            "ITHD_ISMSIncidentResponse_Goal"
+        ],
+        "ITHD_ISMSIncidentResponse_Breached": sla_metrics[
+            "ITHD_ISMSIncidentResponse_Breached"
+        ],
+        "ITHD_ISMSIncidentResponse_Cycles": sla_metrics[
+            "ITHD_ISMSIncidentResponse_Cycles"
+        ],
+        "ITHD_ISMSIncidentResolution_Elapsed_hrs": sla_metrics[
+            "ITHD_ISMSIncidentResolution_Elapsed"
+        ],
+        "ITHD_ISMSIncidentResolution_Goal_hrs": sla_metrics[
+            "ITHD_ISMSIncidentResolution_Goal"
+        ],
+        "ITHD_ISMSIncidentResolution_Breached": sla_metrics[
+            "ITHD_ISMSIncidentResolution_Breached"
+        ],
+        "ITHD_ISMSIncidentResolution_Cycles": sla_metrics[
+            "ITHD_ISMSIncidentResolution_Cycles"
+        ],
         "ITHD_Resolution": get_field_value(fields.get(ITHD_RESOLUTION_JIRA_ID)),
         "AppSupEscalation": get_field_value(fields.get(APP_SUP_ESCALATION_JIRA_ID)),
-        "Priority": get_field_value(fields.get('priority')),
-        "Resolution": get_field_value(fields.get('resolution')),
-        "SyncTime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+        "Priority": get_field_value(fields.get("priority")),
+        "Resolution": get_field_value(fields.get("resolution")),
+        "SyncTime": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
     if labels:
@@ -872,18 +1047,22 @@ def fetch_and_sync_jira_tickets_nightly():
     if config is None:
         return
 
-    jira_url = 'https://consoleconnect.atlassian.net/rest/api/3/search/jql'
-    username = config.get('jira_user') or config.get('jira_user_email') or 'jjkli@consoleconnect.com'
-    api_token = config.get('jira_api_token')
+    jira_url = "https://consoleconnect.atlassian.net/rest/api/3/search/jql"
+    username = (
+        config.get("jira_user")
+        or config.get("jira_user_email")
+        or "jjkli@consoleconnect.com"
+    )
+    api_token = config.get("jira_api_token")
 
-    SR_REF_JIRA_ID = 'customfield_10382'
-    SR_REF_BQ_NAME = 'SR_Ref'
-    ASSOCIATED_TEAM_JIRA_ID = 'customfield_11134'
-    TRANSACTION_STATUS_JIRA_ID = 'customfield_11170'
+    SR_REF_JIRA_ID = "customfield_10382"
+    SR_REF_BQ_NAME = "SR_Ref"
+    ASSOCIATED_TEAM_JIRA_ID = "customfield_11134"
+    TRANSACTION_STATUS_JIRA_ID = "customfield_11170"
 
-    table_id = 'JiraTickets'
-    temp_table_id = 'JiraTickets_temp'
-    progress_table_id = 'JiraTickets_progress'
+    table_id = "JiraTickets"
+    temp_table_id = "JiraTickets_temp"
+    progress_table_id = "JiraTickets_progress"
     pipeline_name = "GCP - JiraTicketsNightly"
 
     run_id = str(uuid.uuid4())
@@ -902,18 +1081,25 @@ def fetch_and_sync_jira_tickets_nightly():
 
         # Write to UAT BigQuery
         client = bigquery.Client(project="pccw-internal-virt-agent-uat")
-        dataset_id = 'GSO'
+        dataset_id = "GSO"
 
-        log_pipeline_run(client, pipeline_name=pipeline_name, run_id=run_id, level="INFO", message="Pipeline started", status="RUNNING")
+        log_pipeline_run(
+            client,
+            pipeline_name=pipeline_name,
+            run_id=run_id,
+            level="INFO",
+            message="Pipeline started",
+            status="RUNNING",
+        )
 
         ensure_progress_table(client, dataset_id, progress_table_id)
         projects = DEFAULT_PROJECTS
-        env_single = os.environ.get('SINGLE_PROJECT') or os.environ.get('PROJECT')
-        env_projects = os.environ.get('PROJECTS')
+        env_single = os.environ.get("SINGLE_PROJECT") or os.environ.get("PROJECT")
+        env_projects = os.environ.get("PROJECTS")
         if env_single:
             projects = [env_single.strip()]
         elif env_projects:
-            projects = [p.strip() for p in env_projects.split(',') if p.strip()]
+            projects = [p.strip() for p in env_projects.split(",") if p.strip()]
         logging.info(f"Projects for nightly run: {projects}")
 
         # Schema aligned with hourly tickets
@@ -937,7 +1123,9 @@ def fetch_and_sync_jira_tickets_nightly():
             bigquery.SchemaField("AssigneeId", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Component", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("FeatureTeam", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("MaintenanceWindowStart", "TIMESTAMP", mode="NULLABLE"),
+            bigquery.SchemaField(
+                "MaintenanceWindowStart", "TIMESTAMP", mode="NULLABLE"
+            ),
             bigquery.SchemaField("MaintenanceWindowEnd", "TIMESTAMP", mode="NULLABLE"),
             bigquery.SchemaField("KnowledgeManagement", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("DirectoryInternal", "STRING", mode="NULLABLE"),
@@ -963,46 +1151,108 @@ def fetch_and_sync_jira_tickets_nightly():
             bigquery.SchemaField("ATTCK", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("StoryPoints", "INT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeSpentSeconds", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToFirstResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToFirstResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToFirstResponse_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToResolve_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField(
+                "TimeToFirstResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToFirstResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToFirstResponse_Cycles", "INT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToResolve_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
             bigquery.SchemaField("TimeToResolve_Goal_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("TimeToResolve_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("TimeToResolve_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
+            bigquery.SchemaField(
+                "TimeToResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
             bigquery.SchemaField("TimeToResolution_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("TimeToResolution_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToApproveNormalChange_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToApproveNormalChange_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToApproveNormalChange_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToApproveNormalChange_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField(
+                "TimeToApproveNormalChange_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToApproveNormalChange_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToApproveNormalChange_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToApproveNormalChange_Cycles", "INT64", mode="NULLABLE"
+            ),
             bigquery.SchemaField("ProlongCase_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("ProlongCase_Goal_hrs", "FLOAT64", mode="NULLABLE"),
             bigquery.SchemaField("ProlongCase_Breached", "BOOL", mode="NULLABLE"),
             bigquery.SchemaField("ProlongCase_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToCloseAfterResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToCloseAfterResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToCloseAfterResolution_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("TimeToCloseAfterResolution_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToFirstResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToFirstResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToFirstResponse_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToResolution_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_TimeToResolution_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResponse_Cycles", "INT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Breached", "BOOL", mode="NULLABLE"),
-            bigquery.SchemaField("ITHD_ISMSIncidentResolution_Cycles", "INT64", mode="NULLABLE"),
+            bigquery.SchemaField(
+                "TimeToCloseAfterResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToCloseAfterResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToCloseAfterResolution_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "TimeToCloseAfterResolution_Cycles", "INT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToFirstResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToFirstResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToFirstResponse_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToFirstResponse_Cycles", "INT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToResolution_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_TimeToResolution_Cycles", "INT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResponse_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResponse_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResponse_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResponse_Cycles", "INT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResolution_Elapsed_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResolution_Goal_hrs", "FLOAT64", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResolution_Breached", "BOOL", mode="NULLABLE"
+            ),
+            bigquery.SchemaField(
+                "ITHD_ISMSIncidentResolution_Cycles", "INT64", mode="NULLABLE"
+            ),
             bigquery.SchemaField("ITHD_Resolution", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("AppSupEscalation", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("SyncTime", "TIMESTAMP", mode="NULLABLE"),
@@ -1011,29 +1261,31 @@ def fetch_and_sync_jira_tickets_nightly():
         try:
             ensure_soft_delete_columns(client, dataset_id, table_id)
         except Exception as _schema_err:
-            logging.warning(f"ensure_soft_delete_columns non-fatal error (columns likely exist): {_schema_err}")
+            logging.warning(
+                f"ensure_soft_delete_columns non-fatal error (columns likely exist): {_schema_err}"
+            )
 
         ticket_search_fields = [
-            'key',
-            'issuetype',
-            'project',
-            'summary',
-            'status',
-            'created',
-            'updated',
-            'resolutiondate',
-            'duedate',
-            'creator',
-            'reporter',
-            'assignee',
-            'components',
-            'priority',
-            'resolution',
-            'issuelinks',
-            'description',
-            'labels',
-            'attachment',
-            'customfield_10088',
+            "key",
+            "issuetype",
+            "project",
+            "summary",
+            "status",
+            "created",
+            "updated",
+            "resolutiondate",
+            "duedate",
+            "creator",
+            "reporter",
+            "assignee",
+            "components",
+            "priority",
+            "resolution",
+            "issuelinks",
+            "description",
+            "labels",
+            "attachment",
+            "customfield_10088",
             SR_REF_JIRA_ID,
             ASSOCIATED_TEAM_JIRA_ID,
             TRANSACTION_STATUS_JIRA_ID,
@@ -1064,38 +1316,49 @@ def fetch_and_sync_jira_tickets_nightly():
             INCLUDE_CHILD_PAGES_JIRA_ID,
             VERIFIER_JIRA_ID,
             APPROVERS_JIRA_ID,
-            'timetracking',
+            "timetracking",
         ]
 
         account_name_cache = {}
         auth = (username, api_token)
 
         def search_issues(jql: str, label: str, fields):
-            headers_local = {'Accept': 'application/json'}
+            headers_local = {"Accept": "application/json"}
             auth_local = (username, api_token)
             start_at = 0
             max_results = 100
             all_issues = []
             had_error = False
-            fields_param = ','.join(fields)
+            fields_param = ",".join(fields)
             attempts = 0
 
             while True:
                 try:
-                    params_local = {'jql': jql, 'startAt': start_at, 'maxResults': max_results, 'fields': fields_param}
-                    resp = requests.get(jira_url, headers=headers_local, auth=auth_local, params=params_local, timeout=30)
+                    params_local = {
+                        "jql": jql,
+                        "startAt": start_at,
+                        "maxResults": max_results,
+                        "fields": fields_param,
+                    }
+                    resp = requests.get(
+                        jira_url,
+                        headers=headers_local,
+                        auth=auth_local,
+                        params=params_local,
+                        timeout=30,
+                    )
                     if resp.status_code == 429:
-                        ra = int(resp.headers.get('Retry-After', 30) or 30)
+                        ra = int(resp.headers.get("Retry-After", 30) or 30)
                         logging.warning(f"429 {label} search; sleeping {ra}s")
                         time.sleep(ra + random.uniform(0, JITTER_MAX_SECONDS))
                         continue
                     resp.raise_for_status()
                     data_local = resp.json()
-                    issues_local = data_local.get('issues', [])
-                    total = data_local.get('total', 0)
+                    issues_local = data_local.get("issues", [])
+                    total = data_local.get("total", 0)
                     all_issues.extend(issues_local)
                     start_at += len(issues_local)
-                    attempts = 0 # Reset attempts on success
+                    attempts = 0  # Reset attempts on success
                     if start_at >= total or not issues_local:
                         break
                 except Exception as e:
@@ -1104,16 +1367,18 @@ def fetch_and_sync_jira_tickets_nightly():
                         had_error = True
                         logging.error(f"{label} pass error: {e}")
                         break
-                    back = min(60, 2 ** attempts) + random.uniform(0, JITTER_MAX_SECONDS)
-                    logging.warning(f"{label} pass error: {e}. Retrying ({attempts}/5) after {back:.1f}s")
+                    back = min(60, 2**attempts) + random.uniform(0, JITTER_MAX_SECONDS)
+                    logging.warning(
+                        f"{label} pass error: {e}. Retrying ({attempts}/5) after {back:.1f}s"
+                    )
                     time.sleep(back)
 
             logging.info(f"{label} pass fetched {len(all_issues)} issues")
             return all_issues, had_error
 
         def search_issue_keys(jql: str, label: str):
-            issues, had_error = search_issues(jql, label, ['key'])
-            keys = [issue.get('key') for issue in issues if issue.get('key')]
+            issues, had_error = search_issues(jql, label, ["key"])
+            keys = [issue.get("key") for issue in issues if issue.get("key")]
             logging.info(f"{label} pass fetched {len(keys)} issue keys")
             return keys, had_error
 
@@ -1123,14 +1388,20 @@ def fetch_and_sync_jira_tickets_nightly():
             rows = []
             chunk_size = 50
             for index in range(0, len(issue_keys), chunk_size):
-                key_chunk = issue_keys[index:index + chunk_size]
-                keys_jql = ', '.join([f'"{key}"' for key in key_chunk if key])
+                key_chunk = issue_keys[index : index + chunk_size]
+                keys_jql = ", ".join([f'"{key}"' for key in key_chunk if key])
                 if not keys_jql:
                     continue
                 chunk_jql = f"key in ({keys_jql})"
-                issues, had_error = search_issues(chunk_jql, f"{label}:chunk{index // chunk_size + 1}", ticket_search_fields)
+                issues, had_error = search_issues(
+                    chunk_jql,
+                    f"{label}:chunk{index // chunk_size + 1}",
+                    ticket_search_fields,
+                )
                 if had_error:
-                    logging.warning(f"{label} bulk fetch had Jira search errors for chunk {index // chunk_size + 1}")
+                    logging.warning(
+                        f"{label} bulk fetch had Jira search errors for chunk {index // chunk_size + 1}"
+                    )
                 for issue in issues:
                     row = build_ticket_row(
                         issue,
@@ -1146,9 +1417,18 @@ def fetch_and_sync_jira_tickets_nightly():
         def time_budget_reached():
             if not run_started:
                 return False
-            return (datetime.now(timezone.utc) - run_started).total_seconds() >= MAX_RUN_SECONDS
+            return (
+                datetime.now(timezone.utc) - run_started
+            ).total_seconds() >= MAX_RUN_SECONDS
 
-        def fetch_and_insert_ticket_rows_batched(issue_keys, label, dataset_id_inner, temp_table_id_inner, bq_schema_inner, stop_checker=None):
+        def fetch_and_insert_ticket_rows_batched(
+            issue_keys,
+            label,
+            dataset_id_inner,
+            temp_table_id_inner,
+            bq_schema_inner,
+            stop_checker=None,
+        ):
             """
             Fetch and insert ticket rows in batches to minimize memory usage.
             Processes keys in CACHE_BATCHED_FETCH_SIZE chunks, fetching and inserting each batch.
@@ -1156,35 +1436,43 @@ def fetch_and_sync_jira_tickets_nightly():
             """
             if not issue_keys:
                 return 0
-            
+
             total_inserted = 0
             batch_start_idx = 0
-            
+
             while batch_start_idx < len(issue_keys):
                 if stop_checker and stop_checker():
                     logging.warning(f"{label}: stopping early due to runtime budget")
                     break
-                batch_end_idx = min(batch_start_idx + CACHE_BATCHED_FETCH_SIZE, len(issue_keys))
+                batch_end_idx = min(
+                    batch_start_idx + CACHE_BATCHED_FETCH_SIZE, len(issue_keys)
+                )
                 batch_keys = issue_keys[batch_start_idx:batch_end_idx]
-                
-                logging.debug(f"{label}: Processing batch {batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1} "
-                            f"({len(batch_keys)} keys, indices {batch_start_idx}-{batch_end_idx})")
-                
+
+                logging.debug(
+                    f"{label}: Processing batch {batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1} "
+                    f"({len(batch_keys)} keys, indices {batch_start_idx}-{batch_end_idx})"
+                )
+
                 # Fetch rows for this batch
                 batch_rows = []
                 chunk_size = 50
                 for chunk_idx in range(0, len(batch_keys), chunk_size):
-                    key_chunk = batch_keys[chunk_idx:chunk_idx + chunk_size]
-                    keys_jql = ', '.join([f'"{key}"' for key in key_chunk if key])
+                    key_chunk = batch_keys[chunk_idx : chunk_idx + chunk_size]
+                    keys_jql = ", ".join([f'"{key}"' for key in key_chunk if key])
                     if not keys_jql:
                         continue
                     chunk_jql = f"key in ({keys_jql})"
-                    issues, had_error = search_issues(chunk_jql, 
-                                                    f"{label}:batch{batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1}"
-                                                    f":chunk{chunk_idx // chunk_size + 1}", 
-                                                    ticket_search_fields)
+                    issues, had_error = search_issues(
+                        chunk_jql,
+                        f"{label}:batch{batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1}"
+                        f":chunk{chunk_idx // chunk_size + 1}",
+                        ticket_search_fields,
+                    )
                     if had_error:
-                        logging.warning(f"{label} had Jira search errors for batch chunk")
+                        logging.warning(
+                            f"{label} had Jira search errors for batch chunk"
+                        )
                     for issue in issues:
                         row = build_ticket_row(
                             issue,
@@ -1195,19 +1483,29 @@ def fetch_and_sync_jira_tickets_nightly():
                         )
                         if row:
                             batch_rows.append(row)
-                
+
                 # Insert this batch
                 if batch_rows:
-                    if insert_rows_resilient(client, dataset_id_inner, temp_table_id_inner, batch_rows, bq_schema_inner):
+                    if insert_rows_resilient(
+                        client,
+                        dataset_id_inner,
+                        temp_table_id_inner,
+                        batch_rows,
+                        bq_schema_inner,
+                    ):
                         total_inserted += len(batch_rows)
-                        logging.info(f"{label}: Inserted {len(batch_rows)} rows from batch "
-                                   f"{batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1}")
+                        logging.info(
+                            f"{label}: Inserted {len(batch_rows)} rows from batch "
+                            f"{batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1}"
+                        )
                     else:
-                        logging.error(f"{label}: Failed to insert batch {batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1}")
+                        logging.error(
+                            f"{label}: Failed to insert batch {batch_start_idx // CACHE_BATCHED_FETCH_SIZE + 1}"
+                        )
                         return total_inserted  # Return what we've inserted so far; let caller retry
-                
+
                 batch_start_idx = batch_end_idx
-            
+
             return total_inserted
 
         # Use single temp table with run_id suffix for all projects
@@ -1217,50 +1515,71 @@ def fetch_and_sync_jira_tickets_nightly():
         try:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
             for tbl in client.list_tables(f"{client.project}.{dataset_id}"):
-                if tbl.table_id.startswith(temp_table_id + '_') and tbl.table_id != temp_table_id_run:
+                if (
+                    tbl.table_id.startswith(temp_table_id + "_")
+                    and tbl.table_id != temp_table_id_run
+                ):
                     tbl_ref = client.get_table(f"{dataset_id}.{tbl.table_id}")
                     if tbl_ref.created.replace(tzinfo=timezone.utc) < cutoff:
                         client.delete_table(tbl_ref, not_found_ok=True)
                         logging.info(f"Cleaned up orphaned temp table: {tbl.table_id}")
         except Exception as _cleanup_ex:
-            logging.warning(f"Orphan temp table cleanup failed (non-fatal): {_cleanup_ex}")
+            logging.warning(
+                f"Orphan temp table cleanup failed (non-fatal): {_cleanup_ex}"
+            )
 
         # Create temp table once for all projects
-        if not create_or_replace_temp_table(client, dataset_id, temp_table_id_run, bq_schema):
+        if not create_or_replace_temp_table(
+            client, dataset_id, temp_table_id_run, bq_schema
+        ):
             logging.error("Failed to create temp table for run.")
             raise Exception("Could not create temp table")
-        if not wait_for_table(client, dataset_id, temp_table_id_run, retries=30, delay=2):
+        if not wait_for_table(
+            client, dataset_id, temp_table_id_run, retries=30, delay=2
+        ):
             logging.error("Temp table not available after extended wait.")
             raise Exception("Temp table not available")
 
         budget_reached = False
-        
+
         for proj in projects:
             if time_budget_reached():
-                logging.warning("Runtime budget reached before next project; ending run early")
+                logging.warning(
+                    "Runtime budget reached before next project; ending run early"
+                )
                 budget_reached = True
                 break
 
             logging.info(f"Starting nightly window selection for project {proj}")
             project_current_keys = set()
-            proj_clause = f'project = "{proj}"' if (' ' in proj or '&' in proj) else f'project = {proj}'
+            proj_clause = (
+                f'project = "{proj}"'
+                if (" " in proj or "&" in proj)
+                else f"project = {proj}"
+            )
             project_filter_sql = get_project_filter_sql(proj)
-            
+
             while True:
                 if time_budget_reached():
-                    logging.warning(f"Runtime budget reached while processing {proj}; ending run early")
+                    logging.warning(
+                        f"Runtime budget reached while processing {proj}; ending run early"
+                    )
                     budget_reached = True
                     break
 
                 ws, we = select_window(client, dataset_id, progress_table_id, proj)
                 if not ws or not we:
-                    logging.info(f"No further window for {proj} (too close to now or complete)")
+                    logging.info(
+                        f"No further window for {proj} (too close to now or complete)"
+                    )
                     break
                 now = datetime.now(timezone.utc)
                 if ws >= now:
                     logging.info(f"Window start >= now; stopping {proj}")
                     break
-                mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'in_progress')
+                mark_progress(
+                    client, dataset_id, progress_table_id, proj, ws, we, "in_progress"
+                )
                 log_pipeline_run(
                     client,
                     pipeline_name=pipeline_name,
@@ -1268,26 +1587,41 @@ def fetch_and_sync_jira_tickets_nightly():
                     level="INFO",
                     message="Window in_progress",
                     status="RUNNING",
-                    window_start=ws.strftime('%Y-%m-%d %H:%M:%S'),
-                    window_end=we.strftime('%Y-%m-%d %H:%M:%S'),
+                    window_start=ws.strftime("%Y-%m-%d %H:%M:%S"),
+                    window_end=we.strftime("%Y-%m-%d %H:%M:%S"),
                 )
 
                 time_clause = f"updated >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND updated < \"{we.strftime('%Y/%m/%d %H:%M')}\""
                 resolved_clause = f"resolutiondate >= \"{ws.strftime('%Y/%m/%d %H:%M')}\" AND resolutiondate < \"{we.strftime('%Y/%m/%d %H:%M')}\""
                 # Combined JQL - single search instead of two
-                jql_combined = f"({proj_clause}) AND (({time_clause}) OR ({resolved_clause}))"
+                jql_combined = (
+                    f"({proj_clause}) AND (({time_clause}) OR ({resolved_clause}))"
+                )
                 logging.info(f"JQL combined window: {jql_combined}")
 
                 rows_to_insert = []
-                combined_issues, combined_had_error = search_issues(jql_combined, 'combined', ticket_search_fields)
+                combined_issues, combined_had_error = search_issues(
+                    jql_combined, "combined", ticket_search_fields
+                )
                 if combined_had_error:
-                    logging.warning(f"Skipping window for project {proj} due to Jira search errors")
-                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'degraded', row_count=0)
+                    logging.warning(
+                        f"Skipping window for project {proj} due to Jira search errors"
+                    )
+                    mark_progress(
+                        client,
+                        dataset_id,
+                        progress_table_id,
+                        proj,
+                        ws,
+                        we,
+                        "degraded",
+                        row_count=0,
+                    )
                     run_had_errors = True
                     break
                 seen_keys = set()
                 for issue in combined_issues:
-                    key = issue.get('key')
+                    key = issue.get("key")
                     if not key or key in seen_keys:
                         continue
                     seen_keys.add(key)
@@ -1304,14 +1638,27 @@ def fetch_and_sync_jira_tickets_nightly():
                 logging.info(f"Distinct issue keys to detail fetch: {len(seen_keys)}")
 
                 if rows_to_insert:
-                    if not insert_rows_resilient(client, dataset_id, temp_table_id_run, rows_to_insert, bq_schema):
-                        logging.error("Failed to insert rows into temp table after retries.")
-                        mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=len(rows_to_insert))
+                    if not insert_rows_resilient(
+                        client, dataset_id, temp_table_id_run, rows_to_insert, bq_schema
+                    ):
+                        logging.error(
+                            "Failed to insert rows into temp table after retries."
+                        )
+                        mark_progress(
+                            client,
+                            dataset_id,
+                            progress_table_id,
+                            proj,
+                            ws,
+                            we,
+                            "failed",
+                            row_count=len(rows_to_insert),
+                        )
                         break
 
                 merge_succeeded = False
                 try:
-                    merge_query = f'''
+                    merge_query = f"""
                         MERGE `{dataset_id}.{table_id}` T
                         USING (
                             SELECT * EXCEPT(rownum) FROM (
@@ -1411,14 +1758,25 @@ def fetch_and_sync_jira_tickets_nightly():
                             T.DeletedAt = NULL
                         WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, KnowledgeManagement, DirectoryInternal, ConfluenceURL, IncludeChildPages, Verifier, VerifierId, Approvers, ApproversId, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, StoryPoints, TimeSpentSeconds, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution, AppSupEscalation, SyncTime, IsDeleted, DeletedAt)
                         VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, S.KnowledgeManagement, S.DirectoryInternal, S.ConfluenceURL, S.IncludeChildPages, S.Verifier, S.VerifierId, S.Approvers, S.ApproversId, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.StoryPoints, S.TimeSpentSeconds, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution, S.AppSupEscalation, S.SyncTime, FALSE, NULL)
-                    '''
+                    """
                     merge_query = add_creator_insert_mapping(merge_query)
-                    execute_bq_query_with_retry(client, merge_query, max_retries=5, initial_delay=10.0)
+                    execute_bq_query_with_retry(
+                        client, merge_query, max_retries=5, initial_delay=10.0
+                    )
                     logging.info(f"Merged temp table into '{dataset_id}.{table_id}'.")
                     merge_succeeded = True
                 except Exception as e:
                     logging.error(f"Error merging temp table for {proj}: {e}")
-                    mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'failed', row_count=0)
+                    mark_progress(
+                        client,
+                        dataset_id,
+                        progress_table_id,
+                        proj,
+                        ws,
+                        we,
+                        "failed",
+                        row_count=0,
+                    )
                     break
 
                 if not merge_succeeded:
@@ -1427,7 +1785,16 @@ def fetch_and_sync_jira_tickets_nightly():
                 run_ended = datetime.now(timezone.utc)
                 duration_seconds = (run_ended - run_started).total_seconds()
                 total_rows_merged += len(rows_to_insert)
-                mark_progress(client, dataset_id, progress_table_id, proj, ws, we, 'complete', row_count=len(rows_to_insert))
+                mark_progress(
+                    client,
+                    dataset_id,
+                    progress_table_id,
+                    proj,
+                    ws,
+                    we,
+                    "complete",
+                    row_count=len(rows_to_insert),
+                )
                 log_pipeline_run(
                     client,
                     pipeline_name=pipeline_name,
@@ -1437,8 +1804,8 @@ def fetch_and_sync_jira_tickets_nightly():
                     status="SUCCESS",
                     rows_merged=len(rows_to_insert),
                     duration_seconds=duration_seconds,
-                    window_start=ws.strftime('%Y-%m-%d %H:%M:%S'),
-                    window_end=we.strftime('%Y-%m-%d %H:%M:%S'),
+                    window_start=ws.strftime("%Y-%m-%d %H:%M:%S"),
+                    window_end=we.strftime("%Y-%m-%d %H:%M:%S"),
                 )
                 # Move to next window for this project
 
@@ -1448,24 +1815,30 @@ def fetch_and_sync_jira_tickets_nightly():
             # Nightly catch-up: fill active Jira keys missing in BQ.
             if MISSING_KEY_CATCHUP_PER_PROJECT > 0 and not budget_reached:
                 try:
-                    catchup_keys, catchup_had_error = search_issue_keys(proj_clause, f'catchup_keyset:{proj}')
+                    catchup_keys, catchup_had_error = search_issue_keys(
+                        proj_clause, f"catchup_keyset:{proj}"
+                    )
                     if catchup_had_error:
-                        logging.warning(f"[{proj}] Catch-up skipped due to Jira key search errors")
+                        logging.warning(
+                            f"[{proj}] Catch-up skipped due to Jira key search errors"
+                        )
                         run_had_errors = True
                         continue
                     project_current_keys = {k for k in catchup_keys if k}
-                    known_keys = get_known_project_keys(client, dataset_id, table_id, proj)
+                    known_keys = get_known_project_keys(
+                        client, dataset_id, table_id, proj
+                    )
                     keys_missing_creator = get_project_keys_missing_creator(
                         client, dataset_id, table_id, proj
                     )
-                    
+
                     missing_keys = project_current_keys - known_keys
                     creator_backfill_keys = project_current_keys & keys_missing_creator
                     keys_to_refresh = sorted(missing_keys | creator_backfill_keys)
 
                     # Limit total per run
                     to_fetch = keys_to_refresh[:MISSING_KEY_CATCHUP_PER_PROJECT]
-                    
+
                     if to_fetch:
                         logging.info(
                             f"[{proj}] Catch-up: {len(missing_keys)} missing keys, "
@@ -1475,11 +1848,16 @@ def fetch_and_sync_jira_tickets_nightly():
 
                         # Use batched fetch and insert to minimize memory usage
                         catchup_rows_count = fetch_and_insert_ticket_rows_batched(
-                            to_fetch, f'catchup:{proj}', dataset_id, temp_table_id_run, bq_schema, stop_checker=time_budget_reached
+                            to_fetch,
+                            f"catchup:{proj}",
+                            dataset_id,
+                            temp_table_id_run,
+                            bq_schema,
+                            stop_checker=time_budget_reached,
                         )
 
                         if catchup_rows_count > 0:
-                            merge_query = f'''
+                            merge_query = f"""
                                 MERGE `{dataset_id}.{table_id}` T
                                 USING (
                                     SELECT * EXCEPT(rownum) FROM (
@@ -1580,13 +1958,19 @@ def fetch_and_sync_jira_tickets_nightly():
                                     T.DeletedAt = NULL
                                 WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, KnowledgeManagement, DirectoryInternal, ConfluenceURL, IncludeChildPages, Verifier, VerifierId, Approvers, ApproversId, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, StoryPoints, TimeSpentSeconds, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution, AppSupEscalation, SyncTime, IsDeleted, DeletedAt)
                                 VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, S.KnowledgeManagement, S.DirectoryInternal, S.ConfluenceURL, S.IncludeChildPages, S.Verifier, S.VerifierId, S.Approvers, S.ApproversId, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.StoryPoints, S.TimeSpentSeconds, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution, S.AppSupEscalation, S.SyncTime, FALSE, NULL)
-                            '''
+                            """
                             merge_query = add_creator_insert_mapping(merge_query)
-                            execute_bq_query_with_retry(client, merge_query, max_retries=5, initial_delay=10.0)
+                            execute_bq_query_with_retry(
+                                client, merge_query, max_retries=5, initial_delay=10.0
+                            )
                             total_rows_merged += catchup_rows_count
-                            logging.info(f"[{proj}] Catch-up merged {catchup_rows_count} missing key rows")
+                            logging.info(
+                                f"[{proj}] Catch-up merged {catchup_rows_count} missing key rows"
+                            )
                 except Exception as catchup_exc:
-                    logging.warning(f"[{proj}] Missing-key catch-up skipped due to error: {catchup_exc}")
+                    logging.warning(
+                        f"[{proj}] Missing-key catch-up skipped due to error: {catchup_exc}"
+                    )
                     run_had_errors = True
 
             if budget_reached:
@@ -1599,7 +1983,9 @@ def fetch_and_sync_jira_tickets_nightly():
             return
 
         if not ENABLE_SOFT_DELETE_RECONCILIATION:
-            logging.warning("Soft-delete reconciliation disabled; skipping nightly delete-marking")
+            logging.warning(
+                "Soft-delete reconciliation disabled; skipping nightly delete-marking"
+            )
             if run_had_errors:
                 final_status = "ERROR"
                 final_level = "ERROR"
@@ -1614,8 +2000,14 @@ def fetch_and_sync_jira_tickets_nightly():
         active_keys = set()
         failed_projects = []
         for proj in projects:
-            proj_clause = f'project = "{proj}"' if (' ' in proj or '&' in proj) else f'project = {proj}'
-            current_keys, had_error = search_issue_keys(proj_clause, f'full_keyset:{proj}')
+            proj_clause = (
+                f'project = "{proj}"'
+                if (" " in proj or "&" in proj)
+                else f"project = {proj}"
+            )
+            current_keys, had_error = search_issue_keys(
+                proj_clause, f"full_keyset:{proj}"
+            )
             if had_error:
                 failed_projects.append(proj)
                 continue
@@ -1623,8 +2015,10 @@ def fetch_and_sync_jira_tickets_nightly():
                 active_keys.add(key)
 
         if failed_projects:
-            failed_projects_str = ', '.join(failed_projects)
-            logging.error(f"Soft-delete reconciliation skipped due to Jira key fetch errors for projects: {failed_projects_str}")
+            failed_projects_str = ", ".join(failed_projects)
+            logging.error(
+                f"Soft-delete reconciliation skipped due to Jira key fetch errors for projects: {failed_projects_str}"
+            )
             log_pipeline_run(
                 client,
                 pipeline_name=pipeline_name,
@@ -1641,18 +2035,26 @@ def fetch_and_sync_jira_tickets_nightly():
 
         keys_table_id = f"JiraTickets_active_keys_{run_id.replace('-', '_')[:8]}"
         keys_schema = [bigquery.SchemaField("Key", "STRING", mode="REQUIRED")]
-        if not create_or_replace_temp_table(client, dataset_id, keys_table_id, keys_schema):
-            raise Exception("Failed to create active key snapshot table for soft-delete reconciliation")
+        if not create_or_replace_temp_table(
+            client, dataset_id, keys_table_id, keys_schema
+        ):
+            raise Exception(
+                "Failed to create active key snapshot table for soft-delete reconciliation"
+            )
         if not wait_for_table(client, dataset_id, keys_table_id, retries=30, delay=2):
-            raise Exception("Active key snapshot table was not available for reconciliation")
+            raise Exception(
+                "Active key snapshot table was not available for reconciliation"
+            )
 
         keys_rows = [{"Key": k} for k in active_keys]
         if keys_rows:
-            if not insert_rows_resilient(client, dataset_id, keys_table_id, keys_rows, keys_schema):
+            if not insert_rows_resilient(
+                client, dataset_id, keys_table_id, keys_rows, keys_schema
+            ):
                 raise Exception("Failed to populate active key snapshot table")
 
         scoped_projects = _to_sql_string_list(projects)
-        mark_deleted_query = f'''
+        mark_deleted_query = f"""
             UPDATE `{dataset_id}.{table_id}` T
             SET IsDeleted = TRUE,
                 DeletedAt = CURRENT_TIMESTAMP()
@@ -1665,10 +2067,10 @@ def fetch_and_sync_jira_tickets_nightly():
                 FROM `{dataset_id}.{keys_table_id}` S
                 WHERE S.Key = T.Key
               )
-        '''
+        """
         client.query(mark_deleted_query).result()
 
-        clear_deleted_query = f'''
+        clear_deleted_query = f"""
             UPDATE `{dataset_id}.{table_id}` T
             SET IsDeleted = FALSE,
                 DeletedAt = NULL
@@ -1681,7 +2083,7 @@ def fetch_and_sync_jira_tickets_nightly():
                 WHERE S.Key = T.Key
               )
               AND (T.IsDeleted IS TRUE OR T.DeletedAt IS NOT NULL)
-        '''
+        """
         client.query(clear_deleted_query).result()
 
         delete_temp_table(client, dataset_id, keys_table_id)
@@ -1717,33 +2119,41 @@ def fetch_and_sync_jira_tickets_nightly():
                     duration_seconds=duration_seconds,
                 )
         except Exception as log_err:
-            logging.warning(f"Failed to write final pipeline status for {run_id}: {log_err}")
+            logging.warning(
+                f"Failed to write final pipeline status for {run_id}: {log_err}"
+            )
 
         try:
             if client and temp_table_id_run:
                 delete_temp_table(client, dataset_id, temp_table_id_run)
         except Exception as cleanup_err:
-            logging.warning(f"Failed to cleanup temp table {temp_table_id_run}: {cleanup_err}")
+            logging.warning(
+                f"Failed to cleanup temp table {temp_table_id_run}: {cleanup_err}"
+            )
+
 
 @functions_framework.http
 def main(request):
     # Cleanup stale RUNNING entries older than RUNNING_STALE_MINUTES
     try:
         client = bigquery.Client(project="pccw-internal-virt-agent-uat")
-        cleanup_query = f'''
+        cleanup_query = f"""
             UPDATE `GSO.PipelineRuns`
             SET Status = 'ERROR', Message = 'Function timeout or crash (auto-cleaned)'
             WHERE PipelineName = 'GCP - JiraTicketsNightly'
               AND Status = 'RUNNING'
               AND RunTime < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {RUNNING_STALE_MINUTES} MINUTE)
-        '''
+        """
         client.query(cleanup_query).result()
     except Exception as e:
         logging.warning(f"Failed to cleanup stale RUNNING entries: {e}")
 
     try:
         fetch_and_sync_jira_tickets_nightly()
-        return {"status": "success", "message": "Jira tickets nightly sync completed"}, 200
+        return {
+            "status": "success",
+            "message": "Jira tickets nightly sync completed",
+        }, 200
     except Exception as e:
         logging.error(f"Cloud Function failed: {e}")
         return {"status": "error", "message": str(e)}, 500
