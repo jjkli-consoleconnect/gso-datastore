@@ -73,6 +73,7 @@ DEFAULT_PROJECTS = [
     "Internal Knowledge Management",
     "ITOPS",
     "GS&O Strategic Initiatives",
+    "IPE AS3491",
 ]
 
 

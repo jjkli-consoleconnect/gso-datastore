@@ -521,6 +521,7 @@ def fetch_and_sync_jira_data():
             "project = IPCE OR "
             'project = "Internal Knowledge Management" OR '
             "project = ITOPS OR "
+            'project = "IPE AS3491" OR '
             'project = "GS&O Strategic Initiatives" '
             ")"
         )
