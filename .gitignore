@@ -1,4 +1,6 @@
 node_modules/
+__pycache__/
+*.py[cod]
 
 # Ignore only specific directories
 /Backup/
@@ -8,6 +10,21 @@ node_modules/
 *.gscript
 *.log
 *.jsonl
+
+# Transient CloudFunctions diagnostics and command captures
+/CloudFunctions/**/*_out.txt
+/CloudFunctions/**/*_err.txt
+/CloudFunctions/**/dep_*.txt
+/CloudFunctions/**/id_token.txt
+/CloudFunctions/**/tok_*.txt
+
+# CloudFunctions contains deployable function folders only. Keep probes and
+# one-off backfill helpers under Temp/<work-item>/.
+/CloudFunctions/*.py
+/CloudFunctions/*.cmd
+/CloudFunctions/*.ps1
+/CloudFunctions/*.txt
+/CloudFunctions/*.json
 
 # Ensure .gitignore itself is tracked
 !.gitignore
