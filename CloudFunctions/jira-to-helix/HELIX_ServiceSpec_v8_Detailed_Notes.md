@@ -280,7 +280,7 @@ Recommended closure steps:
 
 ## Reference locations used for these notes
 - Spec mirror in repo:
-  - shared/Helix - Service spec v8 - Internal.docx.md
+  - KnowledgeBase/Helix_Service_Spec_v8_Internal.md
 - Raw extraction copy:
   - Temp/helix_spec_extracted.txt
 - Existing tenant runbook context:

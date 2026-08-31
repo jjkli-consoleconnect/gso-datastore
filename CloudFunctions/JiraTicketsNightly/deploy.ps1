@@ -1,15 +1,27 @@
 param(
   [switch]$AllowUnauthenticated,
-  [switch]$InvokeAfterDeploy
+  [switch]$InvokeAfterDeploy,
+  [ValidateSet("uat", "prod")]
+  [string]$Environment = "prod"
 )
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $scriptDir
-$PROJECT = "pccw-internal-virtual-agent"
-$REGION = "europe-west2"
-$CONNECTOR = "eu-prod-wanda-vpc-conn"
-$FUNC_NAME = "jira-tickets-nightly"
-$SERVICE_ACCOUNT = "jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com"
+if ($Environment -eq "uat") {
+  $PROJECT = "pccw-internal-virt-agent-uat"
+  $REGION = "europe-west2"
+  $CONNECTOR = "eu-uat-wanda-vpc-conn"
+  $FUNC_NAME = "JiraTicketsNightly"
+  $SERVICE_ACCOUNT = "jira-bigquery@pccw-internal-virt-agent-uat.iam.gserviceaccount.com"
+  $ENV_VARS = "LOG_EXECUTION_ID=true"
+} else {
+  $PROJECT = "pccw-internal-virtual-agent"
+  $REGION = "europe-west2"
+  $CONNECTOR = "eu-prod-wanda-vpc-conn"
+  $FUNC_NAME = "jira-tickets-nightly"
+  $SERVICE_ACCOUNT = "jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com"
+  $ENV_VARS = "MISSING_KEY_CATCHUP_PER_PROJECT=5000,MIN_START=2023-01-01T00:00:00Z,MAX_RUN_SECONDS=3300,RUNNING_STALE_MINUTES=70,CACHE_BATCHED_FETCH_SIZE=250"
+}
 
 if (-not $PSBoundParameters.ContainsKey('AllowUnauthenticated')) {
   $AllowUnauthenticated = $false
@@ -34,7 +46,7 @@ Write-Host "Deploying $FUNC_NAME to project $PROJECT region $REGION"
   --vpc-connector "projects/$PROJECT/locations/$REGION/connectors/$CONNECTOR" `
   --egress-settings all `
   --service-account $SERVICE_ACCOUNT `
-  --set-env-vars "MISSING_KEY_CATCHUP_PER_PROJECT=5000,MIN_START=2023-01-01T00:00:00Z,MAX_RUN_SECONDS=3300,RUNNING_STALE_MINUTES=70,CACHE_BATCHED_FETCH_SIZE=250" `
+  --set-env-vars $ENV_VARS `
 $(if ($AllowUnauthenticated) { "--allow-unauthenticated" } else { "--no-allow-unauthenticated" })
 
 $LASTEXITCODE = $?

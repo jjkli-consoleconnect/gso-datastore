@@ -80,12 +80,12 @@ DELETE the existing Project row first, then insert.
 ⚠️ If you backfill OLDER data later, also UPDATE `WindowStart` backwards — otherwise nightly thinks history starts at the first batch's date.
 
 ### 6. Working example
-Reusable script from last run: `G:\My Drive\Scripts\CloudFunctions\backfill_as3491.py` — copy it, change `CSV_PATH`, key prefix, progress Project name. It already does: parse→dedupe-by-Key-keep-newest→schema-check-vs-live-table→temp load in 2000-row chunks→guarded MERGE→progress upsert→temp drop.
+Reusable script from last run: `G:\My Drive\Scripts\Temp\AS3491\backfill_as3491.py` — copy it into a work-item folder under `Temp`, then change `CSV_PATH`, key prefix, progress Project name. It already does: parse→dedupe-by-Key-keep-newest→schema-check-vs-live-table→temp load in 2000-row chunks→guarded MERGE→progress upsert→temp drop.
 
 ## Quick checklist
 1. CSV present? Row count sane vs expected total? Key-gap scan if not.
 2. Confirm creds env var + table IDs (UAT vs prod!).
-3. Copy/adapt `backfill_as3491.py`; check fill rates before trusting customfield mappings.
+3. Copy/adapt `Temp/AS3491/backfill_as3491.py`; check fill rates before trusting customfield mappings.
 4. Run detached; poll logs.
 5. Verify count in BQ.
 6. Upsert progress marker (fix WindowStart if going further back).

@@ -399,6 +399,26 @@ DEPLOYMENT:
 - All queries updated successfully via BigQuery Data Transfer Service API
 - Changes deployed: 29 Jan 2026
 
+═══════════════════════════════════════════════════════════════════════════════
+
+=== SESSION UPDATE - 28 Aug 2026 (GSOC TX - US UNDEFINED SHIFT ADDITION) ===
+
+STATUS: COMPLETED & DEPLOYED ✓
+
+CHANGE REQUESTED:
+Add missing NOC "GSOC TX - US" to shift configuration as "0 Undefined" (00:00 - 23:59), following the pattern of Bel NOC and USNOC.
+
+ROOT CAUSE:
+GSOC TX - US was present in GSO.HelpDeskAllNOC but omitted from shift_config CTE in CenterOperationsShiftSnapshots_aggregated_scheduled.sql.
+As a result, events for GSOC TX - US had NULL shifts and were filtered out by base_events WHERE base_events.Shift IS NOT NULL.
+
+IMPLEMENTATION:
+1. Updated shift_config CTE in CenterOperationsShiftSnapshots_aggregated_scheduled.sql:
+   STRUCT('GSOC TX - US', 'Undefined', 0, 23)
+2. Updated all 24 hourly transfer configs via BigQuery Data Transfer Service API
+3. Triggered manual run for Snapshot 07
+4. Verified GSOC TX - US rows now populate correctly in CenterOperationsShiftSnapshotsAgg (16 rows generated for 0 Undefined shift)
+
 UPDATED NOC LIST (12 total):
 1. GSOC TX - HK
 2. HKNOC
