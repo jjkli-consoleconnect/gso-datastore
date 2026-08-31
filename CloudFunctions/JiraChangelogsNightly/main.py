@@ -32,6 +32,9 @@ JITTER_MAX_SECONDS = 0.3
 MIN_PROGRESS_WINDOW_SEC = 600
 MIN_WINDOW_HOURS = 1  # Skip windows smaller than 1 hour
 OVERLAP_MINUTES = 10
+# Bootstrap backfill origin. Only used when a project has NO rows anywhere.
+# Kept conservative; per-project history is set via pre-seeded progress rows
+# or the MIN_START_OVERRIDE env var (see JIRATICKETS_BACKFILL_KB.md).
 MIN_START = datetime(2024, 7, 1, tzinfo=timezone.utc)
 ENABLE_SOFT_DELETE_RECONCILIATION = (
     os.environ.get("ENABLE_SOFT_DELETE_RECONCILIATION", "").strip().lower() == "true"
@@ -188,6 +191,28 @@ def choose_window_hours(client, dataset_id, table_id, project):
     return adaptive_hours
 
 
+def get_project_first_created(client, dataset_id, project):
+    """Earliest ticket Created timestamp for a project in GSO.JiraTickets.
+
+    Used as the true historical backfill origin so a new project starts
+    backfilling from its actual beginning instead of a hardcoded MIN_START.
+    """
+    try:
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("p", "STRING", project)]
+        )
+        res = client.query(
+            f"SELECT MIN(Created) AS mn FROM `{dataset_id}.JiraTickets` "
+            "WHERE Project=@p",
+            job_config=job_config,
+        ).result()
+        for r in res:
+            return r.mn
+    except Exception as exc:
+        logging.warning(f"First-created lookup failed for {project}: {exc}")
+    return None
+
+
 def select_window(client, dataset_id, table_id, project):
     now = datetime.now(timezone.utc)
     ws = None
@@ -231,7 +256,25 @@ def select_window(client, dataset_id, table_id, project):
             return None, None
         start = latest - timedelta(minutes=OVERLAP_MINUTES)
     else:
-        start = MIN_START
+        # No data yet -> prefer explicit env override, else derive the true
+        # project origin from the earliest ticket in JiraTickets so backfill
+        # starts at the very beginning instead of a hardcoded date.
+        start = None
+        env_start = os.environ.get("MIN_START_OVERRIDE")
+        if env_start:
+            try:
+                start = datetime.fromisoformat(env_start).replace(tzinfo=timezone.utc)
+            except Exception:
+                start = None
+        if start is None:
+            first_created = get_project_first_created(client, dataset_id, project)
+            if first_created:
+                start = to_utc_aware(first_created)
+                logging.info(
+                    f"Derived backfill origin for {project} from JiraTickets: {start}"
+                )
+        if start is None:
+            start = MIN_START
 
     window_hours = choose_window_hours(client, dataset_id, table_id, project)
     end = start + timedelta(hours=window_hours)

@@ -1,6 +1,14 @@
 exclude: '^(\.venv|\.git|\.gcloud|\.gcloud-config|node_modules|google-cloud-sdk|Temp|Archive|Backup|__pycache__|\.ruff_cache)/'
 
 repos:
+  - repo: local
+    hooks:
+      - id: verify-staged-worktree
+        name: verify staged files match the working tree
+        entry: python shared/commands/verify_staged_worktree.py
+        language: system
+        pass_filenames: false
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
