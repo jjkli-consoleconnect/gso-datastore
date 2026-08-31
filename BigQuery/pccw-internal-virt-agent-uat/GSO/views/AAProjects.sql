@@ -9,6 +9,7 @@ WITH jira_tickets AS (
     Updated,
     Resolved,
     Reporter,
+    Creator,
     Assignee,
     Component,
     Links,
@@ -81,6 +82,7 @@ jira_combined AS (
     t.Updated,
     t.Resolved,
     t.Reporter,
+    t.Creator,
     t.Assignee,
     t.Component,
     ARRAY_TO_STRING(t.Component, ', ') AS Component_Joined,
@@ -117,18 +119,42 @@ SELECT
   j.Status AS JiraStatus,
   j.Assignee AS SecondTierAssignee,
   component_unnest AS component_unnest,
-  CASE
-    WHEN component_unnest IN ('Bug Fix') THEN 'Bug Fix'
-    WHEN component_unnest IN ('Documentation', 'Knowledge Management', 'Stakeholder Communication') THEN 'Documentation'
-    WHEN component_unnest IN ('Security & Compliance') THEN 'Compliance'
-    WHEN component_unnest IN ('Architecture') THEN 'Infrastructure Enablement'
+  CASE 
+    -- Grouped Bug Fixes & Feedback Follow-Ups together
+    WHEN component_unnest IN ('Bug Fix', 'Feedback Follow-Up', 'Feedback Followup') 
+      THEN 'Bug Fix'
+
     WHEN component_unnest IN (
-      'Agent Creation', 'Agent Maintenance', 'Agent Update', 'Analytics & Metrics', 'Custom Report',
-      'Data Analysis', 'Data Integration', 'Data Studio', 'LookerStudio', 'Looker Studio',
-      'EventTriggered', 'Event Triggered', 'Exploration', 'Google Apps Script', 'Integration',
-      'New Function', 'New Feature', 'Project Planning', 'Testing'
-    ) THEN 'Feature Development/Enhancement'
-    ELSE COALESCE(component_unnest, '(No Component)')
+      'Documentation', 'Knowledge Management', 'Stakeholder Communication'
+    ) 
+      THEN 'Documentation'
+
+    WHEN component_unnest IN ('Security & Compliance') 
+      THEN 'Compliance'
+
+    WHEN component_unnest IN ('Architecture', 'GCP', 'GWS') 
+      THEN 'Infrastructure Enablement'
+
+    WHEN component_unnest IN (
+      'Agent Creation', 'Agent Maintenance', 'Agent Update', 'Analytics & Metrics', 
+      'Custom Report', 'Data Analysis', 'Data Integration', 'Data Studio', 
+      'Looker Studio', 'LookerStudio', 'Event Triggered', 'EventTriggered', 
+      'Exploration', 'Google Apps Script', 'Integration', 'System Integration', 
+      'New Feature', 'New Function', 'Project Planning', 'Testing', 'TIP'
+    ) 
+      THEN 'Feature Development/Enhancement'
+
+    WHEN component_unnest IN (
+      'Incident Management', 'Change Management', 'Service Performance Management', 
+      'Service Request Management', 'Problem Management', 'PagerDuty', 
+      'BMC Dashboard', 'BMC Innovation Suite'
+    ) 
+      THEN 'Operations & Support'
+
+    WHEN component_unnest IN ('0 rows', '', 'Other') OR component_unnest IS NULL 
+      THEN '(No Component)'
+
+    ELSE component_unnest
   END AS Allocation,
 
   -- Project code
@@ -147,11 +173,6 @@ SELECT
   TIMESTAMP_DIFF(j.Resolved, j.Created, HOUR)   AS LeadTime_hrs,
   TIMESTAMP_DIFF(j.Resolved, j.Created, DAY)    AS LeadTime_days,
 
-  -- TicketType classification (Jira-only)
-  CASE
-    WHEN j.Type IN ('Incident','Change','Support Request','Ecosystem Health Check','Proactive Alert','Billing Task','Problem','Sustaining Reliability Engineering','Task','Project','Knowledge Management','Regression Testing','Service Request','Assignment','Service Request with Approvals') THEN CONCAT(REGEXP_EXTRACT(COALESCE(j.Key, ''), r'^([A-Z]+)'), '-', j.Type)
-    ELSE NULL
-  END AS TicketType
 FROM jira_combined AS j
 LEFT JOIN UNNEST(
   IF(

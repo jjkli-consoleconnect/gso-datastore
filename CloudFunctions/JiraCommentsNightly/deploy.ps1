@@ -1,15 +1,26 @@
 param(
-    [switch]$AllowUnauthenticated,
-    [switch]$InvokeAfterDeploy
+  [switch]$AllowUnauthenticated,
+  [switch]$InvokeAfterDeploy,
+  [ValidateSet("uat", "prod")]
+  [string]$Environment = "prod"
 )
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $scriptDir
-$PROJECT = "pccw-internal-virtual-agent"
-$REGION = "europe-west2"
-$CONNECTOR = "eu-prod-wanda-vpc-conn"
-$FUNC_NAME = "jira-comments-nightly"
-$SERVICE_ACCOUNT = "jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com"
+if ($Environment -eq "uat") {
+  $PROJECT = "pccw-internal-virt-agent-uat"
+  $REGION = "europe-west2"
+  $CONNECTOR = "eu-uat-wanda-vpc-conn"
+  $FUNC_NAME = "JiraCommentsNightly"
+  $SERVICE_ACCOUNT = "jira-bigquery@pccw-internal-virt-agent-uat.iam.gserviceaccount.com"
+}
+else {
+  $PROJECT = "pccw-internal-virtual-agent"
+  $REGION = "europe-west2"
+  $CONNECTOR = "eu-prod-wanda-vpc-conn"
+  $FUNC_NAME = "jira-comments-nightly"
+  $SERVICE_ACCOUNT = "jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com"
+}
 
 Write-Host "Deploying $FUNC_NAME to project $PROJECT region $REGION"
 
@@ -28,10 +39,10 @@ Write-Host "Deploying $FUNC_NAME to project $PROJECT region $REGION"
   --vpc-connector "projects/$PROJECT/locations/$REGION/connectors/$CONNECTOR" `
   --egress-settings all `
   --service-account $SERVICE_ACCOUNT `
-  $(if ($AllowUnauthenticated) {"--allow-unauthenticated"} else {"--no-allow-unauthenticated"})
+$(if ($AllowUnauthenticated) { "--allow-unauthenticated" } else { "--no-allow-unauthenticated" })
 
-  $LASTEXITCODE = $?
-  if (-not $LASTEXITCODE) { Pop-Location; throw "Deployment failed for $FUNC_NAME" }
+$LASTEXITCODE = $?
+if (-not $LASTEXITCODE) { Pop-Location; throw "Deployment failed for $FUNC_NAME" }
 
 $URL = (& gcloud functions describe $FUNC_NAME --region $REGION --format "value(serviceConfig.uri)")
 if (-not $URL) { throw "Failed to fetch function URL" }
@@ -43,7 +54,8 @@ if ($InvokeAfterDeploy) {
   $resp = Invoke-WebRequest -Uri $URL -Headers @{ Authorization = "Bearer $TOKEN" } -Method POST -UseBasicParsing
   Write-Host "Response status: $($resp.StatusCode)"
   Write-Host "Body: $($resp.Content)"
-} else {
+}
+else {
   Write-Host "Skipping post-deploy invocation. Use -InvokeAfterDeploy to run once."
 }
 Pop-Location

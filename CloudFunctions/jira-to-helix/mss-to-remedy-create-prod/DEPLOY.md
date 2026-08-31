@@ -272,7 +272,7 @@ The function supports three automation paths:
 
 Every action must use HTTP `POST`, `Content-Type: application/json`, and include the issue data. An empty body returns `400 Invalid JSON payload`.
 
-See `JIRA_AUTOMATION_ADMIN_INSTRUCTIONS.md` in this folder for the validated close-transition rule, statuses, duplicate-prevention condition, and webhook URL. Keep Jira-side filters MSS-specific until the code has explicit per-project mappings.
+See [Jira to Helix Automation Admin Instructions](../../../KnowledgeBase/Jira_to_Helix_Automation_Admin_Instructions.md) for the validated close-transition rule, statuses, duplicate-prevention condition, and webhook URL. Keep Jira-side filters MSS-specific until the code has explicit per-project mappings.
 
 ## Monitoring
 

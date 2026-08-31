@@ -14,12 +14,13 @@ if ($Environment -eq "prod") {
     $CONNECTOR = "eu-prod-wanda-vpc-conn"
     $FUNC_NAME = "jira-changelogs-nightly"
     $SERVICE_ACCOUNT = "jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com"
-} else {
+}
+else {
     $PROJECT = "pccw-internal-virt-agent-uat"
-    $REGION = "us-central1"
-    $CONNECTOR = $null
+    $REGION = "europe-west2"
+    $CONNECTOR = "eu-uat-wanda-vpc-conn"
     $FUNC_NAME = "JiraChangelogsNightly"
-    $SERVICE_ACCOUNT = $null
+    $SERVICE_ACCOUNT = "jira-bigquery@pccw-internal-virt-agent-uat.iam.gserviceaccount.com"
 }
 
 Write-Host "Deploying $FUNC_NAME to project $PROJECT region $REGION"
@@ -53,7 +54,8 @@ if ($SERVICE_ACCOUNT) {
 
 if ($AllowUnauthenticated) {
     $deployArgs += "--allow-unauthenticated"
-} else {
+}
+else {
     $deployArgs += "--no-allow-unauthenticated"
 }
 
@@ -70,7 +72,8 @@ if ($InvokeAfterDeploy) {
     $resp = Invoke-WebRequest -Uri $URL -Headers @{ Authorization = "Bearer $TOKEN" } -Method POST -UseBasicParsing
     Write-Host "Response status: $($resp.StatusCode)"
     Write-Host "Body: $($resp.Content)"
-} else {
+}
+else {
     Write-Host "Skipping post-deploy invocation. Use -InvokeAfterDeploy to run once."
 }
 Pop-Location

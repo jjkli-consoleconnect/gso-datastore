@@ -498,7 +498,7 @@ def select_window(client, dataset_id, table_id, project):
     try:
         res = client.query(
             f"SELECT WindowStart, WindowEnd FROM `{dataset_id}.{table_id}` "
-            "WHERE Project=@p AND Status NOT IN ('complete','degraded') "
+            "WHERE Project=@p AND Status != 'complete' "
             "ORDER BY WindowStart ASC LIMIT 1",
             job_config=job_config,
         ).result()

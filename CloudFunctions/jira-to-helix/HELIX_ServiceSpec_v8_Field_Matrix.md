@@ -7,7 +7,7 @@
 
 ## Source baseline
 - Primary notes: HELIX_ServiceSpec_v8_Detailed_Notes.md
-- Underlying converted spec mirror: shared/Helix - Service spec v8 - Internal.docx.md
+- Underlying converted spec mirror: KnowledgeBase/Helix_Service_Spec_v8_Internal.md
 - Tenant behavior must still be validated in UAT before production assumptions.
 
 ## A. Core troubleTicket field matrix
