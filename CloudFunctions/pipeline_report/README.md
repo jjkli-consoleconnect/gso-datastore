@@ -9,7 +9,7 @@ alias every morning.
 |------|---------|
 | `FAILED` | a run with Status `ERROR` / `FAILED` (shows the log message) |
 | `STALLED` | a run stuck in `RUNNING` longer than ~3x its cadence (or 2h) |
-| `ZERO`   | a `SUCCESS` run that merged fewer rows than `min_rows` (default 1) |
+| `LOW_ROWS` | a `SUCCESS` run that merged fewer rows than an opt-in `min_rows` threshold |
 | `MISSED` | an active pipeline silent for ~1.6x its **own** median inter-run gap |
 
 Cadence is **self-tuning**: each pipeline's typical gap is measured from the last
@@ -17,10 +17,19 @@ Cadence is **self-tuning**: each pipeline's typical gap is measured from the las
 are both handled without a hand-maintained schedule. Sparse/new pipelines (few runs)
 are not false-flagged.
 
+Daily-ish pipelines with bursty Pub/Sub delivery, like `pubsub - SHRPeople`, use
+explicit `expected_interval_hours` overrides so a small retry/burst cluster does not
+teach the report that the pipeline should run every few minutes.
+
+`SUCCESS` runs with `RowsMerged=0` are treated as idle successful runs by default.
+For incremental pipelines such as Jira, that usually means the source had no new
+matching changes in that run window, not that sync data was missed. Only pipelines
+with a configured `min_rows` threshold are flagged as `LOW_ROWS`.
+
 ## Files
 - `main.py` — the Cloud Function (HTTP entrypoint `main`; has a `__main__` smoke test).
 - `requirements.txt` — runtime deps (matches other CFs).
-- `deploy.sh` — deploys the function + Cloud Scheduler (daily 07:00 UTC).
+- `deploy.sh` — deploys the function + Cloud Scheduler (daily 09:00 HKT).
 
 ## Env / grants needed
 1. BigQuery: function reads `pccw-internal-virt-agent-uat.GSO.PipelineRuns`.
@@ -45,6 +54,12 @@ requires BQ/Auth locally. Or run `_test_logic.py` with stubbed deps (no cloud cr
 to see fabricated example output.
 
 ## Tuning
-Edit `PIPELINE_OVERRIDES` (e.g. `{"pubsub - HDWL": {"min_rows": 1}}`) and
-`DEFAULT_MIN_ROWS` in `main.py`. Raise a pipeline's `min_rows` if legitimately
-quiet days show up as ZERO.
+Edit `PIPELINE_OVERRIDES` in `main.py`:
+
+```
+"pubsub - SHRPeople": {"expected_interval_hours": 24}
+"some required-volume pipe": {"min_rows": 1}
+```
+
+Keep `DEFAULT_MIN_ROWS=0` unless most pipelines should treat idle successful runs
+as anomalies.
