@@ -8,12 +8,12 @@ from the previous 24h:
 
   FAILED   runs (Status ERROR / FAILED)
   STALLED  a run left RUNNING too long (stuck/timeout)
-  ZERO     a successful run that merged rows below its threshold
+    LOW_ROWS a successful run that merged rows below an opt-in threshold
   MISSED   an active pipeline silent for ~1.6x its *own* historical gap
 
 Because all pipelines log to one table yet cadences differ wildly (HDWL ~every
-couple minutes, Jira hourly, others rare), code measures each pipeline's median
-inter-run gap over the past N days instead of a hand-maintained manifest.
+couple minutes, Jira every few minutes, others daily/rare), daily pipelines use
+explicit schedule overrides and the rest learn cadence from recent runs.
 
 Trigger: Cloud Scheduler -> HTTP gen2 function (see deploy.sh + scheduler cmd).
 Sends via Gmail API using the shared OAuth cred (secret: gmail-oauth-token).
@@ -42,15 +42,24 @@ NOTIFICATION_EMAIL = (
 
 LOOKBACK_DAYS = 14  # window used to learn each pipeline's cadence
 REPORT_HOURS = 24  # window we report on
+HKT = timezone(timedelta(hours=8))
 
 # Per-pipeline overrides keyed by exact PipelineName in GSO.PipelineRuns.
 #   {"min_rows": N} flags SUCCESS runs with RowsMerged < N.
+#   {"expected_interval_hours": N} uses an explicit schedule for MISSED/STALLED.
 PIPELINE_OVERRIDES = {
-    # "pubsub - HDWL": {"min_rows": 1},
+    "GCP - JiraChangelogsNightly": {"expected_interval_hours": 24},
+    "GCP - JiraCommentsNightly": {"expected_interval_hours": 24},
+    "GCP - JiraTicketsNightly": {"expected_interval_hours": 24},
+    "pubsub - BMC User List": {"expected_interval_hours": 24},
+    "pubsub - SHRPeople": {"expected_interval_hours": 24},
+    "pubsub - TrainingData": {"expected_interval_hours": 24},
 }
 
-# A SUCCESS run is "zero rows" when RowsMerged is below this (unless overridden).
-DEFAULT_MIN_ROWS = 1
+# SUCCESS + RowsMerged=0 usually means the source had no new records, not that sync
+# data was missed. Pipelines that must always merge rows should opt in above.
+DEFAULT_MIN_ROWS = 0
+MIN_LEARNED_CADENCE_SAMPLES = 6
 
 
 # ------------------------------------------------------------------ helpers --
@@ -108,6 +117,36 @@ def median_gap_seconds(timestamps):
     return gaps[m] if len(gaps) % 2 == 1 else (gaps[m - 1] + gaps[m]) / 2.0
 
 
+def pipeline_policy(pipe):
+    return PIPELINE_OVERRIDES.get(pipe, {})
+
+
+def expected_gap_seconds(pipe, timestamps):
+    policy = pipeline_policy(pipe)
+    if policy.get("expected_interval_hours"):
+        return float(policy["expected_interval_hours"]) * 3600.0
+    if len([t for t in timestamps if t is not None]) < MIN_LEARNED_CADENCE_SAMPLES:
+        return None
+    return median_gap_seconds(timestamps)
+
+
+def format_duration(seconds):
+    if seconds is None:
+        return "-"
+    hours = seconds / 3600.0
+    if hours >= 24:
+        return "%.1fd" % (hours / 24.0)
+    if hours >= 1:
+        return "%.1fh" % hours
+    return "%.0fm" % (seconds / 60.0)
+
+
+def format_time(value, fmt):
+    if not value:
+        return "never"
+    return value.astimezone(HKT).strftime(fmt)
+
+
 def analyze(rows, now):
     """Return (overview, issues)."""
     cutoff = now - timedelta(hours=REPORT_HOURS)
@@ -125,13 +164,19 @@ def analyze(rows, now):
         )
         times = [r["run_ts"] for r in runs]
         last = times[0] if times else None
-        gap = median_gap_seconds(times)
-        runs_24h = sum(1 for t in times if t and t >= cutoff)
+        gap = expected_gap_seconds(pipe, times)
+        runs_24h = [r for r in runs if r["run_ts"] and r["run_ts"] >= cutoff]
+        idle_success_24h = sum(
+            1
+            for r in runs_24h
+            if r["status"] == "SUCCESS" and r["rows"] is not None and r["rows"] == 0
+        )
         overview[pipe] = {
-            "runs_24h": runs_24h,
+            "runs_24h": len(runs_24h),
             "last_run": last,
             "age_h": ((now - last).total_seconds() / 3600.0) if last else None,
             "gap_sec": gap,
+            "idle_success_24h": idle_success_24h,
         }
 
         # FAILED / ERROR in window
@@ -149,24 +194,25 @@ def analyze(rows, now):
                 )
 
         # ZERO rows on success below threshold
-        min_rows = PIPELINE_OVERRIDES.get(pipe, {}).get("min_rows", DEFAULT_MIN_ROWS)
-        for r in runs:
-            if (
-                not r["run_ts"]
-                or r["run_ts"] < cutoff
-                or r["status"] != "SUCCESS"
-                or r["rows"] is None
-            ):
-                continue
-            if r["rows"] < min_rows:
-                issues.append(
-                    {
-                        "type": "ZERO",
-                        "pipeline": pipe,
-                        "when": r["run_ts"],
-                        "detail": "merged %s rows (min %s)" % (r["rows"], min_rows),
-                    }
-                )
+        min_rows = pipeline_policy(pipe).get("min_rows", DEFAULT_MIN_ROWS)
+        if min_rows > 0:
+            for r in runs:
+                if (
+                    not r["run_ts"]
+                    or r["run_ts"] < cutoff
+                    or r["status"] != "SUCCESS"
+                    or r["rows"] is None
+                ):
+                    continue
+                if r["rows"] < min_rows:
+                    issues.append(
+                        {
+                            "type": "LOW_ROWS",
+                            "pipeline": pipe,
+                            "when": r["run_ts"],
+                            "detail": "merged %s rows (min %s)" % (r["rows"], min_rows),
+                        }
+                    )
 
         # STALLED: RUNNING left open far beyond cadence
         for r in runs:
@@ -186,7 +232,7 @@ def analyze(rows, now):
                 )
 
         # MISSED: active pipeline silent for ~1.6x its own gap
-        if gap and len(times) >= 6 and last:
+        if gap and last:
             age_sec = (now - last).total_seconds()
             if age_sec >= 1.6 * gap:
                 issues.append(
@@ -194,8 +240,8 @@ def analyze(rows, now):
                         "type": "MISSED",
                         "pipeline": pipe,
                         "when": last,
-                        "detail": "silent %.1fh (expected ~every %.1fh)"
-                        % (age_sec / 3600.0, gap / 3600.0),
+                        "detail": "silent %s (expected ~every %s)"
+                        % (format_duration(age_sec), format_duration(gap)),
                     }
                 )
 
@@ -204,7 +250,9 @@ def analyze(rows, now):
 
 def build_report_text(overview, issues, now):
     lines = []
-    lines.append("GSO DataPipe daily report - " + now.strftime("%Y-%m-%d"))
+    lines.append(
+        "GSO DataPipe daily report - " + now.astimezone(HKT).strftime("%Y-%m-%d")
+    )
     lines.append("=" * 50)
     lines.append("")
     lines.append("Pipelines tracked: %d" % len(overview))
@@ -214,7 +262,7 @@ def build_report_text(overview, issues, now):
         lines.append("ISSUES")
         lines.append("------")
         for it in issues:
-            when = it["when"].strftime("%H:%M") if it["when"] else "-"
+            when = format_time(it["when"], "%H:%M HKT") if it["when"] else "-"
             lines.append(
                 "[%s] %s @ %s | %s" % (it["type"], it["pipeline"], when, it["detail"])
             )
@@ -226,12 +274,12 @@ def build_report_text(overview, issues, now):
     lines.append("SUMMARY (last %dh)" % REPORT_HOURS)
     lines.append("-" * 50)
     for pipe, m in sorted(overview.items()):
-        last = m["last_run"].strftime("%m-%d %H:%M") if m["last_run"] else "never"
-        gap = ("%s" % m["gap_sec"]) if m["gap_sec"] else "-"
+        last = format_time(m["last_run"], "%m-%d %H:%M HKT")
+        gap = format_duration(m["gap_sec"])
         age = ("%.1f" % m["age_h"]) if m["age_h"] is not None else "-"
         lines.append(
-            "%-34s runs=%-4s last=%-13s age(h)=%-6s gap(s)=%s"
-            % (pipe, m["runs_24h"], last, age, gap)
+            "%-34s runs=%-4s idle=%-4s last=%-17s age(h)=%-6s expected=%s"
+            % (pipe, m["runs_24h"], m["idle_success_24h"], last, age, gap)
         )
     lines.append("")
     lines.append(
@@ -272,7 +320,7 @@ def main(request):
         overview, issues = analyze(rows, now)
         body = build_report_text(overview, issues, now)
         subject = "[DataPipe %s] %d anomaly(-ies)" % (
-            now.strftime("%Y-%m-%d"),
+            now.astimezone(HKT).strftime("%Y-%m-%d"),
             len(issues),
         )
         send_email(subject, body)
