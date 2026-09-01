@@ -36,6 +36,7 @@ Write-Host "Deploying $FUNC_NAME to project $PROJECT region $REGION"
   --timeout 3600s `
   --memory 2048Mi `
   --max-instances 5 `
+  --remove-env-vars PROJECTS `
   --vpc-connector "projects/$PROJECT/locations/$REGION/connectors/$CONNECTOR" `
   --egress-settings all `
   --service-account $SERVICE_ACCOUNT `

@@ -37,7 +37,8 @@ $deployArgs = @(
     "--trigger-http",
     "--timeout", "3600s",
     "--memory", "2048Mi",
-    "--max-instances", "5"
+    "--max-instances", "5",
+    "--remove-env-vars", "PROJECTS"
 )
 
 if ($CONNECTOR) {
