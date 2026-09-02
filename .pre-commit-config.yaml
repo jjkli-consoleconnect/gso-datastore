@@ -9,13 +9,6 @@ repos:
         language: system
         pass_filenames: false
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
-    hooks:
-      - id: ruff
-      - id: ruff-format
-        args: [--check]
-
   - repo: https://github.com/PyCQA/bandit
     rev: 1.7.10
     hooks:

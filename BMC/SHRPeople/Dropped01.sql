@@ -50,5 +50,7 @@ FROM (
 WHERE 
   src.SanitizedID IS NOT NULL
   AND src.SanitizedID <> ''
+  AND src.`Login Name` NOT LIKE 'S00%'
   AND src.`SR Status` = 'Dropped'
   AND DBFN('UPPER', DBFN('SUBSTR', src.SanitizedID, 1, 1)) < 'N';
+

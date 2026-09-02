@@ -50,6 +50,7 @@ FROM (
 WHERE 
 	src.SanitizedID IS NOT NULL
 	AND src.SanitizedID <> ''
+	AND src.`Login Name` NOT LIKE 'S00%'
 	AND (
 		src.`SR Status` IN (
 			'Decom', 'One Time Commissioned', 'Provisioned', 'Closed', 'Assign',
@@ -59,3 +60,4 @@ WHERE
 		OR src.`SR Status` IS NULL
 		OR src.`SR Status` = ''
 	);
+
