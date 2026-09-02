@@ -17,5 +17,5 @@ SELECT
   usage.amount AS usage_amount,
   usage.unit AS usage_unit
 FROM
-  `console-core-billing-data.console_core_gcp_billing_data.gcp_billing_export_resource_v1_016ABE_050539_C7586C`
+  `console-core-billing-data.console_core_gcp_billing_shared.v_virtual_agent_billing`
 

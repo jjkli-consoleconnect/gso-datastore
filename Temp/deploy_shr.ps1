@@ -1,0 +1,2 @@
+gcloud functions deploy process-shr-people-email --gen2 --region=europe-west2 --runtime=python311 --source="G:\My Drive\Scripts\CloudFunctions\shr_people" --entry-point=process_shr_people_email --trigger-topic=gmail-to-shr-people --service-account=jira-bigquery@pccw-internal-virt-agent-uat.iam.gserviceaccount.com --memory=512Mi --timeout=540s --max-instances=1 --no-allow-unauthenticated --quiet
+if ($LASTEXITCODE -eq 0) { 'DEPLOY OK' } else { 'DEPLOY FAILED' }

@@ -986,14 +986,14 @@ SELECT
   END AS SolvedBySH,
   
   CASE 
-    WHEN hd.ProductDescription IS NULL THEN CONCAT(shr.`Product ID`, ' ', shr.`ProductDescription`)
+    WHEN hd.ProductDescription IS NULL THEN CONCAT(shr.Product_ID, ' ', shr.`ProductDescription`)
     ELSE hd.ProductDescription
   END AS ProductID,
   CASE 
-    WHEN hd.Product_Family IS NULL THEN shr.`Product Family`
+    WHEN hd.Product_Family IS NULL THEN shr.Product_Family
     ELSE hd.Product_Family
   END AS ProductFamily,
-  shr.`SR Status` AS SR_Status,
+  shr.SR_Status AS SR_Status,
   st.SR_Ref AS JiraSRNo,
   COALESCE(st.SyncTime, hd.inserted_at) AS SyncTime,
   ai.AIFirstResponse,

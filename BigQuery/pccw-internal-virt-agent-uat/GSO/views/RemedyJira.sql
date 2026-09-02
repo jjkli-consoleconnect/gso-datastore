@@ -220,7 +220,7 @@ SELECT
   UPPER(REPLACE(hd.SRno, '"', '')) AS SRno_Norm,
 
   -- All Jira fields with safe aliases for Status/Assignee
-  j.* EXCEPT(Status, Assignee, JoinKey, SRKey, IncidentKey_alpha, IncidentKey_num, IncidentKey_norm),
+  j.* EXCEPT(Status, Assignee, Summary, JoinKey, SRKey, IncidentKey_alpha, IncidentKey_num, IncidentKey_norm),
   j.Status AS JiraStatus,
   j.Assignee AS SecondTierAssignee,
 
@@ -522,8 +522,8 @@ SELECT
   COALESCE(NULLIF(hd.SRno, ''), j.SRKey) AS UnifiedSR,
 
   -- Product enrichment from SHRPeople (fallbacks)
-  CASE WHEN hd.ProductDescription IS NULL THEN CONCAT(shr.`Product ID`, ' ', shr.`ProductDescription`) ELSE hd.ProductDescription END AS ProductID,
-  CASE WHEN hd.Product_Family IS NULL THEN shr.`Product Family` ELSE hd.Product_Family END AS Product_Family,
+  CASE WHEN hd.ProductDescription IS NULL THEN CONCAT(shr.Product_ID, ' ', shr.`ProductDescription`) ELSE hd.ProductDescription END AS ProductID,
+  CASE WHEN hd.Product_Family IS NULL THEN shr.Product_Family ELSE hd.Product_Family END AS Product_Family,
   ci.MRC_USD,
 
   -- Latest AI enrichment fields
