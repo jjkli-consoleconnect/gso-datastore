@@ -1,0 +1,2 @@
+189 validated rows for pccw-internal-virt-agent-uat.GSO.HubspotSCNFeedback from hubspot-core-report-scn-feedback-submissions-report-2026-09-01.xlsx
+41 validated rows for pccw-internal-virt-agent-uat.GSO.HubspotRemedyClosureSurvey from hubspot-core-report-remedy-ticket-closure-survey-fe-2026-09-01.xlsx

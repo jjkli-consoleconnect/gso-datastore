@@ -6,9 +6,8 @@ WITH gsdt_jira_flattened AS (
   WHERE `Project` = 'Global Service Delivery Team'
 )
 SELECT
-  a.* EXCEPT(`Product Family`, `Product ID`, `Insight Circuit ID`, `Circuit Owner`, `SR Status`),
+  a.*,
   b.* EXCEPT(SRno)
 FROM `pccw-internal-virt-agent-uat.GSO.SHRPeople` a
 LEFT JOIN gsdt_jira_flattened b
   ON a.SRNo = b.SRno
---WHERE a.SR_Status IN ('Pending', 'Operation', 'Provisioning')

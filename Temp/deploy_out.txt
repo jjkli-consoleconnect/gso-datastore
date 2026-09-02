@@ -1,0 +1,13 @@
+DEPLOYING pccw-internal-virt-agent-uat.GSO.JIRA_HD
+FAILED JIRA_HD
+DEPLOYING pccw-internal-virt-agent-uat.GSO.RemedyJira
+FAILED RemedyJira
+DEPLOYING pccw-internal-virt-agent-uat.GSO.GSDT_Cleaned
+FAILED GSDT_Cleaned
+DEPLOYING pccw-internal-virt-agent-uat.wanda_ds.RemedyJira
+FAILED RemedyJira
+DEPLOYING pccw-internal-virt-agent-uat.wanda_ds.SHRPeople
+FAILED SHRPeople
+DEPLOYING pccw-internal-virtual-agent.wanda_ds.RemedyJira
+FAILED RemedyJira
+ALL DONE

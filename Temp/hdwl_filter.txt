@@ -1,5 +1,0 @@
-resource.type="cloud_run_revision"
-resource.labels.service_name="process-bq-hdwl-email"
-severity>=ERROR
-timestamp>="2026-08-31T10:10:00Z"
-timestamp<="2026-08-31T10:40:00Z"

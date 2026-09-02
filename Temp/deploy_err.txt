@@ -1,0 +1,12 @@
+FATAL Flags parsing error: flag --format=quiet: value should be one of <none|json|prettyjson|csv|sparse|pretty>
+Run 'bq.py help' to get help
+FATAL Flags parsing error: flag --format=quiet: value should be one of <none|json|prettyjson|csv|sparse|pretty>
+Run 'bq.py help' to get help
+FATAL Flags parsing error: flag --format=quiet: value should be one of <none|json|prettyjson|csv|sparse|pretty>
+Run 'bq.py help' to get help
+FATAL Flags parsing error: flag --format=quiet: value should be one of <none|json|prettyjson|csv|sparse|pretty>
+Run 'bq.py help' to get help
+FATAL Flags parsing error: flag --format=quiet: value should be one of <none|json|prettyjson|csv|sparse|pretty>
+Run 'bq.py help' to get help
+FATAL Flags parsing error: flag --format=quiet: value should be one of <none|json|prettyjson|csv|sparse|pretty>
+Run 'bq.py help' to get help

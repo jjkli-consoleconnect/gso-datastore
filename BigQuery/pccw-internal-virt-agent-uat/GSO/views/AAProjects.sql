@@ -67,10 +67,48 @@ changelog_agg AS (
       Transitioned_By_Account_ID,
       Transitioned_By_Display_Name,
       SyncTime
-    ) ORDER BY Transition_Timestamp DESC LIMIT 1)[OFFSET(0)] AS Last_Change
+    ) ORDER BY Transition_Timestamp DESC LIMIT 1)[OFFSET(0)] AS Last_Change,
+    
+    
   FROM `pccw-internal-virt-agent-uat.GSO.JiraChangelog`
   GROUP BY Issue_Key
 ),
+
+-- new, calculate in_progress lead time of each tiket
+in_progress_calc AS (
+  SELECT
+    Issue_Key,
+    SUM(
+      TIMESTAMP_DIFF(
+        COALESCE(
+          next_transition_timestamp, 
+          CASE WHEN current_status = 'In Progress' THEN CURRENT_TIMESTAMP() END
+        ),
+        transition_timestamp,
+        SECOND
+      )
+    ) AS total_in_progress_seconds
+  FROM (
+    SELECT
+      c.Issue_Key,
+      c.Transition_Timestamp AS transition_timestamp,
+      c.Transitioned_To,
+      t.Status AS current_status,
+      LEAD(c.Transition_Timestamp) OVER (
+        PARTITION BY c.Issue_Key 
+        ORDER BY c.Transition_Timestamp ASC
+      ) AS next_transition_timestamp
+    FROM `pccw-internal-virt-agent-uat.GSO.JiraChangelog` c
+    LEFT JOIN `pccw-internal-virt-agent-uat.GSO.JiraTickets` t ON t.Key = c.Issue_Key
+  )
+  WHERE Transitioned_To = 'In Progress'
+    AND COALESCE(
+      next_transition_timestamp, 
+      CASE WHEN current_status = 'In Progress' THEN CURRENT_TIMESTAMP() END
+    ) IS NOT NULL
+  GROUP BY Issue_Key
+),
+
 jira_combined AS (
   SELECT
     t.Type,
@@ -109,10 +147,12 @@ jira_combined AS (
     ch.Last_Change.Transitioned_By_Account_ID AS Last_Change_Transitioned_By_Account_ID,
     ch.Last_Change.Transitioned_By_Display_Name AS Last_Change_Transitioned_By_Display_Name,
     ch.Last_Change.SyncTime AS Last_Change_SyncTime,
-    ch.Changelog
+    ch.Changelog,
+    ip.total_in_progress_seconds
   FROM jira_tickets t
   LEFT JOIN comments_agg c ON c.Issue_Key = t.Key
   LEFT JOIN changelog_agg ch ON ch.Issue_Key = t.Key
+  LEFT JOIN in_progress_calc ip ON ip.Issue_Key = t.Key
 )
 SELECT
   j.* EXCEPT(Status, Assignee),
@@ -168,10 +208,16 @@ SELECT
   DATETIME_DIFF(CURRENT_DATETIME('UTC'), DATETIME(j.Created, 'UTC'), HOUR) AS JiraOutstandingDuration_hrs,
 
   -- Lead time from Jira Created to Resolved (NULL if unresolved)
-  TIMESTAMP_DIFF(j.Resolved, j.Created, SECOND) AS LeadTime_secs,
-  TIMESTAMP_DIFF(j.Resolved, j.Created, MINUTE) AS LeadTime_mins,
-  TIMESTAMP_DIFF(j.Resolved, j.Created, HOUR)   AS LeadTime_hrs,
-  TIMESTAMP_DIFF(j.Resolved, j.Created, DAY)    AS LeadTime_days,
+  -- TIMESTAMP_DIFF(j.Resolved, j.Created, SECOND) AS LeadTime_secs,
+  -- TIMESTAMP_DIFF(j.Resolved, j.Created, MINUTE) AS LeadTime_mins,
+  -- TIMESTAMP_DIFF(j.Resolved, j.Created, HOUR)   AS LeadTime_hrs,
+  -- TIMESTAMP_DIFF(j.Resolved, j.Created, DAY)    AS LeadTime_days,
+  
+  --New calculatoin for lead time-->only calculate in progress time
+  total_in_progress_seconds as LeadTime_secs,
+  ROUND(j.total_in_progress_seconds / 3600, 2) AS LeadTime_mins,
+  ROUND(j.total_in_progress_seconds / 3600, 2) AS LeadTime_hrs,
+  ROUND(j.total_in_progress_seconds / 86400, 2) AS LeadTime_days
 
 FROM jira_combined AS j
 LEFT JOIN UNNEST(
