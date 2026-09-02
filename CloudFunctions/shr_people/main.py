@@ -33,6 +33,31 @@ ERROR_NOTIFICATION_EMAIL = (
     "jens-vertexai-aaaan3dj2p4fdro72c3fa2l3km@consoleconsole.org.slack.com"
 )
 
+# Cycle-refresh configuration: the full BMC report arrives as multiple CSV
+# files across several emails. Only when ALL expected files have arrived do we
+# rebuild GSO.SHRPeople as one consistent snapshot.
+CYCLE_DATASET = "Staging"
+CYCLE_TABLE = "SHRPeople_Cycle"
+CYCLE_FILES_TABLE = "SHRPeople_CycleFiles"
+HISTORY_DATASET = "GSO"
+HISTORY_TABLE = "SHRPeople_History"
+EXPECTED_FILES = [
+    "Operation01",
+    "Operation02",
+    "Terminated01",
+    "Terminated02",
+    "Terminated03",
+    "Dropped01",
+    "Dropped02",
+    "Cancellation01",
+    "Cancellation02",
+    "HotProspect01",
+    "Upgraded01",
+    "Misc01",
+]
+CYCLE_TIMEOUT_DAYS = 3
+
+
 # Global tracking for pipeline run timing
 _script_start_time = None
 _current_run_id = None
@@ -286,7 +311,9 @@ def create_composite_key(row: Dict[str, Any], config: Dict) -> str:
     return ""
 
 
-def process_csv_data(csv_content: bytes, config: Dict) -> Tuple[bool, int]:
+def process_csv_data(
+    csv_content: bytes, config: Dict, source_file: Optional[str] = None
+) -> Tuple[bool, int]:
     """Process CSV data and load to BigQuery staging, then merge to target"""
     try:
         bq_client = bigquery.Client(project=PROJECT_ID)
@@ -417,6 +444,17 @@ def process_csv_data(csv_content: bytes, config: Dict) -> Tuple[bool, int]:
         query_job.result()
         logger.info("MERGE completed successfully")
 
+        # Also load into cycle staging for snapshot rebuild
+        if source_file:
+            try:
+                ensure_cycle_tables(bq_client)
+                cycle_rows = load_cycle_rows(bq_client, transformed_rows, source_file)
+                logger.info(
+                    f"Loaded {cycle_rows} rows to cycle staging for file {source_file}"
+                )
+            except Exception as e:
+                logger.error(f"Cycle staging load failed for {source_file}: {e}")
+
         return True, len(transformed_rows)
 
     except Exception as e:
@@ -481,6 +519,214 @@ def build_merge_query(config: Dict) -> str:
     """
 
     return merge_query
+
+
+def extract_file_base(filename: str) -> Optional[str]:
+    """Extract report base name from an attachment filename like
+    'Terminated01 09-02-2026 9-39-39.csv' -> 'Terminated01'."""
+    if not filename:
+        return None
+    base = filename.strip()
+    if base.lower().endswith(".csv"):
+        base = base[:-4]
+    base = re.sub(r"\s+\d{1,2}-\d{1,2}-\d{4}.*$", "", base).strip()
+    return base if base in EXPECTED_FILES else None
+
+
+def ensure_cycle_tables(bq_client: bigquery.Client) -> None:
+    """Create cycle staging and cycle-files tables if missing."""
+    cols = ", ".join(f"{c} STRING" for c in SHR_PEOPLE_CONFIG["all_columns"])
+    bq_client.query(
+        f"""
+        CREATE TABLE IF NOT EXISTS `{PROJECT_ID}.{CYCLE_DATASET}.{CYCLE_TABLE}` (
+            {cols},
+            SourceFile STRING,
+            ReceivedAt TIMESTAMP
+        )
+        """
+    ).result()
+    bq_client.query(
+        f"""
+        CREATE TABLE IF NOT EXISTS `{PROJECT_ID}.{DATASET_ID}.{CYCLE_FILES_TABLE}` (
+            FileName STRING,
+            ReceivedAt TIMESTAMP
+        )
+        """
+    ).result()
+
+
+def load_cycle_rows(
+    bq_client: bigquery.Client, transformed_rows: List[Dict[str, Any]], source_file: str
+) -> int:
+    """Replace rows of the same source file in cycle staging, then append."""
+    # Remove any earlier load of the same file (re-sent attachment)
+    bq_client.query(
+        f"""
+        DELETE FROM `{PROJECT_ID}.{CYCLE_DATASET}.{CYCLE_TABLE}`
+        WHERE SourceFile = @src
+        """,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("src", "STRING", source_file)
+            ]
+        ),
+    ).result()
+
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " UTC"
+    rows = []
+    for row in transformed_rows:
+        out = {c: row.get(c) for c in SHR_PEOPLE_CONFIG["all_columns"]}
+        out["SourceFile"] = source_file
+        out["ReceivedAt"] = now
+        rows.append(out)
+
+    ndjson = "\n".join(json.dumps(r) for r in rows)
+    job_config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        autodetect=False,
+        schema=[
+            bigquery.SchemaField(c, "STRING") for c in SHR_PEOPLE_CONFIG["all_columns"]
+        ]
+        + [
+            bigquery.SchemaField("SourceFile", "STRING"),
+            bigquery.SchemaField("ReceivedAt", "TIMESTAMP"),
+        ],
+    )
+    load_job = bq_client.load_table_from_file(
+        io.BytesIO(ndjson.encode()),
+        f"{PROJECT_ID}.{CYCLE_DATASET}.{CYCLE_TABLE}",
+        job_config=job_config,
+    )
+    load_job.result()
+
+    # Record file arrival (idempotent per cycle: one row per filename)
+    bq_client.query(
+        f"""
+        MERGE `{PROJECT_ID}.{DATASET_ID}.{CYCLE_FILES_TABLE}` T
+        USING (SELECT @src AS FileName, CURRENT_TIMESTAMP() AS ReceivedAt) S
+        ON T.FileName = S.FileName
+        WHEN MATCHED THEN UPDATE SET ReceivedAt = S.ReceivedAt
+        WHEN NOT MATCHED THEN INSERT (FileName, ReceivedAt)
+        VALUES (S.FileName, S.ReceivedAt)
+        """,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("src", "STRING", source_file)
+            ]
+        ),
+    ).result()
+
+    return len(rows)
+
+
+def check_cycle_status(bq_client: bigquery.Client) -> Tuple[bool, bool, List[str]]:
+    """Return (complete, timed_out, missing_files)."""
+    rows = list(
+        bq_client.query(
+            f"SELECT FileName FROM `{PROJECT_ID}.{DATASET_ID}.{CYCLE_FILES_TABLE}`"
+        ).result()
+    )
+    received = [r["FileName"] for r in rows]
+    missing = [f for f in EXPECTED_FILES if f not in received]
+    complete = not missing
+
+    timed_out = False
+    if received and not complete:
+        row = next(
+            iter(
+                bq_client.query(
+                    f"SELECT MIN(ReceivedAt) AS oldest FROM `{PROJECT_ID}.{DATASET_ID}.{CYCLE_FILES_TABLE}`"
+                ).result()
+            ),
+            None,
+        )
+        if row and row["oldest"]:
+            age_days = (datetime.utcnow() - row["oldest"].replace(tzinfo=None)).days
+            timed_out = age_days >= CYCLE_TIMEOUT_DAYS
+    return complete, timed_out, missing
+
+
+def rebuild_target_from_cycle(bq_client: bigquery.Client) -> int:
+    """Rebuild GSO.SHRPeople as one consistent snapshot from cycle staging,
+    archive the previous snapshot, then clear the cycle."""
+    cols = SHR_PEOPLE_CONFIG["all_columns"]
+    col_list = ", ".join(f"`{c}`" for c in cols)
+    pk = SHR_PEOPLE_CONFIG["primary_key"]
+    target = f"`{PROJECT_ID}.{DATASET_ID}.{SHR_PEOPLE_CONFIG['target_table']}`"
+
+    # Archive current target with snapshot date
+    hist_cols = ", ".join(f"{c} STRING" for c in cols)
+    bq_client.query(
+        f"""
+        CREATE TABLE IF NOT EXISTS `{PROJECT_ID}.{HISTORY_DATASET}.{HISTORY_TABLE}` (
+            {hist_cols}, SnapshotDate DATE
+        )
+        """
+    ).result()
+    bq_client.query(
+        f"""
+        INSERT INTO `{PROJECT_ID}.{HISTORY_DATASET}.{HISTORY_TABLE}` ({col_list}, SnapshotDate)
+        SELECT {col_list}, CURRENT_DATE()
+        FROM {target}
+        """
+    ).result()
+
+    # Rebuild target from newest received row per SRNo
+    bq_client.query(
+        f"""
+        CREATE OR REPLACE TABLE {target} AS
+        SELECT {col_list}
+        FROM (
+            SELECT {col_list},
+                   ROW_NUMBER() OVER (PARTITION BY `{pk}` ORDER BY ReceivedAt DESC) AS rn
+            FROM `{PROJECT_ID}.{CYCLE_DATASET}.{CYCLE_TABLE}`
+            WHERE `{pk}` IS NOT NULL AND `{pk}` != ''
+        )
+        WHERE rn = 1
+        """
+    ).result()
+
+    count_row = next(iter(bq_client.query(f"SELECT COUNT(*) AS c FROM {target}").result()))
+    total = count_row["c"]
+
+    # Clear cycle for next run
+    bq_client.query(
+        f"TRUNCATE TABLE `{PROJECT_ID}.{CYCLE_DATASET}.{CYCLE_TABLE}`"
+    ).result()
+    bq_client.query(
+        f"TRUNCATE TABLE `{PROJECT_ID}.{DATASET_ID}.{CYCLE_FILES_TABLE}`"
+    ).result()
+
+    return total
+
+
+def maybe_rebuild_target(bq_client: bigquery.Client) -> bool:
+    """Rebuild target if cycle complete or timed out. Returns True if rebuilt."""
+    complete, timed_out, missing = check_cycle_status(bq_client)
+    if not complete and not timed_out:
+        logger.info(f"Cycle incomplete, waiting for files: {missing}")
+        return False
+
+    reason = (
+        "cycle complete"
+        if complete
+        else f"cycle timed out after {CYCLE_TIMEOUT_DAYS} days, missing: {missing}"
+    )
+    logger.info(f"Rebuilding target from cycle ({reason})")
+    total = rebuild_target_from_cycle(bq_client)
+    log_pipeline_run(
+        _current_run_id,
+        "SUCCESS" if complete else "WARNING",
+        "WARN" if timed_out else "INFO",
+        f"Snapshot rebuilt from cycle ({reason}); {total} rows",
+        None,
+        None,
+        total,
+        "CYCLE_TIMEOUT" if timed_out else None,
+        None,
+    )
+    return True
 
 
 def manage_gmail_labels(service, message_id: str, remove_label: str, add_label: str):
@@ -671,7 +917,15 @@ def process_shr_people_email(cloud_event):
                     continue
 
                 # Process CSV
-                success, rows = process_csv_data(csv_data, SHR_PEOPLE_CONFIG)
+                source_file = extract_file_base(part["filename"])
+                if source_file is None:
+                    logger.warning(
+                        f"Attachment filename '{part['filename']}' does not match "
+                        f"any expected report: {EXPECTED_FILES}"
+                    )
+                success, rows = process_csv_data(
+                    csv_data, SHR_PEOPLE_CONFIG, source_file=source_file
+                )
                 logger.info(f"CSV processing result: success={success}, rows={rows}")
 
                 if success:
@@ -695,6 +949,13 @@ def process_shr_people_email(cloud_event):
 
         if not csv_found:
             logger.info("No CSV attachments found in message")
+
+        # Rebuild snapshot if the cycle is complete (or timed out)
+        try:
+            bq_client = bigquery.Client(project=PROJECT_ID)
+            maybe_rebuild_target(bq_client)
+        except Exception as e:
+            logger.error(f"Cycle rebuild check failed: {e}")
 
         # Manage labels: remove 'pubsub', add 'ArchivedReports'
         manage_gmail_labels(service, message_id, "pubsub", "ArchivedReports")

@@ -50,4 +50,6 @@ FROM (
 WHERE 
   src.SanitizedID IS NOT NULL
   AND src.SanitizedID <> ''
+  AND src.`Login Name` NOT LIKE 'S00%'
   AND src.`SR Status` IN ('Upgraded', 'Available');
+
