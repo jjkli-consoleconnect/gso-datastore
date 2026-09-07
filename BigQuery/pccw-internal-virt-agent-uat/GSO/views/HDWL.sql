@@ -33,6 +33,10 @@ SELECT
   h.Carrier,
   h.Customer_Name,
   h.GSMP_Circuit_ID,
+  NULLIF(ARRAY_TO_STRING(h.RelatedItemRequestID, ' | '), '') AS Related_Item_Request_ID,
+  NULLIF(ARRAY_TO_STRING(h.RelatedItemDescription, ' | '), '') AS Related_Item_Description,
+  NULLIF(ARRAY_TO_STRING(h.RelatedItemRelatedTicketID, ' | '), '') AS Related_Item_Ticket_ID,
+  NULLIF(ARRAY_TO_STRING(h.RelatedItemAssociationType, ' | '), '') AS Related_Item_Association_Type,
   ci.MRC_USD,
   h.TrueMTTR_mins,
   h.GCSC_1st_Customer_Update,
@@ -46,6 +50,42 @@ SELECT
         WHEN h.Status = 'Cancelled' THEN "6-Cancelled"
     ELSE NULL 
   END AS TicketProcess,
+  -- MTTR Status (Custom): pass if > 0 and <= 240 mins; 7 days (10080 mins) for Mobility & IoT
+  CASE
+    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)
+    THEN 'MTTRPassed'
+    ELSE 'MTTRFailed'
+  END AS MTTR_Status,
+  CASE
+    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)
+    THEN h.Incident_Number
+    ELSE NULL
+  END AS MTTRFailed,
+  CASE
+    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)
+    THEN h.TrueMTTR_mins
+    ELSE NULL
+  END AS MTTRFailed_mins,
+  CASE
+    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)
+    THEN h.TrueMTTR_mins / 60
+    ELSE NULL
+  END AS MTTRFailed_hrs,
+  CASE
+    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)
+    THEN h.Incident_Number
+    ELSE NULL
+  END AS MTTRPassed,
+  CASE
+    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)
+    THEN h.TrueMTTR_mins
+    ELSE NULL
+  END AS MTTRPassed_mins,
+  CASE
+    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)
+    THEN h.TrueMTTR_mins / 60
+    ELSE NULL
+  END AS MTTRPassed_hrs,
   -- KPI Calculations (Custom)
   CASE
     WHEN h.GCSC_1st_Customer_Update IS NOT NULL AND h.ReportedDate IS NOT NULL

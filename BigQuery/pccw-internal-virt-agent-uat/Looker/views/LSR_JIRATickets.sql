@@ -95,7 +95,8 @@ SELECT
     ELSE NULL
   END AS OtherSolved,
 
-  CASE WHEN hd.TrueMTTR_mins <= 240 THEN 'Pass' ELSE 'Fail' END AS MTTRState,
+  -- 4h SLA target; 7 days (10080 min) for Mobility & IoT
+  CASE WHEN hd.TrueMTTR_mins <= (CASE WHEN hd.ProductFamily = 'Mobility & IoT' THEN 10080 ELSE 240 END) THEN 'Pass' ELSE 'Fail' END AS MTTRState,
   CASE WHEN jtt.Key IS NULL AND jtt.Links IS NULL THEN hd.Incident_Number ELSE NULL END AS T1SolvedTickets,
   CASE WHEN jtt.Links IS NOT NULL AND NOT IsTAC AND NOT IsCCAS THEN hd.Incident_Number ELSE NULL END AS T3SolvedTickets,
   CASE

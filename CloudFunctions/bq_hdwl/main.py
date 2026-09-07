@@ -37,6 +37,15 @@ ERROR_NOTIFICATION_EMAIL = (
 )
 MIN_VALID_CSV_DATA_ROWS = 3
 
+# Columns stored as ARRAY<STRING> in target tables; staging rows (one per
+# related item) are aggregated into arrays per primary key at merge time.
+ARRAY_COLUMNS = [
+    "RelatedItemRequestID",
+    "RelatedItemDescription",
+    "RelatedItemRelatedTicketID",
+    "RelatedItemAssociationType",
+]
+
 # Global tracking for pipeline run timing
 _script_start_time = None
 _current_run_id = None
@@ -103,8 +112,16 @@ CSV_CONFIGURATIONS = [
             "Fault_Location",
             "Service_Type",
             "Destination",
+            "RelatedItemRequestID",
+            "RelatedItemDescription",
+            "RelatedItemRelatedTicketID",
+            "RelatedItemAssociationType",
         ],
         "field_map": {
+            "Request ID": "RelatedItemRequestID",
+            "Description": "RelatedItemDescription",
+            "Related_Ticket_ID": "RelatedItemRelatedTicketID",
+            "Association Type": "RelatedItemAssociationType",
             "IncidentNumber": "Incident_Number",
             "casetype": "CaseType",
             "Assigned Group": "Assigned_Group",
@@ -125,6 +142,7 @@ CSV_CONFIGURATIONS = [
             "Cust ID": "Cust_ID",
             "CustomerName": "Customer_Name",
             "SRno": "SRno",
+            "SRNo": "SRno",
             "ReportedBy": "ReportedBy",
             "Product Family": "Product_Family",
             "ProductDescription": "ProductDescription",
@@ -630,6 +648,46 @@ def standardize_field_name(header: str, field_map: Dict[str, str]) -> str:
     return field_map.get(normalized_header, normalized_header.replace(" ", "_"))
 
 
+def normalize_customer_name(value: Any) -> Any:
+    """Remove leading/trailing quotation marks from customer name."""
+    if value is None:
+        return None
+
+    cleaned = str(value).strip()
+    if cleaned and cleaned[0] == '"' and cleaned[-1] == '"' and len(cleaned) >= 2:
+        cleaned = cleaned[1:-1].strip()
+    return cleaned if cleaned else None
+
+
+def normalize_text_field(value: Any) -> Any:
+    """Strip surrounding quotes and any leftover double-quote chars from free-text fields.
+
+    Unlike ``normalize_rsm_name`` this does NOT reorder comma-separated values, so it is
+    safe for free-text fields such as ``Summary``, ``Fault_Location``, ``Service_Type``
+    and ``Destination``.
+    """
+    if value is None:
+        return None
+
+    cleaned = str(value).strip()
+    if not cleaned:
+        return None
+
+    # Strip one level of surrounding quotes (payload artifact from the export).
+    if (
+        len(cleaned) >= 2
+        and cleaned[0] == cleaned[-1]
+        and cleaned[0] in ('"', "'")
+    ):
+        cleaned = cleaned[1:-1].strip()
+
+    # Cleanup: drop any double-quote chars still left in the value.
+    if '"' in cleaned:
+        cleaned = cleaned.replace('"', "").strip()
+
+    return cleaned if cleaned else None
+
+
 def normalize_rsm_name(value: Any) -> Any:
     """Convert surname-first comma-delimited RSM values into display order."""
     if value is None:
@@ -652,6 +710,14 @@ def handle_empty_values(value: Any, is_timestamp: bool, is_integer: bool) -> Any
         return None
 
     value_str = str(value).strip()
+
+    # Strip one level of surrounding quotes (payload artifact from the export).
+    if (
+        len(value_str) >= 2
+        and value_str[0] == value_str[-1]
+        and value_str[0] in ('"', "'")
+    ):
+        value_str = value_str[1:-1].strip()
 
     if is_timestamp:
         # Try multiple timestamp formats
@@ -727,23 +793,43 @@ def process_csv_attachment(
 
         # Convert to NDJSON
         headers = [standardize_field_name(h, config["field_map"]) for h in rows[0]]
+
+        # ---- Header contract guard: fail fast instead of silently mis-placing ----
+        expected_headers = list(config["all_columns"])
+        missing_headers = [c for c in expected_headers if c not in headers]
+        if missing_headers:
+            raise ValueError(
+                f"Header contract violation for {config['name']}: missing required "
+                f"headers {missing_headers}. Got: {headers}"
+            )
+
         ndjson_lines = []
 
         for row in rows[1:]:
+            # ---- Row-width guard: a ragged row would shift values into wrong columns ----
+            if len(row) != len(headers):
+                raise ValueError(
+                    f"Row width mismatch in {config['name']}: expected "
+                    f"{len(headers)} columns, got {len(row)}. Row: {row[:5]}... "
+                    f"(Incident: {row[0] if row else ''})"
+                )
             obj = {}
             for i, header in enumerate(headers):
                 value = row[i] if i < len(row) else None
                 is_ts = header in config["timestamp_fields"]
                 is_int = header in config["integer_fields"]
                 normalized_value = handle_empty_values(value, is_ts, is_int)
+                if header == "RSMName":
+                    normalized_value = normalize_rsm_name(normalized_value)
                 if header in [
-                    "RSMName",
                     "Summary",
                     "Fault_Location",
                     "Service_Type",
                     "Destination",
                 ]:
-                    normalized_value = normalize_rsm_name(normalized_value)
+                    normalized_value = normalize_text_field(normalized_value)
+                if header == "Customer_Name":
+                    normalized_value = normalize_customer_name(normalized_value)
                 obj[header] = normalized_value
             ndjson_lines.append(json.dumps(obj))
 
@@ -871,6 +957,32 @@ def process_csv_attachment(
         )
         WHERE _rn = 1
         """
+
+        # Aggregate related-item rows into arrays per primary key so the
+        # single target row per incident keeps every related item.
+        array_cols = [c for c in ARRAY_COLUMNS if c in merge_columns]
+        if array_cols:
+            except_list = ", ".join(array_cols)
+            agg_selects = ", ".join(
+                f"ARRAY_AGG(NULLIF(s.{c}, '') IGNORE NULLS ORDER BY NULLIF(s.{c}, '')) AS {c}"
+                for c in array_cols
+            )
+            array_selects = ", ".join(f"A.{c} AS {c}" for c in array_cols)
+            deduped_source_query = f"""
+            SELECT d.* EXCEPT({except_list}), {array_selects}
+            FROM (
+                {deduped_source_query}
+            ) d
+            LEFT JOIN (
+                SELECT {primary_key} AS _array_pk, {agg_selects}
+                FROM `{staging_table_id}` AS s
+                WHERE s.{primary_key} IS NOT NULL
+                GROUP BY s.{primary_key}
+            ) A ON d.{primary_key} = A._array_pk
+            """
+            logger.info(
+                "Aggregating %s into ARRAY columns at merge time.", ", ".join(array_cols)
+            )
 
         # Build merge query with dynamic columns from staging.
         # Staging types are autodetected from NDJSON and can occasionally drift

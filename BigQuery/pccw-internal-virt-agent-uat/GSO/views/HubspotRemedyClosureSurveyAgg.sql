@@ -50,19 +50,19 @@ SELECT
 	h.Fault_Cause,
 	h.TrueMTTR_mins,
 	h.TrueMTTR_hrs,
-	4 AS MTTR_target_hrs,
+	CASE WHEN h.Product_Family = 'Mobility & IoT' THEN 168 ELSE 4 END AS MTTR_target_hrs,
 	CASE
 		WHEN h.TrueMTTR_mins IS NULL THEN NULL
-		WHEN h.TrueMTTR_mins <= 240 THEN TRUE
+		WHEN h.TrueMTTR_mins <= (CASE WHEN h.Product_Family = 'Mobility & IoT' THEN 10080 ELSE 240 END) THEN TRUE
 		ELSE FALSE
 	END AS MTTR_within_target,
 	CASE
-		WHEN h.TrueMTTR_mins <= 240 THEN 'MTTRPass'
+		WHEN h.TrueMTTR_mins <= (CASE WHEN h.Product_Family = 'Mobility & IoT' THEN 10080 ELSE 240 END) THEN 'MTTRPass'
 		ELSE 'MTTRFail'
 	END AS MTTRStatus,
 	CASE
 		WHEN h.TrueMTTR_mins IS NULL THEN NULL
-		ELSE GREATEST(h.TrueMTTR_mins - 240, 0)
+		ELSE GREATEST(h.TrueMTTR_mins - (CASE WHEN h.Product_Family = 'Mobility & IoT' THEN 10080 ELSE 240 END), 0)
 	END AS MTTR_breach_mins,
 	h.`1st_Response_mins`,
 	h.AI_1st_Response_mins,
@@ -72,7 +72,8 @@ SELECT
 	END AS AI_vs_Human_1st_Response_Delta_mins,
 	CASE
 		WHEN h.TrueMTTR_mins IS NULL THEN 'Unknown'
-		WHEN h.TrueMTTR_mins <= 240 THEN 'Within 4h target'
+		WHEN h.TrueMTTR_mins <= (CASE WHEN h.Product_Family = 'Mobility & IoT' THEN 10080 ELSE 240 END)
+			THEN CASE WHEN h.Product_Family = 'Mobility & IoT' THEN 'Within 7d target' ELSE 'Within 4h target' END
 		WHEN h.TrueMTTR_mins <= 1440 THEN '4h-24h'
 		ELSE '24h+'
 	END AS MTTR_band,
@@ -96,7 +97,7 @@ SELECT
 		ELSE 0
 	END AS detractor_exposure_mins,
 	(
-		0.5 * LEAST(COALESCE(h.TrueMTTR_mins, 0) / 240.0, 5.0)
+		0.5 * LEAST(COALESCE(h.TrueMTTR_mins, 0) / (CASE WHEN h.Product_Family = 'Mobility & IoT' THEN 10080.0 ELSE 240.0 END), 5.0)
 		+ 0.3 * LEAST(COALESCE(h.`1st_Response_mins`, 0) / 15.0, 5.0)
 		+ 0.2 * CASE
 			WHEN s.satisfaction_resolution <= 2 THEN 1.0

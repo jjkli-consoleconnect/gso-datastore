@@ -42,8 +42,10 @@ SELECT
   hd.Categorization_Tier_1 AS Category,
   hd.Categorization_Tier_2 AS Type,
   hd.Categorization_Tier_3 AS Item,
-  CASE WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= 240 THEN 1 ELSE NULL END AS MTTRPass,
-  CASE WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > 240 THEN 1 ELSE NULL END AS MTTRFail,
+  -- 4h SLA target; 7 days (10080 min) for Mobility & IoT
+  CASE
+    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE WHEN hd.ProductFamily = 'Mobility & IoT' THEN 10080 ELSE 240 END) THEN 1 ELSE NULL END AS MTTRPass,
+  CASE WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > (CASE WHEN hd.ProductFamily = 'Mobility & IoT' THEN 10080 ELSE 240 END) THEN 1 ELSE NULL END AS MTTRFail,
   hd.Carrier
 
 FROM `pccw-internal-virt-agent-uat.Looker.helpdesk` AS hd

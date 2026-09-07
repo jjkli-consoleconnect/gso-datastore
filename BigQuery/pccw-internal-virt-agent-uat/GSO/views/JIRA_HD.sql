@@ -521,6 +521,10 @@ SELECT
     ELSE UPPER(REPLACE(hd.Customer_Name, '"', ''))
   END AS Customer_Name,
   UPPER(REPLACE(hd.SRno, '"', '')) AS SRno,
+  NULLIF(ARRAY_TO_STRING(hd.RelatedItemRequestID, ' | '), '') AS Related_Item_Request_ID,
+  NULLIF(ARRAY_TO_STRING(hd.RelatedItemDescription, ' | '), '') AS Related_Item_Description,
+  NULLIF(ARRAY_TO_STRING(hd.RelatedItemRelatedTicketID, ' | '), '') AS Related_Item_Ticket_ID,
+  NULLIF(ARRAY_TO_STRING(hd.RelatedItemAssociationType, ' | '), '') AS Related_Item_Association_Type,
   hd.LastResolvedDate,
   hd.ReportedDate,
   hd.RespondedDate,
@@ -880,9 +884,9 @@ SELECT
   -- Lead_Time_secs: Number of seconds between Jira creation and resolution
   DATETIME_DIFF(CAST(st.Resolved AS DATETIME), CAST(st.Created AS DATETIME), SECOND) AS Lead_Time_secs,
   
-  -- MTTR_Status: Returns 'MTTRPassed' if MTTR passed condition (> 0 and <= 240 mins), otherwise 'MTTRFailed'
+  -- MTTR_Status: 'MTTRPassed' if MTTR > 0 and <= 240 mins (7 days / 10080 mins for Mobility & IoT), otherwise 'MTTRFailed'
   CASE 
-    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= 240
+    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE WHEN hd.Product_Family = 'Mobility & IoT' THEN 10080 ELSE 240 END)
     THEN 'MTTRPassed' 
     ELSE 'MTTRFailed' 
   END AS MTTR_Status,
@@ -896,44 +900,44 @@ SELECT
   -- MTTR_secs: MTTR converted from minutes to seconds
   hd.TrueMTTR_mins * 60 AS MTTR_secs,
   
-  -- MTTRFailed: Returns Incident_Number if MTTR <= 0 or > 240 minutes
+  -- MTTRFailed: Returns Incident_Number if MTTR <= 0 or > threshold (240 mins, 10080 for Mobility & IoT)
   CASE 
-    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > 240 
+    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > (CASE WHEN hd.Product_Family = 'Mobility & IoT' THEN 10080 ELSE 240 END) 
     THEN hd.Incident_Number 
     ELSE NULL 
   END AS MTTRFailed,
   
   -- MTTRFailed_mins: MTTR minutes when failed
   CASE 
-    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > 240 
+    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > (CASE WHEN hd.Product_Family = 'Mobility & IoT' THEN 10080 ELSE 240 END) 
     THEN hd.TrueMTTR_mins 
     ELSE NULL 
   END AS MTTRFailed_mins,
   
   -- MTTRFailed_hrs: MTTRFailed minutes converted to hours
   CASE 
-    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > 240 
+    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > (CASE WHEN hd.Product_Family = 'Mobility & IoT' THEN 10080 ELSE 240 END) 
     THEN hd.TrueMTTR_mins / 60 
     ELSE NULL 
   END AS MTTRFailed_hrs,
   
-  -- MTTRPassed: Returns Incident_Number if MTTR > 0 and <= 240 minutes
+  -- MTTRPassed: Returns Incident_Number if MTTR > 0 and <= threshold (240 mins, 10080 for Mobility & IoT)
   CASE 
-    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= 240 
+    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE WHEN hd.Product_Family = 'Mobility & IoT' THEN 10080 ELSE 240 END) 
     THEN hd.Incident_Number 
     ELSE NULL 
   END AS MTTRPassed,
   
   -- MTTRPassed_mins: MTTR minutes when passed
   CASE 
-    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= 240 
+    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE WHEN hd.Product_Family = 'Mobility & IoT' THEN 10080 ELSE 240 END) 
     THEN hd.TrueMTTR_mins 
     ELSE NULL 
   END AS MTTRPassed_mins,
   
   -- MTTRPassed_hrs: MTTRPassed minutes converted to hours
   CASE 
-    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= 240 
+    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE WHEN hd.Product_Family = 'Mobility & IoT' THEN 10080 ELSE 240 END) 
     THEN hd.TrueMTTR_mins / 60 
     ELSE NULL 
   END AS MTTRPassed_hrs,

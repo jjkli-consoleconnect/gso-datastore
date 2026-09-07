@@ -296,35 +296,35 @@ SELECT
   SAFE_DIVIDE(CAST(hd.TrueMTTR_mins AS FLOAT64), 60.0)    AS MTTR_hrs,
   SAFE_DIVIDE(CAST(hd.TrueMTTR_mins AS FLOAT64), 1440.0)  AS MTTR_days,
 
-  -- Pass/fail thresholds: >0 and <=240 mins = pass; <=0 or >240 = fail
+  -- Pass/fail thresholds: >0 and <=240 mins = pass; <=0 or >240 = fail (7 days / 10080 mins for Mobility & IoT)
   CASE
   WHEN hd.TrueMTTR_mins IS NULL THEN NULL
-  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) > 0 AND CAST(hd.TrueMTTR_mins AS FLOAT64) <= 240 THEN 'MTTRPassed'
+  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) > 0 AND CAST(hd.TrueMTTR_mins AS FLOAT64) <= (CASE WHEN COALESCE(hd.Product_Family, shr.Product_Family) = 'Mobility & IoT' THEN 10080.0 ELSE 240.0 END) THEN 'MTTRPassed'
     ELSE 'MTTRFailed'
   END AS MTTRStatus,
 
   CASE
-  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) > 0 AND CAST(hd.TrueMTTR_mins AS FLOAT64) <= 240 THEN hd.Incident_Number
+  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) > 0 AND CAST(hd.TrueMTTR_mins AS FLOAT64) <= (CASE WHEN COALESCE(hd.Product_Family, shr.Product_Family) = 'Mobility & IoT' THEN 10080.0 ELSE 240.0 END) THEN hd.Incident_Number
     ELSE NULL
   END AS MTTRPassed,
 
   CASE
-  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) <= 0 OR CAST(hd.TrueMTTR_mins AS FLOAT64) > 240 THEN hd.Incident_Number
+  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) <= 0 OR CAST(hd.TrueMTTR_mins AS FLOAT64) > (CASE WHEN COALESCE(hd.Product_Family, shr.Product_Family) = 'Mobility & IoT' THEN 10080.0 ELSE 240.0 END) THEN hd.Incident_Number
     ELSE NULL
   END AS MTTRFailed,
 
   CASE
-  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) > 0 AND CAST(hd.TrueMTTR_mins AS FLOAT64) <= 240 THEN CAST(hd.TrueMTTR_mins AS FLOAT64)
+  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) > 0 AND CAST(hd.TrueMTTR_mins AS FLOAT64) <= (CASE WHEN COALESCE(hd.Product_Family, shr.Product_Family) = 'Mobility & IoT' THEN 10080.0 ELSE 240.0 END) THEN CAST(hd.TrueMTTR_mins AS FLOAT64)
     ELSE NULL
   END AS MTTRPassed_mins,
 
   CASE
-  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) <= 0 OR CAST(hd.TrueMTTR_mins AS FLOAT64) > 240 THEN CAST(hd.TrueMTTR_mins AS FLOAT64)
+  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) <= 0 OR CAST(hd.TrueMTTR_mins AS FLOAT64) > (CASE WHEN COALESCE(hd.Product_Family, shr.Product_Family) = 'Mobility & IoT' THEN 10080.0 ELSE 240.0 END) THEN CAST(hd.TrueMTTR_mins AS FLOAT64)
     ELSE NULL
   END AS MTTRFailed_mins,
   SAFE_DIVIDE(
     CASE
-  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) <= 0 OR CAST(hd.TrueMTTR_mins AS FLOAT64) > 240 THEN CAST(hd.TrueMTTR_mins AS FLOAT64)
+  WHEN CAST(hd.TrueMTTR_mins AS FLOAT64) <= 0 OR CAST(hd.TrueMTTR_mins AS FLOAT64) > (CASE WHEN COALESCE(hd.Product_Family, shr.Product_Family) = 'Mobility & IoT' THEN 10080.0 ELSE 240.0 END) THEN CAST(hd.TrueMTTR_mins AS FLOAT64)
       ELSE NULL
     END,
     60.0

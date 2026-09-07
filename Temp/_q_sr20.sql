@@ -1,0 +1,1 @@
+SELECT Incident_Number, SRno, TrueMTTR_mins, Initial_Response_Time, Second_Response_Time, Third_Response_Time, Submit_Date FROM pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC WHERE TrueMTTR_mins IS NOT NULL AND SRno IS NOT NULL AND CAST(TrueMTTR_mins AS STRING) LIKE '%' || REGEXP_EXTRACT(SRno, r'[0-9]+') || '%' ORDER BY TrueMTTR_mins DESC
