@@ -7,7 +7,7 @@ WITH jira_flat AS (
   WHERE COALESCE(t.IsDeleted, FALSE) = FALSE
     AND (
       t.Key IS NULL
-      OR REGEXP_CONTAINS(t.Key, r'(TXCE|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|VVT|IPECR|CSM|CCAI|GTA|GDA|GKC|OCR|IKM)')
+      OR REGEXP_CONTAINS(t.Key, r'(TXCE|IOTCE|TAC|VOICECE|CCAS|SMSCE|ITHD|VVT|IPECR|CSM|CCAI|GTA|GDA|GKC|OCR|IKM|CCPROV|GSDT|SH|QMS|IPCE|GSOSI|AS3491)')
     )
 ),
 jira_ranked AS (
@@ -24,16 +24,22 @@ jira_ranked AS (
           WHEN STRPOS(Key, 'TXCE') > 0 THEN 5
           WHEN STRPOS(Key, 'SMSCE') > 0 THEN 6
           WHEN STRPOS(Key, 'ITHD') > 0 THEN 7
-          WHEN STRPOS(Key, 'MSS') > 0 THEN 8
-          WHEN STRPOS(Key, 'VVT') > 0 THEN 9
-          WHEN STRPOS(Key, 'IPECR') > 0 THEN 10
-          WHEN STRPOS(Key, 'CCAI') > 0 THEN 11
-          WHEN STRPOS(Key, 'GTA') > 0 THEN 12
-          WHEN STRPOS(Key, 'GDA') > 0 THEN 13
-          WHEN STRPOS(Key, 'GKC') > 0 THEN 14
-          WHEN STRPOS(Key, 'OCR') > 0 THEN 15
-          WHEN STRPOS(Key, 'IKM') > 0 THEN 16
-          ELSE 17
+          WHEN STRPOS(Key, 'VVT') > 0 THEN 8
+          WHEN STRPOS(Key, 'IPECR') > 0 THEN 9
+          WHEN STRPOS(Key, 'CCAI') > 0 THEN 10
+          WHEN STRPOS(Key, 'GTA') > 0 THEN 11
+          WHEN STRPOS(Key, 'GDA') > 0 THEN 12
+          WHEN STRPOS(Key, 'GKC') > 0 THEN 13
+          WHEN STRPOS(Key, 'OCR') > 0 THEN 14
+          WHEN STRPOS(Key, 'IKM') > 0 THEN 15
+          WHEN STRPOS(Key, 'CCPROV') > 0 THEN 16
+          WHEN STRPOS(Key, 'GSDT') > 0 THEN 17
+          WHEN STRPOS(Key, 'SH-') = 1 THEN 18
+          WHEN STRPOS(Key, 'QMS') > 0 THEN 19
+          WHEN STRPOS(Key, 'IPCE') > 0 THEN 20
+          WHEN STRPOS(Key, 'GSOSI') > 0 THEN 21
+          WHEN STRPOS(Key, 'AS3491') > 0 THEN 22
+          ELSE 23
         END,
         Key ASC
     ) AS jira_rank

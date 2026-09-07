@@ -100,6 +100,7 @@ in_progress_calc AS (
       ) AS next_transition_timestamp
     FROM `pccw-internal-virt-agent-uat.GSO.JiraChangelog` c
     LEFT JOIN `pccw-internal-virt-agent-uat.GSO.JiraTickets` t ON t.Key = c.Issue_Key
+    WHERE c.Transitioned_To IS NOT NULL
   )
   WHERE Transitioned_To = 'In Progress'
     AND COALESCE(
@@ -208,16 +209,16 @@ SELECT
   DATETIME_DIFF(CURRENT_DATETIME('UTC'), DATETIME(j.Created, 'UTC'), HOUR) AS JiraOutstandingDuration_hrs,
 
   -- Lead time from Jira Created to Resolved (NULL if unresolved)
-  -- TIMESTAMP_DIFF(j.Resolved, j.Created, SECOND) AS LeadTime_secs,
-  -- TIMESTAMP_DIFF(j.Resolved, j.Created, MINUTE) AS LeadTime_mins,
-  -- TIMESTAMP_DIFF(j.Resolved, j.Created, HOUR)   AS LeadTime_hrs,
-  -- TIMESTAMP_DIFF(j.Resolved, j.Created, DAY)    AS LeadTime_days,
+  TIMESTAMP_DIFF(j.Resolved, j.Created, SECOND) AS LeadTime_secs,
+  TIMESTAMP_DIFF(j.Resolved, j.Created, MINUTE) AS LeadTime_mins,
+  TIMESTAMP_DIFF(j.Resolved, j.Created, HOUR)   AS LeadTime_hrs,
+  TIMESTAMP_DIFF(j.Resolved, j.Created, DAY)    AS LeadTime_days,
   
   --New calculatoin for lead time-->only calculate in progress time
-  total_in_progress_seconds as LeadTime_secs,
-  ROUND(j.total_in_progress_seconds / 3600, 2) AS LeadTime_mins,
-  ROUND(j.total_in_progress_seconds / 3600, 2) AS LeadTime_hrs,
-  ROUND(j.total_in_progress_seconds / 86400, 2) AS LeadTime_days
+  total_in_progress_seconds as InProgressDuration_secs,
+  ROUND(j.total_in_progress_seconds / 60, 2) AS InProgressDuration_mins,
+  ROUND(j.total_in_progress_seconds / 3600, 2) AS InProgressDuration_hrs,
+  ROUND(j.total_in_progress_seconds / 86400, 2) AS InProgressDuration_days
 
 FROM jira_combined AS j
 LEFT JOIN UNNEST(
