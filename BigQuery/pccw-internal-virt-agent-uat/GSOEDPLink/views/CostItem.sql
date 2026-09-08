@@ -107,7 +107,10 @@ enriched AS (
 			WHEN OperationStartDate IS NOT NULL THEN DATE_DIFF(OperationStartDate, StartBillingDate, DAY)
 		END AS StartGapDays,
 		CASE
-			WHEN SRTerminationDate IS NOT NULL AND StopBillingDate IS NOT NULL THEN DATE_DIFF(StopBillingDate, SRTerminationDate, DAY)
+			WHEN SRTerminationDate IS NOT NULL THEN DATE_ADD(SRTerminationDate, INTERVAL 30 DAY)
+		END AS `30days later`,
+		CASE
+			WHEN SRTerminationDate IS NOT NULL AND StopBillingDate IS NOT NULL THEN DATE_DIFF(StopBillingDate, DATE_ADD(SRTerminationDate, INTERVAL 30 DAY), DAY)
 		END AS StopGapDays,
 		CASE
 			WHEN StartBillingDate IS NULL THEN 0
@@ -142,10 +145,9 @@ enriched AS (
 		END AS UnbilledDeliveredAgingDays,
 		CASE
 			WHEN StartBillingDate IS NULL OR StartBillingDate > CURRENT_DATE() OR (OperationStartDate IS NOT NULL AND OperationStartDate <= CURRENT_DATE()) THEN 'Not Open Start Gap'
-			WHEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) BETWEEN 0 AND 7 THEN '0-7 Days'
-			WHEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) BETWEEN 8 AND 30 THEN '8-30 Days'
-			WHEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) BETWEEN 31 AND 60 THEN '31-60 Days'
-			ELSE '61+ Days'
+			WHEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) BETWEEN 0 AND 14 THEN 'Pending 0 to 2 weeks'
+			WHEN DATE_DIFF(CURRENT_DATE(), StartBillingDate, DAY) BETWEEN 15 AND 28 THEN 'Pending 2 to 4 weeks'
+			ELSE 'Pending more than 4 weeks'
 		END AS StartGapAgingBucket,
 		CASE
 			WHEN SRTerminationDate IS NOT NULL AND SRTerminationDate <= CURRENT_DATE() AND (StopBillingDate IS NULL OR StopBillingDate > CURRENT_DATE()) THEN 1
@@ -159,11 +161,9 @@ enriched AS (
 			WHEN SRTerminationDate IS NOT NULL AND SRTerminationDate <= CURRENT_DATE() AND (StopBillingDate IS NULL OR StopBillingDate > CURRENT_DATE()) THEN DATE_DIFF(CURRENT_DATE(), SRTerminationDate, DAY)
 		END AS TerminatedNotStoppedAgingDays,
 		CASE
-			WHEN SRTerminationDate IS NULL OR SRTerminationDate > CURRENT_DATE() OR (StopBillingDate IS NOT NULL AND StopBillingDate <= CURRENT_DATE()) THEN 'Not Open Stop Gap'
-			WHEN DATE_DIFF(CURRENT_DATE(), SRTerminationDate, DAY) BETWEEN 0 AND 7 THEN '0-7 Days'
-			WHEN DATE_DIFF(CURRENT_DATE(), SRTerminationDate, DAY) BETWEEN 8 AND 30 THEN '8-30 Days'
-			WHEN DATE_DIFF(CURRENT_DATE(), SRTerminationDate, DAY) BETWEEN 31 AND 60 THEN '31-60 Days'
-			ELSE '61+ Days'
+			WHEN DATE_DIFF(CURRENT_DATE(), SRTerminationDate, DAY) BETWEEN 0 AND 14 THEN 'Pending 0 to 2 weeks'
+			WHEN DATE_DIFF(CURRENT_DATE(), SRTerminationDate, DAY) BETWEEN 15 AND 28 THEN 'Pending 2 to 4 weeks'
+			ELSE 'Pending more than 4 weeks'
 		END AS StopGapAgingBucket,
 		CASE
 			WHEN SRTerminationDate IS NOT NULL AND SRTerminationDate < CURRENT_DATE() THEN 1
