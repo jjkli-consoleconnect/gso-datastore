@@ -1,0 +1,25 @@
+{
+  "name": "projects/14417857267/locations/europe/transferConfigs/6ab3293a-0000-2cfc-a8ef-582429ae6af8",
+  "destinationDatasetId": "Mirror",
+  "displayName": "EDP-SR EU Copy",
+  "updateTime": "2026-09-10T01:54:55.171450Z",
+  "dataSourceId": "cross_region_copy",
+  "schedule": "every day 00:15",
+  "nextRunTime": "2026-09-10T01:54:00Z",
+  "params": {
+    "overwrite_destination_table": true,
+    "source_project_id": "pccw-internal-virt-agent-uat",
+    "source_dataset_id": "GSOEDPLink"
+  },
+  "userId": "6533834101130353896",
+  "datasetRegion": "europe",
+  "ownerInfo": {
+    "email": "jjkli@consoleconnect.com"
+  },
+  "encryptionConfiguration": {},
+  "scheduleOptionsV2": {
+    "timeBasedSchedule": {
+      "schedule": "every day 00:15"
+    }
+  }
+}

@@ -1,0 +1,660 @@
+Python script for interacting with BigQuery.
+
+
+USAGE: bq.py [--global_flags] <command> [--command_flags] [args]
+
+
+Any of the following commands:
+  add-iam-policy-binding, cancel, cp, extract, get-iam-policy, head, help, info,
+  init, insert, load, ls, mk, mkdef, partition, query, remove-iam-policy-
+  binding, rm, set-iam-policy, shell, show, truncate, undelete, update, version,
+  wait
+
+
+add-iam-policy-binding     Add a binding to a BigQuery resource's policy in IAM.
+
+                           Usage:
+                           add-iam-policy-binding --member=<member>
+                           --role=<role> <identifier>
+
+                           One binding consists of a member and a role, which
+                           are specified with (required) flags.
+
+                           Examples:
+
+                           bq add-iam-policy-binding \
+                           --member='user:myaccount@gmail.com' \
+                           --role='roles/bigquery.dataViewer' \
+                           table1
+
+                           bq add-iam-policy-binding \
+                           --member='serviceAccount:my.service.account@my-
+                           domain.com' \
+                           --role='roles/bigquery.dataEditor' \
+                           project1:dataset1.table1
+
+                           bq add-iam-policy-binding \
+                           --member='allAuthenticatedUsers' \
+                           --role='roles/bigquery.dataViewer' \
+                           --project_id=proj -t ds.table1
+
+                           Arguments:
+                           identifier: The identifier of the resource. Presently
+                           only table and view
+                           resources are fully supported. (Last updated:
+                           2020-08-03)
+
+cancel                     Request a cancel and waits for the job to be
+                           cancelled.
+
+                           Requests a cancel and then either: a) waits until the
+                           job is done if the sync flag is set [default], or b)
+                           returns immediately if the sync flag is not set. Not
+                           all job types support a cancel, an error is returned
+                           if it cannot be cancelled. Even for jobs that support
+                           a cancel, success is not guaranteed, the job may have
+                           completed by the time the cancel request is noticed,
+                           or the job may be in a stage where it cannot be
+                           cancelled.
+
+                           Examples:
+                           bq cancel job_id  # Requests a cancel and waits until
+                           the job is done.
+                           bq --nosync cancel job_id  # Requests a cancel and
+                           returns immediately.
+
+                           Arguments:
+                           job_id: Job ID to cancel.
+
+cp                         Copies one table to another.
+
+                           Examples:
+                           bq cp dataset.old_table dataset2.new_table
+                           bq cp --destination_kms_key=kms_key dataset.old_table
+                           dataset2.new_table
+
+extract                    Perform an extract operation of source into
+                           destination_uris.
+
+                           Usage:
+                           extract <source_table> <destination_uris>
+
+                           Use -m option to extract a source_model.
+
+                           Examples:
+                           bq extract ds.table gs://mybucket/table.csv
+                           bq extract -m ds.model gs://mybucket/model
+
+                           Arguments:
+                           source_table: Source table to extract.
+                           source_model: Source model to extract.
+                           destination_uris: One or more Google Cloud Storage
+                           URIs, separated by
+                           commas.
+
+get-iam-policy             Get the IAM policy for a resource.
+
+                           Gets the IAM policy for a dataset, table, routine,
+                           connection, or reservation resource, and prints it to
+                           stdout. The policy is in JSON format.
+
+                           Usage: get-iam-policy <identifier>
+
+                           Examples:
+                           bq get-iam-policy ds.table1
+                           bq get-iam-policy --project_id=proj -t ds.table1
+                           bq get-iam-policy proj:ds.table1
+                           bq get-iam-policy --reservation proj:ds.reservation1
+
+                           Arguments:
+                           identifier: The identifier of the resource. Presently
+                           only table, view,
+                           connection, and reservation resources are fully
+                           supported. (Last
+                           updated: 2025-08-22)
+
+head                       Displays rows in a table.
+
+                           Examples:
+                           bq head dataset.table
+                           bq head -j job
+                           bq head -n 10 dataset.table
+                           bq head -s 5 -n 10 dataset.table
+
+help                       Help for all or selected command:
+                           bq.py help [<command>]
+
+                           To retrieve help with global flags:
+                           bq.py --help
+
+                           To retrieve help with flags only from the main
+                           module:
+                           bq.py --helpshort [<command>]
+
+info                       Return the execution information of bq.
+
+init                       Authenticate and create a default .bigqueryrc file.
+
+insert                     Inserts rows in a table.
+
+                           Inserts the records formatted as newline delimited
+                           JSON from file into the specified table. If file is
+                           not specified, reads from stdin. If there were any
+                           insert errors it prints the errors to stdout.
+
+                           Examples:
+                           bq insert dataset.table /tmp/mydata.json
+                           echo '{"a":1, "b":2}' | bq insert dataset.table
+
+                           Template table examples: Insert to
+                           dataset.table_suffix table using dataset.table table
+                           as its template.
+                           bq insert -x=_suffix dataset.table /tmp/mydata.json
+
+load                       Perform a load operation of source into
+                           destination_table.
+
+                           Usage:
+                           load <destination_table> <source> [<schema>]
+                           [--session_id=[session]]
+
+                           The <destination_table> is the fully-qualified table
+                           name of table to create, or append to if the table
+                           already exists.
+
+                           To load to a temporary table, specify the table name
+                           in <destination_table> without a dataset and specify
+                           the session id with --session_id.
+
+                           The <source> argument can be a path to a single local
+                           file, or a comma-separated list of URIs.
+
+                           The <schema> argument should be either the name of a
+                           JSON file or a text schema. This schema should be
+                           omitted if the table already has one.
+
+                           In the case that the schema is provided in text form,
+                           it should be a comma-separated list of entries of the
+                           form name[:type], where type will default to string
+                           if not specified.
+
+                           In the case that <schema> is a filename, it should be
+                           a JSON file containing a single array, each entry of
+                           which should be an object with properties 'name',
+                           'type', and (optionally) 'mode'. For more detail: htt
+                           ps://cloud.google.com/bigquery/docs/schemas#specifyin
+                           g_a_json_schema_file
+
+                           Note: the case of a single-entry schema with no type
+                           specified is ambiguous; one can use name:string to
+                           force interpretation as a text schema.
+
+                           Examples:
+                           bq load ds.new_tbl ./info.csv ./info_schema.json
+                           bq load ds.new_tbl gs://mybucket/info.csv
+                           ./info_schema.json
+                           bq load ds.small gs://mybucket/small.csv
+                           name:integer,value:string
+                           bq load ds.small gs://mybucket/small.csv
+                           field1,field2,field3
+                           bq load temp_tbl --session_id=my_session ./info.csv
+                           ./info_schema.json
+
+                           Arguments:
+                           destination_table: Destination table name.
+                           source: Name of local file to import, or a comma-
+                           separated list of URI
+                           paths to data to import.
+                           schema: Either a text schema or JSON file, as above.
+
+ls                         List the objects contained in the named collection.
+
+                           List the objects in the named project or dataset. A
+                           trailing : or . can be used to signify a project or
+                           dataset.
+                           * With -j, show the jobs in the named project.
+                           * With -p, show all projects.
+
+                           Examples:
+                           bq ls
+                           bq ls -j proj
+                           bq ls -j --filter:'states:RUNNING,PENDING' proj
+                           bq ls -p -n 1000
+                           bq ls mydataset
+                           bq ls -a
+                           bq ls -m mydataset
+                           bq ls --routines mydataset
+                           bq ls --row_access_policies mytable (requires
+                           whitelisting)
+                           bq ls --filter labels.color:red
+                           bq ls --filter 'labels.color:red labels.size:*'
+                           bq ls --transfer_config --transfer_location='us'
+                           --filter='dataSourceIds:play,adwords'
+                           bq ls --transfer_run
+                           --filter='states:SUCCEEDED,PENDING'
+                           --run_attempt='LATEST'
+                           projects/p/locations/l/transferConfigs/c
+                           bq ls --transfer_log
+                           --message_type='messageTypes:INFO,ERROR'
+                           projects/p/locations/l/transferConfigs/c/runs/r
+                           bq ls --capacity_commitment --project_id=proj
+                           --location='us'
+                           bq ls --reservation --project_id=proj --location='us'
+                           bq ls --reservation_assignment --project_id=proj
+                           --location='us'
+                           bq ls --reservation_assignment --project_id=proj
+                           --location='us'
+                           <reservation_id>
+                           bq ls --reservation_group --project_id=proj
+                           --location='us'
+                           bq ls --connection --project_id=proj --location=us
+                           bq ls --migration_workflow --project_id=proj
+                           --location=us
+
+mk                         Create a dataset, table, view, or transfer
+                           configuration with this name.
+
+                           See 'bq help mk' for more information.
+
+                           Examples:
+                           bq mk new_dataset
+                           bq mk new_dataset.new_table
+                           bq --dataset_id=new_dataset mk table
+                           bq mk -t new_dataset.newtable
+                           name:integer,value:string
+                           bq mk --view='select 1 as num' new_dataset.newview
+                           (--view_udf_resource=path/to/file.js)
+                           bq mk --materialized_view='select sum(x) as sum_x
+                           from dataset.table'
+                           new_dataset.newview
+                           bq mk -d --data_location=EU new_dataset
+                           bq mk -d --source_dataset=src_dataset new_dataset
+                           (requires allowlisting)
+                           bq mk -d
+                           --external_source=aws-
+                           glue://<aws_arn_of_glue_database>
+                           --connection_id=<connection>
+                           new_dataset
+                           bq mk --transfer_config --target_dataset=dataset
+                           --display_name=name
+                           -p='{"param":"value"}' --data_source=source
+                           --schedule_start_time={schedule_start_time}
+                           --schedule_end_time={schedule_end_time}
+                           bq mk --transfer_run --start_time={start_time}
+                           --end_time={end_time}
+                           projects/p/locations/l/transferConfigs/c
+                           bq mk --transfer_run --run_time={run_time}
+                           projects/p/locations/l/transferConfigs/c
+                           bq mk --reservation --project_id=project
+                           --location=us reservation_name
+                           bq mk --reservation_assignment
+                           --reservation_id=project:us.dev
+                           --job_type=QUERY --assignee_type=PROJECT
+                           --assignee_id=myproject
+                           bq mk --reservation_assignment
+                           --reservation_id=project:us.dev
+                           --job_type=QUERY --assignee_type=FOLDER
+                           --assignee_id=123
+                           bq mk --reservation_assignment
+                           --reservation_id=project:us.dev
+                           --job_type=QUERY --assignee_type=ORGANIZATION
+                           --assignee_id=456
+                           bq mk --reservation_group --project_id=project
+                           --location=us
+                           reservation_group_name
+                           bq mk --connection --connection_type='CLOUD_SQL'
+                           --properties='{"instanceId" : "instance",
+                           "database" : "db", "type" : "MYSQL" }'
+                           --connection_credential='{"username":"u",
+                           "password":"p"}'
+                           --project_id=proj --location=us --display_name=name
+                           new_connection
+                           bq mk --row_access_policy --policy_id=new_policy
+                           --target_table='existing_dataset.existing_table'
+                           --grantees='user:user1@google.com,group:group1@google
+                           .com'
+                           --filter_predicate='Region="US"'
+                           bq mk --source=file.json
+                           bq mk --migration_workflow --location=us
+                           --config_file=file.json
+
+mkdef                      Emits a definition in JSON for an external table,
+                           such as GCS.
+
+                           The output of this command can be redirected to a
+                           file and used for the external_table_definition flag
+                           with the "bq query" and "bq mk" commands. It produces
+                           a definition with the most commonly used values for
+                           options. You can modify the output to override option
+                           values.
+
+                           The <source_uris> argument is a comma-separated list
+                           of URIs indicating the data referenced by this
+                           external table.
+
+                           The <schema> argument should be either the name of a
+                           JSON file or a text schema.
+
+                           In the case that the schema is provided in text form,
+                           it should be a comma-separated list of entries of the
+                           form name[:type], where type will default to string
+                           if not specified.
+
+                           In the case that <schema> is a filename, it should be
+                           a JSON file containing a single array, each entry of
+                           which should be an object with properties 'name',
+                           'type', and (optionally) 'mode'. For more detail: htt
+                           ps://cloud.google.com/bigquery/docs/schemas#specifyin
+                           g_a_json_schema_file
+
+                           Note: the case of a single-entry schema with no type
+                           specified is ambiguous; one can use name:string to
+                           force interpretation as a text schema.
+
+                           Usage:
+                           mkdef <source_uris> [<schema>]
+
+                           Examples:
+                           bq mkdef 'gs://bucket/file.csv'
+                           field1:integer,field2:string
+
+                           Arguments:
+                           source_uris: Comma-separated list of URIs.
+                           schema: Either a text schema or JSON file, as above.
+
+partition                  Copies source tables into partitioned tables.
+
+                           Usage: bq partition <source_table_prefix>
+                           <destination_partitioned_table>
+
+                           Copies tables of the format
+                           <source_table_prefix><time_unit_suffix> to a
+                           destination partitioned table, with the
+                           <time_unit_suffix> of the source tables becoming the
+                           partition ID of the destination table partitions. The
+                           suffix is <YYYYmmdd> by default, <YYYY> if the
+                           time_partitioning_type flag is set to YEAR, <YYYYmm>
+                           if set to MONTH, and <YYYYmmddHH> if set to HOUR.
+
+                           If the destination table does not exist, one will be
+                           created with a schema and that matches the last table
+                           that matches the supplied prefix.
+
+                           Examples:
+                           bq partition dataset1.sharded_
+                           dataset2.partitioned_table
+
+query                      Execute a query.
+
+                           Query should be specified on command line, or passed
+                           on stdin.
+
+                           Examples:
+                           bq query 'select count(*) from
+                           publicdata:samples.shakespeare'
+                           echo 'select count(*) from
+                           publicdata:samples.shakespeare' | bq query
+
+                           Usage:
+                           query [<sql_query>]
+
+                           To cancel a query job, run `bq cancel job_id`.
+
+remove-iam-policy-binding  Remove a binding from a BigQuery resource's policy in
+                           IAM.
+
+                           Usage:
+                           remove-iam-policy-binding --member=<member>
+                           --role=<role> <identifier>
+
+                           One binding consists of a member and a role, which
+                           are specified with (required) flags.
+
+                           Examples:
+
+                           bq remove-iam-policy-binding \
+                           --member='user:myaccount@gmail.com' \
+                           --role='roles/bigquery.dataViewer' \
+                           table1
+
+                           bq remove-iam-policy-binding \
+                           --member='serviceAccount:my.service.account@my-
+                           domain.com' \
+                           --role='roles/bigquery.dataEditor' \
+                           project1:dataset1.table1
+
+                           bq remove-iam-policy-binding \
+                           --member='allAuthenticatedUsers' \
+                           --role='roles/bigquery.dataViewer' \
+                           --project_id=proj -t ds.table1
+
+                           Arguments:
+                           identifier: The identifier of the resource. Presently
+                           only table and view
+                           resources are fully supported. (Last updated:
+                           2020-08-03)
+
+rm                         Delete the resource described by the identifier.
+
+                           Always requires an identifier, unlike the show and ls
+                           commands. By default, also requires confirmation
+                           before deleting. Supports the -d -t flags to signify
+                           that the identifier is a dataset or table.
+                           * With -f, don't ask for confirmation before
+                           deleting.
+                           * With -r, remove all tables in the named dataset.
+
+                           Examples:
+                           bq rm ds.table
+                           bq rm -m ds.model
+                           bq rm --routine ds.routine
+                           bq rm -r -f old_dataset
+                           bq rm --transfer_config=projects/p/locations/l/transf
+                           erConfigs/c
+                           bq rm --connection --project_id=proj --location=us
+                           con
+                           bq rm --capacity_commitment
+                           proj:US.capacity_commitment_id
+                           bq rm --reservation --project_id=proj --location=us
+                           reservation_name
+                           bq rm --reservation_assignment --project_id=proj
+                           --location=us
+                           assignment_name
+                           bq rm --reservation_group --project_id=proj
+                           --location=us
+                           reservation_group_name
+                           bq rm --row_access_policy --project_id=proj
+                           --location=us
+                           --target_table=target_table policy_id
+
+set-iam-policy             Set the IAM policy for a resource.
+
+                           Sets the IAM policy for a dataset, table, routine,
+                           connection, or reservation resource. After setting
+                           the policy, the new policy is printed to stdout.
+                           Policies are in JSON format.
+
+                           If the 'etag' field is present in the policy, it must
+                           match the value in the current policy, which can be
+                           obtained with 'bq get-iam-policy'. Otherwise this
+                           command will fail. This feature allows users to
+                           prevent concurrent updates.
+
+                           Usage: set-iam-policy <identifier> <filename>
+
+                           Examples:
+                           bq set-iam-policy ds.table1 /tmp/policy.json
+                           bq set-iam-policy --project_id=proj -t ds.table1
+                           /tmp/policy.json
+                           bq set-iam-policy proj:ds.table1 /tmp/policy.json
+                           bq set-iam-policy --reservation proj:ds.reservation1
+                           /tmp/policy.json
+
+                           Arguments:
+                           identifier: The identifier of the resource. Presently
+                           only table, view,
+                           routine, connection, and reservation resources are
+                           fully supported.
+                           (Last updated: 2025-09-05)
+                           filename: The name of a file containing the policy in
+                           JSON format.
+
+shell                      Start an interactive bq session.
+
+show                       Show all information about an object.
+
+                           Examples:
+                           bq show -j <job_id>
+                           bq show dataset
+                           bq show [--schema] dataset.table
+                           bq show [--view] dataset.view
+                           bq show [--materialized_view]
+                           dataset.materialized_view
+                           bq show -m ds.model
+                           bq show --routine ds.routine
+                           bq show --transfer_config
+                           projects/p/locations/l/transferConfigs/c
+                           bq show --transfer_run
+                           projects/p/locations/l/transferConfigs/c/runs/r
+                           bq show --encryption_service_account
+                           bq show --connection --project_id=project
+                           --location=us connection
+                           bq show --capacity_commitment
+                           project:US.capacity_commitment_id
+                           bq show --reservation --location=US
+                           --project_id=project reservation_name
+                           bq show --reservation_assignment --project_id=project
+                           --location=US
+                           --assignee_type=PROJECT --assignee_id=myproject
+                           --job_type=QUERY
+                           bq show --reservation_assignment --project_id=project
+                           --location=US
+                           --assignee_type=FOLDER --assignee_id=123
+                           --job_type=QUERY
+                           bq show --reservation_assignment --project_id=project
+                           --location=US
+                           --assignee_type=ORGANIZATION --assignee_id=456
+                           --job_type=QUERY
+                           bq show --reservation_assignment --project_id=project
+                           --location=US
+                           --assignee_type=PROJECT --assignee_id=myproject
+                           --job_type=QUERY
+                           --principal=principal://iam.googleapis.com/projects/-
+                           /serviceAccounts/service-account@example.com
+                           bq show --reservation_group --location=US
+                           --project_id=project
+                           reservation_group_name
+                           bq show --migration_workflow
+                           projects/p/locations/l/workflows/workflow_id
+                           bq show --row_access_policy
+                           --target_table='dataset.table'
+                           --policy_id='policy_id'
+
+                           Arguments:
+                           identifier: the identifier of the resource to show.
+
+truncate                   Truncates table/dataset/project to a particular
+                           timestamp.
+
+                           Examples:
+                           bq truncate project_id:dataset
+                           bq truncate --overwrite project_id:dataset
+                           --timestamp 123456789
+                           bq truncate --skip_fully_replicated_tables=false
+                           project_id:dataset
+
+undelete                   Undelete the dataset described by identifier.
+
+                           Always requires an identifier, unlike the show and ls
+                           commands. By default, also requires confirmation
+                           before undeleting. Supports:
+                           - timestamp[int]: This signifies the timestamp
+                           version of the dataset that
+                           needs to be restored, this should be in milliseconds
+
+                           Examples:
+                           bq undelete dataset
+                           bq undelete --timestamp 1714720875568 dataset
+
+update                     Updates a dataset, table, view or transfer
+                           configuration with this name.
+
+                           See 'bq help update' for more information.
+
+                           Examples:
+                           bq update --description "Dataset description"
+                           existing_dataset
+                           bq update --description "My table"
+                           existing_dataset.existing_table
+                           bq update --description "My model" -m
+                           existing_dataset.existing_model
+                           bq update -t existing_dataset.existing_table
+                           name:integer,value:string
+                           bq update --destination_kms_key
+                           projects/p/locations/l/keyRings/r/cryptoKeys/k
+                           existing_dataset.existing_table
+                           bq update --view='select 1 as num'
+                           existing_dataset.existing_view
+                           (--view_udf_resource=path/to/file.js)
+                           bq update --transfer_config --display_name=name
+                           -p='{"param":"value"}'
+                           projects/p/locations/l/transferConfigs/c
+                           bq update --transfer_config --target_dataset=dataset
+                           --refresh_window_days=5 --update_credentials
+                           projects/p/locations/l/transferConfigs/c
+                           bq update --reservation --location=US
+                           --project_id=my-project
+                           --bi_reservation_size=2G
+                           bq update --capacity_commitment --location=US
+                           --project_id=my-project
+                           --plan=MONTHLY --renewal_plan=FLEX commitment_id
+                           bq update --capacity_commitment --location=US
+                           --project_id=my-project
+                           --split --slots=500 commitment_id
+                           bq update --capacity_commitment --location=US
+                           --project_id=my-project
+                           --merge commitment_id1,commitment_id2
+                           bq update --reservation_assignment
+                           --destination_reservation_id=proj:US.new_reservation
+                           proj:US.old_reservation.assignment_id
+                           bq update --connection_credential='{"username":"u",
+                           "password":"p"}'
+                           --location=US --project_id=my-project
+                           existing_connection
+                           bq update --row_access_policy
+                           --policy_id=existing_policy
+                           --target_table='existing_dataset.existing_table'
+                           --grantees='user:user1@google.com,group:group1@google
+                           .com'
+                           --filter_predicate='Region="US"'
+
+version                    Return the version of bq.
+
+wait                       Wait some number of seconds for a job to finish.
+
+                           Poll job_id until either (1) the job is DONE or (2)
+                           the specified number of seconds have elapsed. Waits
+                           forever if unspecified. If no job_id is specified,
+                           and there is only one running job, we poll that job.
+
+                           Examples:
+                           bq wait # Waits forever for the currently running
+                           job.
+                           bq wait job_id  # Waits forever
+                           bq wait job_id 100  # Waits 100 seconds
+                           bq wait job_id 0  # Polls if a job is done, then
+                           returns immediately.
+                           # These may exit with a non-zero status code to
+                           indicate "failure":
+                           bq wait --fail_on_error job_id  # Succeeds if job
+                           succeeds.
+                           bq wait --fail_on_error job_id 100  # Succeeds if job
+                           succeeds in 100 sec.
+
+                           Arguments:
+                           job_id: Job ID to wait on.
+                           secs: Number of seconds to wait (must be >= 0).
+
+
+Run 'bq.py --help' to get help for global flags.
+Run 'bq.py help <command>' to get help for <command>.

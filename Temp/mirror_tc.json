@@ -1,0 +1,27 @@
+{
+  "dataSourceId": "cross_region_copy",
+  "datasetRegion": "europe",
+  "destinationDatasetId": "Mirror",
+  "displayName": "Mirror Cost_Items Daily Copy",
+  "emailPreferences": {},
+  "name": "projects/14417857267/locations/europe/transferConfigs/6a5dde90-0000-2543-8c00-582429bda170",
+  "nextRunTime": "2026-09-10T07:00:00Z",
+  "ownerInfo": {
+    "email": "jjkli@consoleconnect.com"
+  },
+  "params": {
+    "overwrite_destination_table": true,
+    "source_dataset_id": "Cost_Items",
+    "source_project_id": "edp-prod-lake-data-warehouse"
+  },
+  "schedule": "every day 07:00",
+  "scheduleOptions": {},
+  "scheduleOptionsV2": {
+    "timeBasedSchedule": {
+      "schedule": "every day 07:00"
+    }
+  },
+  "state": "SUCCEEDED",
+  "updateTime": "2026-07-17T02:24:11.136873Z",
+  "userId": "6533834101130353896"
+}

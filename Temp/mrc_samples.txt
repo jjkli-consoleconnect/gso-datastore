@@ -1,0 +1,18 @@
+sr_key,customer_name,status_name,edp_mrc,cost_items_mrc,cost_lines
+SR13825,Masergy Communications Inc.,Terminated,50,86,6
+SR23857,SHUN TAT ENTERPRISES LIMITED,Terminated,1165.71,2710.54,1
+SR34068,"World Courier Management, Inc",Terminated,415.85,384,4
+SR36316,"City of Wilson, D/B/A Greenlight",Terminated,1015,2205.85,9
+SR10298,SecurityMinded Technologies LLC,Terminated,150,175,2
+SR13009,Sielox LLC,Terminated,622,438,1
+SR37708,Xilogix LLC,Terminated,1237.5,6450,17
+SR41898,Golden Sun Holdings International Limited,Terminated,5500,3652.88,3
+SalesRecord,ItemCode,CostType,ItemStatus,Quantity,UnitPrice,MRC,MRC_USD,Currency,snapshot_date
+24606,MRC,Old Direct Cost (for RFQ only),Renewed,10,386400,386400,2434.32,JPY,2026-09-09
+24606,MRC,Old Direct Cost (for RFQ only),Terminated,6,386400,386400,2434.32,JPY,2026-09-09
+24606,MRC,Old Direct Cost (for RFQ only),Replaced,36,1093.7,1093.7,1093.7,USD,2026-09-09
+24606,MRC,Old Direct Cost (for RFQ only),Terminated,12,900,900,900,USD,2026-09-09
+24606,MRC,Old Direct Cost (for RFQ only),Renewed,12,900,900,900,USD,2026-09-09
+24606,MRC,Old Direct Cost (for RFQ only),Reassigned,12,900,900,900,USD,2026-09-09
+sr_id,customer_name,status_name,mrc_natural,mrc_usd,contract_currency,billing_platform
+24606,THE BANK OF NEW YORK CO INC,Terminated,0,0,,Billing in CAB

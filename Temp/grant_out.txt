@@ -1,0 +1,71 @@
+Traceback (most recent call last):
+  File "C:\dev\consoleconnect\Temp\grant_edp_source_access.py", line 9, in <module>
+    dataset = client.get_dataset(SOURCE)
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\cloud\bigquery\client.py", line 919, in get_dataset
+    api_response = self._call_api(
+        retry,
+    ...<5 lines>...
+        query_params=query_params,
+    )
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\cloud\bigquery\client.py", line 861, in _call_api
+    return call()
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\api_core\retry\retry_unary.py", line 294, in retry_wrapped_func
+    return retry_target(
+        target,
+    ...<3 lines>...
+        on_error=on_error,
+    )
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\api_core\retry\retry_unary.py", line 156, in retry_target
+    next_sleep = _retry_error_helper(
+        exc,
+    ...<6 lines>...
+        timeout,
+    )
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\api_core\retry\retry_base.py", line 214, in _retry_error_helper
+    raise final_exc from source_exc
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\api_core\retry\retry_unary.py", line 147, in retry_target
+    result = target()
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\cloud\_http\__init__.py", line 482, in api_request
+    response = self._make_request(
+        method=method,
+    ...<6 lines>...
+        extra_api_info=extra_api_info,
+    )
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\cloud\_http\__init__.py", line 341, in _make_request
+    return self._do_request(
+           ~~~~~~~~~~~~~~~~^
+        method, url, headers, data, target_object, timeout=timeout
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\cloud\_http\__init__.py", line 379, in _do_request
+    return self.http.request(
+           ~~~~~~~~~~~~~~~~~^
+        url=url, method=method, headers=headers, data=data, timeout=timeout
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\auth\transport\requests.py", line 535, in request
+    self.credentials.before_request(auth_request, method, url, request_headers)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\auth\credentials.py", line 239, in before_request
+    self._blocking_refresh(request)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\auth\credentials.py", line 202, in _blocking_refresh
+    self.refresh(request)
+    ~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\oauth2\credentials.py", line 409, in refresh
+    ) = reauth.refresh_grant(
+        ~~~~~~~~~~~~~~~~~~~~^
+        request,
+        ^^^^^^^^
+    ...<6 lines>...
+        enable_reauth_refresh=self._enable_reauth_refresh,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\jjkli\AppData\Local\Programs\Python\Python313\Lib\site-packages\google\oauth2\reauth.py", line 349, in refresh_grant
+    raise exceptions.RefreshError(
+        "Reauthentication is needed. Please run `gcloud auth application-default login` to reauthenticate."
+    )
+google.auth.exceptions.RefreshError: Reauthentication is needed. Please run `gcloud auth application-default login` to reauthenticate.

@@ -1,0 +1,11 @@
+op_srs_edp,op_srs_costitems,matching,mismatching,total_edp_mrc,total_ci_mrc
+32334,14619,12329,20005,32836736,78859983
+sr_key,customer_name,edp_mrc,cost_items_mrc,cost_lines
+SR12113,Masergy Communications Inc.,12,695.4,37
+SR134845,"Turner Broadcasting System, Inc.",1700,5591.91,28
+SR158365,KDDI Corporation (KDD001),3000,12000,22
+SR155515,Refinitiv Limited,2790,15976.8,11
+SR124275,Refinitiv Limited,975,7234.64,14
+SR189800,Arelion Hong Kong Limited,1774.45,4624,21
+SR146349,StarHub Ltd,1720,8893.31,55
+SR84258,SINGAPORE TELECOMMUNICATIONS LIMITED,6100,37070.33,53

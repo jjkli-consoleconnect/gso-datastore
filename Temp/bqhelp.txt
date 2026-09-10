@@ -1,0 +1,827 @@
+Python script for interacting with BigQuery.
+
+
+USAGE: bq.py [--global_flags] <command> [--command_flags] [args]
+
+
+mk                         Create a dataset, table, view, or transfer
+                           configuration with this name.
+
+                           See 'bq help mk' for more information.
+
+                           Examples:
+                           bq mk new_dataset
+                           bq mk new_dataset.new_table
+                           bq --dataset_id=new_dataset mk table
+                           bq mk -t new_dataset.newtable
+                           name:integer,value:string
+                           bq mk --view='select 1 as num' new_dataset.newview
+                           (--view_udf_resource=path/to/file.js)
+                           bq mk --materialized_view='select sum(x) as sum_x
+                           from dataset.table'
+                           new_dataset.newview
+                           bq mk -d --data_location=EU new_dataset
+                           bq mk -d --source_dataset=src_dataset new_dataset
+                           (requires allowlisting)
+                           bq mk -d
+                           --external_source=aws-
+                           glue://<aws_arn_of_glue_database>
+                           --connection_id=<connection>
+                           new_dataset
+                           bq mk --transfer_config --target_dataset=dataset
+                           --display_name=name
+                           -p='{"param":"value"}' --data_source=source
+                           --schedule_start_time={schedule_start_time}
+                           --schedule_end_time={schedule_end_time}
+                           bq mk --transfer_run --start_time={start_time}
+                           --end_time={end_time}
+                           projects/p/locations/l/transferConfigs/c
+                           bq mk --transfer_run --run_time={run_time}
+                           projects/p/locations/l/transferConfigs/c
+                           bq mk --reservation --project_id=project
+                           --location=us reservation_name
+                           bq mk --reservation_assignment
+                           --reservation_id=project:us.dev
+                           --job_type=QUERY --assignee_type=PROJECT
+                           --assignee_id=myproject
+                           bq mk --reservation_assignment
+                           --reservation_id=project:us.dev
+                           --job_type=QUERY --assignee_type=FOLDER
+                           --assignee_id=123
+                           bq mk --reservation_assignment
+                           --reservation_id=project:us.dev
+                           --job_type=QUERY --assignee_type=ORGANIZATION
+                           --assignee_id=456
+                           bq mk --reservation_group --project_id=project
+                           --location=us
+                           reservation_group_name
+                           bq mk --connection --connection_type='CLOUD_SQL'
+                           --properties='{"instanceId" : "instance",
+                           "database" : "db", "type" : "MYSQL" }'
+                           --connection_credential='{"username":"u",
+                           "password":"p"}'
+                           --project_id=proj --location=us --display_name=name
+                           new_connection
+                           bq mk --row_access_policy --policy_id=new_policy
+                           --target_table='existing_dataset.existing_table'
+                           --grantees='user:user1@google.com,group:group1@google
+                           .com'
+                           --filter_predicate='Region="US"'
+                           bq mk --source=file.json
+                           bq mk --migration_workflow --location=us
+                           --config_file=file.json
+
+                           Flags for mk:
+
+                             frontend.command_make:
+                               --add_tags: Tags to attach to the dataset or
+                                 table. The format is namespaced key:value pair
+                                 like "1234567/my_tag_key:my_tag_value,test-
+                                 project123/environment:production"
+                               --assignee_id: Project/folder/organization ID, to
+                                 which the reservation is assigned. Used in
+                                 conjunction with --reservation_assignment.
+                               --assignee_type: <PROJECT|FOLDER|ORGANIZATION>:
+                                 Type of assignees for the reservation
+                                 assignment. Options include:
+                                 PROJECT
+                                 FOLDER
+                                 ORGANIZATION
+                                 Used in conjunction with
+                                 --reservation_assignment.
+                               --autoscale_max_slots: Number of slots to be
+                                 scaled when needed. Autoscale will be enabled
+                                 when setting this.
+                                 (an integer)
+                               --[no]capacity_commitment: Creates a capacity
+                                 commitment. You do not need to specify a
+                                 capacity commitment id, this will be assigned
+                                 automatically.
+                               --clustering_fields: Comma-separated list of
+                                 field names that specifies the columns on which
+                                 a table is clustered.
+                               --concurrency: Deprecated, please use
+                                 target_job_concurrency instead.
+                                 (an integer)
+                               --config_file: The file containing the JSON of
+                                 the migration workflow to create.
+                               --[no]connection: Create a connection.
+                               --connection_credential: Connection credential in
+                                 JSON format.
+                               --connection_id: The connection specifying the
+                                 credentials to be used to read external
+                                 storage. The connection_id can have the form
+                                 "<project_id>.<location_id>.<connection_id>" or
+                                 "projects/<project_id>/locations/<location_id>/
+                                 connections/<connection_id>".
+                               --connection_type: <CLOUD_SQL|AWS|Azure|SQL_DATA_
+                                 SOURCE|CLOUD_SPANNER|CLOUD_RESOURCE|SPARK>:
+                                 Connection type. Valid values:
+                                 CLOUD_SQL
+                                 AWS
+                                 Azure
+                                 SQL_DATA_SOURCE
+                                 CLOUD_SPANNER
+                                 CLOUD_RESOURCE
+                                 SPARK
+                               --connector_configuration: Connection
+                                 configuration for connector in JSON format.
+                               --data_location: Geographic location of the data.
+                                 See details at https://cloud.google.com/bigquer
+                                 y/docs/locations.
+                               --data_source: Data source for the created
+                                 transfer configuration.
+                                 (default: '')
+                               -d,--[no]dataset: Create dataset with this name.
+                                 (default: 'false')
+                               --default_kms_key: Defines default KMS key name
+                                 for all newly objects created in the dataset.
+                                 Table/Model creation request can override this
+                                 default.
+                               --default_partition_expiration: Default partition
+                                 expiration for all partitioned tables in the
+                                 dataset, in seconds. The storage in a partition
+                                 will have an expiration time of its partition
+                                 time plus this value. If this property is set,
+                                 partitioned tables created in the dataset will
+                                 use this instead of default_table_expiration.
+                                 (an integer)
+                               --default_table_expiration: Default lifetime, in
+                                 seconds, for newly-created tables in a dataset.
+                                 Newly-created tables will have an expiration
+                                 time of the current time plus this value.
+                                 (an integer)
+                               --description: Description of the dataset, table
+                                 or connection.
+                               --destination_kms_key: Cloud KMS key for
+                                 encryption of the destination table data.
+                               --display_name: Display name for the created
+                                 transfer configuration or connection.
+                                 (default: '')
+                               --edition: <STANDARD|ENTERPRISE|ENTERPRISE_PLUS>:
+                                 Type of editions for the reservation or
+                                 capacity commitment. Options include:
+                                 STANDARD
+                                 ENTERPRISE
+                                 ENTERPRISE_PLUS
+                                 Used in conjunction with --reservation or
+                                 --capacity_commitment.
+                                 STANDARD cannot be used together with
+                                 --capacity_commitment.
+                               --[no]enable_refresh: Whether to enable automatic
+                                 refresh of the materialized views when the base
+                                 table is updated. If not set, the default is
+                                 true.
+                               --end_time: Exclusive end time of the range of
+                                 transfer runs. The format for the time stamp is
+                                 RFC3339 UTC "Zulu". Example:
+                                 2019-01-20T06:50:0Z. Read more:
+                                 https://developers.google.com/protocol-buffers/
+                                 docs/reference/google.protobuf#google.protobuf.
+                                 Timestamp
+                               --expiration: Expiration time, in seconds from
+                                 now, of a table.
+                                 (an integer)
+                               --external_catalog_dataset_options: Options
+                                 defining open source compatible datasets living
+                                 in the BigQuery catalog. Contains metadata of
+                                 open source database or default storage
+                                 location represented by the current dataset.
+                                 The value can be either an inline JSON or a
+                                 path to a file containing a JSON definition.
+                               --external_catalog_table_options: Options
+                                 defining the metadata of an open source
+                                 compatible table living in the BigQuery
+                                 catalog. Contains metadata of open source table
+                                 including serializer/deserializer information,
+                                 table schema, etc. The value can be either an
+                                 inline JSON or a path to a file containing a
+                                 JSON definition.
+                               --external_source: External source that backs
+                                 this dataset. Currently only AWS Glue databases
+                                 are supported (format aws-
+                                 glue://<AWS_ARN_OF_GLUE_DATABASE>)
+                               --external_table_definition: Specifies a table
+                                 definition to use to create an external table.
+                                 The value can be either an inline table
+                                 definition or a path to a file containing a
+                                 JSON table definition. The format of inline
+                                 definition is "schema@format=uri@connection",
+                                 where "schema@", "format=", and "connection"
+                                 are optional and "format"has the default value
+                                 of "CSV" if not specified.
+                               --federated_app_client_id: [Experimental] The
+                                 application (client) id of the Active Directory
+                                 application to use with Azure federated
+                                 identity.
+                               --[no]federated_aws: [Experimental] Federated
+                                 identity.
+                                 (default: 'true')
+                               --[no]federated_azure: [Experimental] Federated
+                                 identity for Azure.
+                               --file_format: <PARQUET>: The file format the
+                                 table data of a BigLake table is stored in.
+                               --file_set_spec_type:
+                                 <FILE_SYSTEM_MATCH|NEW_LINE_DELIMITED_MANIFEST>
+                                 : Specifies how to discover files given source
+                                 URIs. Options include:
+                                 FILE_SYSTEM_MATCH: expand source URIs by
+                                 listing files from the underlying object store.
+                                 This is the default behavior.
+                                 NEW_LINE_DELIMITED_MANIFEST: indicate the
+                                 source URIs provided are new line delimited
+                                 manifest files, where each line contains a URI
+                                 with no wild-card.
+                               --filter_predicate: A SQL boolean expression that
+                                 represents the rows defined by this row access
+                                 policy.
+                               -f,--[no]force: Bypass existence checks and
+                                 ignore errors that the object already exists.
+                                 (default: 'false')
+                               --grantees: Comma separated list of iam_member
+                                 users or groups that specifies the initial
+                                 members that the row-level access policy should
+                                 be created with.
+                               --iam_role_id: [Experimental] IAM role id.
+                               --[no]ignore_idle_slots: If false, any query
+                                 running in this reservation will be able to use
+                                 idle slots from other reservations.
+                               --job_type: <QUERY|PIPELINE|ML_EXTERNAL|BACKGROUN
+                                 D|SPARK|CONTINUOUS|BACKGROUND_CHANGE_DATA_CAPTU
+                                 RE|BACKGROUND_COLUMN_METADATA_INDEX|BACKGROUND_
+                                 SEARCH_INDEX_REFRESH>: Type of jobs to create
+                                 reservation assignment for. Options include:
+                                 QUERY
+                                 PIPELINE
+                                 Note if PIPELINE reservations are created, then
+                                 load jobs will just use the slots from this
+                                 reservation and slots from shared pool won't be
+                                 used.
+                                 ML_EXTERNAL
+                                 BigQuery ML jobs that use services external to
+                                 BQ for model training will use slots from this
+                                 reservation. Slots used by these jobs are not
+                                 preemptible, i.e., they are not available for
+                                 other jobs running in the reservation. These
+                                 jobs will not utilize idle slots from other
+                                 reservations.
+                                 BACKGROUND
+                                 BACKGROUND_CHANGE_DATA_CAPTURE
+                                 BigQuery CDC background merge will use
+                                 BACKGROUND_CHANGE_DATA_CAPTURE reservations to
+                                 execute if created, but will fall back to using
+                                 BACKGROUND reservations if one does not exist.
+                                 BACKGROUND_COLUMN_METADATA_INDEX
+                                 BACKGROUND_SEARCH_INDEX_REFRESH
+                                 SPARK
+                                 BigQuery Spark jobs that use services external
+                                 to BQ for executing SPARK procedure job. Slots
+                                 used by these jobs are not preemptible, i.e.,
+                                 they are not available for other jobs running
+                                 in the reservation. These jobs will not utilize
+                                 idle slots from other reservations.
+                               --kms_key_name: Cloud KMS key name used for
+                                 encryption.
+                               --label: A label to set on the table or dataset.
+                                 The format is "key:value";
+                                 repeat this option to specify a list of values
+                               --managed_table_type: <NATIVE|BIGLAKE>:
+                                 Destination table type for the created transfer
+                                 configuration.
+                               --materialized_view: [Experimental] Create
+                                 materialized view with this Standard SQL query.
+                               --max_concurrency: Deprecated, please use
+                                 target_job_concurrency instead.
+                                 (an integer)
+                               --max_slots: The overall max slots for the
+                                 reservation. It needs to be specified together
+                                 with --scaling_mode. It cannot be used together
+                                 with --autoscale_max_slots. It is a private
+                                 preview feature.
+                                 (an integer)
+                               --max_staleness: INTERVAL value that determines
+                                 the maximum staleness allowed when querying a
+                                 materialized view or an external table. By
+                                 default no staleness is allowed. Examples of
+                                 valid max_staleness values: 1 day: "0-0 1
+                                 0:0:0"; 1 hour: "0-0 0 1:0:0".See more
+                                 explanation about the INTERVAL values: https://
+                                 cloud.google.com/bigquery/docs/reference/standa
+                                 rd-sql/data-types#interval_type
+                               --max_time_travel_hours: Optional. Define the max
+                                 time travel in hours. The value can be from 48
+                                 to 168 hours (2 to 7 days). The default value
+                                 is 168 hours if this is not set.
+                                 (an integer)
+                               --metadata_cache_mode: <AUTOMATIC|MANUAL>:
+                                 Enables metadata cache for an external table
+                                 with a connection. Specify AUTOMATIC to
+                                 automatically refresh the cached metadata.
+                                 Specify MANUAL to stop the automatic refresh.
+                               --[no]migration_workflow: Create a migration
+                                 workflow.
+                               --[no]multi_region_auxiliary: If true, capacity
+                                 commitment or reservation is placed in the
+                                 organizations auxiliary region which is
+                                 designated for disaster recovery purposes.
+                                 Applicable only for US and EU locations.
+                                 Available only for allow-listed projects.
+                                 (default: 'false')
+                               --[no]no_auto_scheduling: Disables automatic
+                                 scheduling of data transfer runs for this
+                                 configuration.
+                                 (default: 'false')
+                               --notification_pubsub_topic: Pub/Sub topic used
+                                 for notification after transfer run completed
+                                 or failed.
+                                 (default: '')
+                               --object_metadata: <DIRECTORY|SIMPLE>: Object
+                                 Metadata Type used to create Object Tables.
+                                 SIMPLE is the only supported value to create an
+                                 Object Table containing a directory listing of
+                                 objects found at the uri in
+                                 external_data_definition.
+                               -p,--params: Parameters for the created transfer
+                                 configuration in JSON format. For example:
+                                 --params='{"param":"param_value"}'
+                               --[no]parquet_enable_list_inference: Use schema
+                                 inference specifically for Parquet LIST logical
+                                 type.
+                                 It checks whether the LIST node is in the
+                                 standard form as documented in:
+                                 https://github.com/apache/parquet-
+                                 format/blob/master/LogicalTypes.md#lists
+                                 <optional | required> group <name> (LIST) {
+                                 repeated group list {
+                                 <optional | required> <element-type> element;
+                                 }
+                                 }
+                                 Returns the "element" node in
+                                 list_element_node. The corresponding field for
+                                 the LIST node in the converted schema is
+                                 treated as if the node has the following
+                                 schema:
+                                 repeated <element-type> <name>
+                                 This means nodes "list" and "element" are
+                                 omitted.
+
+                                 Otherwise, the LIST node must be in one of the
+                                 forms described by the backward-compatibility
+                                 rules as documented in:
+                                 https://github.com/apache/parquet-
+                                 format/blob/master/LogicalTypes.md#backward-
+                                 compatibility-rules
+                                 <optional | required> group <name> (LIST) {
+                                 repeated <element-type> <element-name>
+                                 }
+                                 Returns the <element-name> node in
+                                 list_element_node. The corresponding field for
+                                 the LIST node in the converted schema is
+                                 treated as if the node has the following
+                                 schema:
+                                 repeated <element-type> <name>
+                                 This means the element node is omitted.
+                                 (default: 'false')
+                               --[no]parquet_enum_as_string: Infer Parquet ENUM
+                                 logical type as STRING (instead of BYTES by
+                                 default).
+                                 (default: 'false')
+                               --plan: <FLEX|MONTHLY|ANNUAL|THREE_YEAR>:
+                                 Commitment plan for this capacity commitment.
+                                 Plans cannot be deleted before their commitment
+                                 period is over. Options include:
+                                 FLEX
+                                 MONTHLY
+                                 ANNUAL
+                                 THREE_YEAR
+                               --policy_id: Policy ID used to create row access
+                                 policy for.
+                               --[no]preserve_ascii_control_characters: Whether
+                                 to preserve embedded Ascii Control characters
+                                 in CSV External table
+                                 (default: 'false')
+                               --principal: IAM Principal Identifier (v2 format)
+                                 of an entity for more specific reservation
+                                 routing. Only users and service accounts are
+                                 supported at the moment. An empty string is
+                                 equivalent to not specifying a principal.
+                                 (default: '')
+                               --priority: <HIGH|INTERACTIVE|BATCH>: Reservation
+                                 assignment default job priority. Only available
+                                 for whitelisted reservations. Options include:
+                                 HIGH
+                                 INTERACTIVE
+                                 BATCH
+                               --properties: Connection properties in JSON
+                                 format.
+                               --range_partitioning: Enables range partitioning
+                                 on the table. The format should be
+                                 "field,start,end,interval". The table will be
+                                 partitioned based on the value of the field.
+                                 Field must be a top-level, non-repeated INT64
+                                 field. Start, end, and interval are INT64
+                                 values defining the ranges.
+                               --reference_file_schema_uri: provide a reference
+                                 file with the table schema, currently enabled
+                                 for the formats: AVRO, PARQUET, ORC.
+                               --refresh_interval_ms: Milliseconds that must
+                                 have elapsed since last refresh until the
+                                 materialized view can be automatically
+                                 refreshed again. If not set, the default value
+                                 is "1800000" (30 minutes).
+                                 (an integer)
+                               --refresh_window_days: Refresh window days for
+                                 the created transfer configuration.
+                                 (default: '0')
+                                 (an integer)
+                               --renewal_plan:
+                                 <FLEX|MONTHLY|ANNUAL|THREE_YEAR|NONE>: The plan
+                                 this capacity commitment is converted to after
+                                 committed period ends. Options include:
+                                 NONE
+                                 FLEX
+                                 MONTHLY
+                                 ANNUAL
+                                 THREE_YEAR
+                                 NONE can only be used in conjunction with
+                                 --edition,
+                                 while FLEX and MONTHLY cannot be used together
+                                 with --edition.
+                               --[no]require_partition_filter: Whether to
+                                 require partition filter for queries over this
+                                 table. Only apply to partitioned table.
+                               --[no]reservation: Creates a reservation
+                                 described by this identifier.
+                               --[no]reservation_assignment: Create a
+                                 reservation assignment. If assignment ID not
+                                 specified, it will be assigned automatically.
+                               --[no]reservation_group: Creates a reservation
+                                 group described by this identifier.
+                               --reservation_group_name: Reservation group name
+                                 used to create reservation for, it can be full
+                                 path or just the reservation group name. Used
+                                 in conjunction with --reservation.
+                               --reservation_id: Reservation ID used to create
+                                 reservation assignment for. Used in conjunction
+                                 with --reservation_assignment.
+                               --[no]row_access_policy: Creates a row access
+                                 policy.
+                               --run_time: Specific time for a transfer run. The
+                                 format for the time stamp is RFC3339 UTC
+                                 "Zulu". Example: 2019-01-20T06:50:0Z. Read
+                                 more: https://developers.google.com/protocol-bu
+                                 ffers/docs/reference/google.protobuf#google.pro
+                                 tobuf.Timestamp
+                               --scaling_mode:
+                                 <AUTOSCALE_ONLY|IDLE_SLOTS_ONLY|ALL_SLOTS>: The
+                                 scaling mode for the reservation. Available
+                                 only for reservations enrolled in the Max Slots
+                                 Preview. It needs to be specified together with
+                                 --max_slots. It cannot be used together with
+                                 --autoscale_max_slots. Options include:
+                                 AUTOSCALE_ONLY
+                                 IDLE_SLOTS_ONLY
+                                 ALL_SLOTS
+                               --schedule: Data transfer schedule. If the data
+                                 source does not support a custom schedule, this
+                                 should be empty. If empty, the default value
+                                 for the data source will be used. The specified
+                                 times are in UTC. Examples of valid format:
+                                 1st,3rd monday of month 15:30, every wed,fri of
+                                 jan,jun 13:15, and first sunday of quarter
+                                 00:00. See more explanation about the format
+                                 here: https://cloud.google.com/appengine/docs/f
+                                 lexible/python/scheduling-jobs-with-cron-
+                                 yaml#the_schedule_format
+                               --schedule_end_time: Time to stop scheduling
+                                 transfer runs for the given transfer
+                                 configuration. If empty, the default value for
+                                 the end time will be used to schedule runs
+                                 indefinitely.The format for the time stamp is
+                                 RFC3339 UTC "Zulu". Read more:
+                                 https://developers.google.com/protocol-buffers/
+                                 docs/reference/google.protobuf#google.protobuf.
+                                 Timestamp
+                               --schedule_start_time: Time to start scheduling
+                                 transfer runs for the given transfer
+                                 configuration. If empty, the default value for
+                                 the start time will be used to start runs
+                                 immediately.The format for the time stamp is
+                                 RFC3339 UTC "Zulu". Read more:
+                                 https://developers.google.com/protocol-buffers/
+                                 docs/reference/google.protobuf#google.protobuf.
+                                 Timestamp
+                               --scheduling_policy_concurrency: Cap on target
+                                 per-project concurrency of jobs running within
+                                 the reservation.
+                                 (an integer)
+                               --scheduling_policy_max_slots: Cap on target rate
+                                 of slot consumption per-project within the
+                                 reservation.
+                                 (an integer)
+                               --schema: Either a filename or a comma-separated
+                                 list of fields in the form name[:type].
+                                 (default: '')
+                               --service_account_name: Service account used as
+                                 the credential on the transfer config.
+                                 (default: '')
+                               --slots: The number of baseline slots associated
+                                 with the reservation.
+                                 (default: '0')
+                                 (an integer)
+                               --source: Path to file with JSON payload for an
+                                 update
+                               --source_dataset: When set to a dataset
+                                 reference, creates a Linked Dataset pointing to
+                                 the source dataset.
+                               --start_time: Start time of the range of transfer
+                                 runs. The format for the time stamp is RFC3339
+                                 UTC "Zulu". Example: 2019-01-20T06:50:0Z. Read
+                                 more: https://developers.google.com/protocol-bu
+                                 ffers/docs/reference/google.protobuf#google.pro
+                                 tobuf.Timestamp
+                               --storage_billing_model: <LOGICAL|PHYSICAL>:
+                                 Optional. Sets the storage billing model for
+                                 the dataset.
+                                 LOGICAL - switches to logical billing model
+                                 PHYSICAL - switches to physical billing model.
+                               --storage_uri: The fully qualified location
+                                 prefix of the external folder where the table
+                                 data of a BigLake table is stored. The "*"
+                                 wildcard character is not allowed. The URI
+                                 should be in the format
+                                 "gs://bucket/path_to_table/".
+                               -t,--[no]table: Create table with this name.
+                                 (default: 'false')
+                               --table_format: <ICEBERG>: The table format the
+                                 metadata only snapshots of a BigLake table are
+                                 stored in.
+                               --target_dataset: Target dataset for the created
+                                 transfer configuration.
+                                 (default: '')
+                               --target_job_concurrency: Sets a soft upper bound
+                                 on the number of jobs that can run concurrently
+                                 in the reservation. Default value is 0 which
+                                 means that concurrency target will be
+                                 automatically computed by the system.
+                                 (an integer)
+                               --target_table: The table to create the row
+                                 access policy for.
+                               --tenant_id: [Experimental] Tenant id.
+                               --time_partitioning_expiration: Enables time
+                                 based partitioning on the table and sets the
+                                 number of seconds for which to keep the storage
+                                 for the partitions in the table. The storage in
+                                 a partition will have an expiration time of its
+                                 partition time plus this value.
+                                 (an integer)
+                               --time_partitioning_field: Enables time based
+                                 partitioning on the table and the table will be
+                                 partitioned based on the value of this field.
+                                 If time based partitioning is enabled without
+                                 this value, the table will be partitioned based
+                                 on the loading time.
+                               --time_partitioning_type: Enables time based
+                                 partitioning on the table and set the type. The
+                                 default value is DAY, which will generate one
+                                 partition per day. Other supported values are
+                                 HOUR, MONTH, and YEAR.
+                               --[no]transfer_config: Create transfer config.
+                               --[no]transfer_run: Creates transfer runs for a
+                                 time range.
+                                 (default: 'false')
+                               --[no]use_avro_logical_types: If sourceFormat is
+                                 set to "AVRO", indicates whether to enable
+                                 interpreting logical types into their
+                                 corresponding types (ie. TIMESTAMP), instead of
+                                 only using their raw types (ie. INTEGER).
+                                 (default: 'true')
+                               --[no]use_idle_slots: If true, any query running
+                                 in this reservation will be able to use idle
+                                 slots from other reservations. Used if
+                                 ignore_idle_slots is None.
+                                 (default: 'true')
+                               --[no]use_legacy_sql: The choice of using Legacy
+                                 SQL for the query is optional. If not
+                                 specified, the server will automatically
+                                 determine the dialect based on query
+                                 information, such as dialect prefixes. If no
+                                 prefixes are found, it will default to Legacy
+                                 SQL.
+                               --view: Create view with this SQL query.
+                                 (default: '')
+                               --view_udf_resource: The URI or local filesystem
+                                 path of a code file to load and evaluate
+                                 immediately as a User-Defined Function resource
+                                 used by the view.;
+                                 repeat this option to specify a list of values
+
+                             frontend.flags:
+                               --date_format: Format elements that define how
+                                 the DATE values are formatted in the input
+                                 files. For example, "MM/DD/YYYY".
+                               --datetime_format: Format elements that define
+                                 how the DATETIME values are formatted in the
+                                 input files. For example, "MM/DD/YYYY
+                                 HH24:MI:SS.FF3".
+                               --event_driven_schedule: Event driven schedule in
+                                 json format. Example: --event_driven_schedule='
+                                 {"pubsub_subscription": "projects/project-
+                                 id/subscriptions/subscription-id"}'. This flag
+                                 should not be used with --schedule,
+                                 --no_auto_scheduling, --schedule_start_time or
+                                 --schedule_end_time.
+                               --null_marker: An optional custom string that
+                                 will represent a NULL valuein CSV External
+                                 table data.
+                               --null_markers: An optional list of custom
+                                 strings that will represent a NULL valuein CSV
+                                 External table data.
+                                 (default: '')
+                                 (a comma separated list)
+                               --parquet_map_target_type: <ARRAY_OF_STRUCT>:
+                                 Specifies the parquet map type. If it is equal
+                                 to ARRAY_OF_STRUCT, then a map_field will be
+                                 represented with a repeated struct (that has
+                                 key and value fields).
+                               --source_column_match: <POSITION|NAME>: Controls
+                                 the strategy used to match loaded columns to
+                                 the schema in CSV External table data. Options
+                                 include:
+                                 POSITION: matches by position. This option
+                                 assumes that the columns are ordered the same
+                                 way as the schema.
+                                 NAME: matches by name. This option reads the
+                                 header row as column names and reorders columns
+                                 to match the field names in the schema.
+                               --time_format: Format elements that define how
+                                 the TIME values are formatted in the input
+                                 files. For example, "HH24:MI:SS.FF3".
+                               --time_zone: Default time zone that will apply
+                                 when parsing timestamp values that have no
+                                 specific time zone. For example,
+                                 "America/Los_Angeles".
+                               --timestamp_format: Format elements that define
+                                 how the TIMESTAMP values are formatted in the
+                                 input files. For example, "MM/DD/YYYY
+                                 HH24:MI:SS.FF3".
+                               --timestamp_target_precision: Precisions (maximum
+                                 number of total digits in base 10) for second
+                                 of TIMESTAMP types that are allowed to the
+                                 destination table for autodetection mode.
+
+                                 Available for the formats: CSV.
+
+                                 For the CSV Format, Possible values include:
+                                 Not Specified, [], or [6]: timestamp(6) for all
+                                 auto detected TIMESTAMP columns.
+                                 [6, 12]: timestamp(6) for all auto detected
+                                 TIMESTAMP columns that have less than 6 digits
+                                 of subseconds. timestamp(12) for all auto
+                                 detected TIMESTAMP columns that have more than
+                                 6 digits of subseconds.
+                                 [12]: timestamp(12) for all auto detected
+                                 TIMESTAMP columns.
+
+                                 The order of the elements in this array is
+                                 ignored.
+                                 Inputs that have higher precision than the
+                                 highest target precision will be truncated.
+                                 (default: '')
+                                 (a comma separated list)
+
+                             absl.flags:
+                               --flagfile: Insert flag definitions from the
+                                 given file into the command line.
+                                 (default: '')
+                               --undefok: comma-separated list of flag names
+                                 that it is okay to specify on the command line
+                                 even if the program does not define a flag with
+                                 that name.  IMPORTANT: flags in this list that
+                                 have arguments MUST use the --flag=value
+                                 format.
+                                 (default: '')
+
+
+Global flags:
+
+C:\Users\jjkli\AppData\Local\Google\Cloud SDK\google-cloud-sdk\platform/bq\bq.py:
+  --alpha: <none|query_max_slots>: Naming an alpha feature with this flag will
+    cause it be used.;
+    repeat this option to specify a list of values
+    (default: '')
+  --api: API endpoint to talk to.
+    (default: 'https://bigquery.googleapis.com')
+  --api_version: API version to use.
+    (default: 'v2')
+  --apilog: Log all API requests and responses to the file or directory
+    specified by this flag. Also accepts "stdout" and "stderr". Specifying the
+    empty string will direct to stdout.
+  --bigquery_discovery_api_key: API key to use for discovery doc requests.
+  --bigqueryrc: Path to configuration file. The configuration file specifies new
+    defaults for any flags, and can be overridden by specifying the flag on the
+    command line. If the --bigqueryrc flag is not specified, the BIGQUERYRC
+    environment variable is used. If that is not specified, the path
+    "~/.bigqueryrc" is used.
+    (default: 'C:\\Users\\jjkli\\.bigqueryrc')
+  --ca_certificates_file: Location of CA certificates file.
+    (default: '')
+  --dataset_id: Default dataset reference to use for requests (Ignored when not
+    applicable.). Can be set as "project:dataset" or "dataset". If project is
+    missing, the value of the project_id flag will be used.
+    (default: '')
+  --[no]debug_mode: Show tracebacks on Python exceptions.
+    (default: 'false')
+  --[no]disable_ssl_validation: Disables HTTPS certificates validation. This is
+    off by default.
+    (default: 'false')
+  --discovery_file: Filename for JSON document to read for the base BigQuery API
+    discovery, excluding Model, Routine, RowAccessPolicy, and IAMPolicy APIs.
+    (default: '')
+  --[no]enable_gdrive: When set to true, requests new OAuth token with GDrive
+    scope. When set to false, requests new OAuth token without GDrive scope.
+    Unless authenticated with a service account, to use this flag, the
+    use_google_auth flag must be set to false.
+    (default: 'true')
+  --[no]enable_resumable_uploads: Enables resumable uploads over HTTP (Only
+    applies to load jobs that load data from local files.). Defaults to True.
+  --[no]fingerprint_job_id: Whether to use a job id that is derived from a
+    fingerprint of the job configuration. This will prevent the same job from
+    running multiple times accidentally.
+    (default: 'false')
+  --format: <none|json|prettyjson|csv|sparse|pretty>: Format for command output.
+    Options include:
+    pretty: formatted table output
+    sparse: simpler table output
+    prettyjson: easy-to-read JSON format
+    json: maximally compact JSON
+    csv: csv format with header
+    The first three are intended to be human-readable, and the latter three are
+    for passing to another program. If no format is selected, one will be chosen
+    based on the command run.
+  --[no]headless: Whether this bq session is running without user interaction.
+    This affects behavior that expects user interaction, like whether debug_mode
+    will break into the debugger and lowers the frequency of informational
+    printing.
+    (default: 'false')
+  --httplib2_debuglevel: Instruct httplib2 to print debugging messages by
+    setting debuglevel to the given value.
+    (an integer)
+  --job_id: A unique job_id to use for the request. If not specified, this
+    client will generate a job_id. Applies only to commands that launch jobs,
+    such as cp, extract, load, and query.
+  --job_property: Additional key-value pairs to include in the properties field
+    of the job configuration;
+    repeat this option to specify a list of values
+  --[no]jobs_query_use_request_id: If true, sends request_id in jobs.query
+    request.
+    (default: 'false')
+  --[no]jobs_query_use_results_from_response: If true, results from jobs.query
+    response are used.
+    (default: 'true')
+  --location: Default geographic location to use when creating datasets or
+    determining where jobs should run (Ignored when not applicable.)
+  --max_rows_per_request: Specifies the max number of rows to return per read.
+    (an integer)
+  --[no]mtls: If set will use mtls client certificate on connections to
+    BigQuery.
+    (default: 'false')
+  --project_id: Default project to use for requests.
+    (default: '')
+  --proxy_address: The name or IP address of the proxy host to use for
+    connecting to GCP.
+    (default: '')
+  --proxy_password: The password to use when authenticating with proxy host.
+    (default: '')
+  --proxy_port: The port number to use to connect to the proxy host.
+    (default: '')
+  --proxy_username: The user name to use when authenticating with proxy host.
+    (default: '')
+  -q,--[no]quiet: If True, ignore status updates while jobs are running.
+    (default: 'false')
+  --request_reason: A reason for making the request intended to be recorded in
+    audit logging.
+  -sync,--[no]synchronous_mode: If True, wait for command completion before
+    returning, and use the job completion status for error codes. If False,
+    simply create the job, and use the success of job creation as the error
+    code.
+    (default: 'true')
+  --trace: A tracing token to include in api requests.
+  --universe_domain: The universe domain to use in TPC domains.
+  --[no]use_gcloud_config: If true, use gcloud config to override default flag
+    values.
+    (default: 'true')
+  --[no]use_gcloud_config_cache: If true, use a persistent cache for gcloud
+    config and credentials.
+    (default: 'false')
+  --[no]use_lep: Use a LEP endpoint based on the operation's location.
+    (default: 'false')
+  --[no]use_regional_endpoints: Use a regional endpoint based on the operation's
+    location.
+    (default: 'false')
+  --[no]use_rep: Use a REP endpoint based on the operation's location.
+    (default: 'false')
+
+Run 'bq.py help' to see the list of available commands.
+
+Try --helpfull to get a list of all flags.

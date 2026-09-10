@@ -1,0 +1,2 @@
+BigQuery error in ls operation: Invalid filter flag values: 'displayName'.
+Expected format: '--filter=dataSourceIds:id1,id2'

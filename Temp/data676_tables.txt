@@ -1,0 +1,3 @@
+BigQuery error in ls operation: Access Denied: Dataset edp-prod-lake-data-
+warehouse:DATA_676: Permission bigquery.tables.list denied on dataset edp-prod-
+lake-data-warehouse:DATA_676 (or it may not exist).

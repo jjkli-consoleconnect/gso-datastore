@@ -1,0 +1,3 @@
+                                                name                                                     displayName         dataSourceId       state    
+ -------------------------------------------------------------------------------------------------- ---------------------- ----------------- ----------- 
+  projects/14417857267/locations/europe-west2/transferConfigs/6a293222-0000-2a3f-b18f-94eb2c1cf75e   CostItemSnapSnapshot   scheduled_query   SUCCEEDED  

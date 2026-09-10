@@ -1,0 +1,450 @@
+{
+  "creationTime": "1788944155378",
+  "etag": "ESRblNNUlPZ3nuligCtzzw==",
+  "id": "pccw-internal-virt-agent-uat:Restricted.TicketMRC",
+  "kind": "bigquery#table",
+  "lastModifiedTime": "1789020478222",
+  "location": "EU",
+  "numActiveLogicalBytes": "0",
+  "numBytes": "0",
+  "numLongTermBytes": "0",
+  "numLongTermLogicalBytes": "0",
+  "numRows": "0",
+  "numTotalLogicalBytes": "0",
+  "schema": {
+    "fields": [
+      {
+        "mode": "NULLABLE",
+        "name": "Incident_Number",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Status",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "CaseType",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Reported_Date",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Responded_Date",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "LastResolvedDate",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Submit_Date",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Closed_Date",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Assigned_Group",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Assignee",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Submitter",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "ReportedBy",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Closed_By",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Categorization_Tier_1",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Categorization_Tier_2",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Categorization_Tier_3",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Prod_ID",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Product_Family",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "ProductDescription",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Fault_Cause",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Fault_Cause_Detail",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "inserted_at",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Summary",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Fault_Location",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Service_Type",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AIFaultCause",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Priority",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Urgency",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "SRno",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Cust_ID",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Carrier",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Customer_Name",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "GSMP_Circuit_ID",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Related_Item_Request_ID",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Related_Item_Description",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Related_Item_Ticket_ID",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Related_Item_Association_Type",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "MRC_USD",
+        "type": "NUMERIC"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Monthly_Revenue",
+        "type": "NUMERIC"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "TrueMTTR_mins",
+        "type": "INTEGER"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "GCSC_1st_Customer_Update",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "GCSC_2nd_Customer_Update",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "GCSC_3rd_Customer_Update",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "TicketProcess",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "MTTR_Status",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "MTTRFailed",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "MTTRFailed_mins",
+        "type": "INTEGER"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "MTTRFailed_hrs",
+        "type": "FLOAT"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "MTTRPassed",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "MTTRPassed_mins",
+        "type": "INTEGER"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "MTTRPassed_hrs",
+        "type": "FLOAT"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "1st_Response_Minutes",
+        "type": "INTEGER"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "1st_Response_PassFail",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "2nd_Response_Minutes",
+        "type": "INTEGER"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "2nd_Response_PassFail",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "3rd_Response_Minutes",
+        "type": "INTEGER"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "3rd_Response_PassFail",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "LastModifiedDateHD",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "WorkLog_ID",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "WorkLog_Type",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "WorkLog_Submit_Date",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "WorkLog_Submitter",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "LastModifiedDateWL",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "Last_Modified_By",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "ExtractedDescription",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "WorkLog_Count",
+        "type": "INTEGER"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "WorkLog_Sequence",
+        "type": "INTEGER"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AIFirstResponse",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AIFirstResponseTimestamp",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AIFirstResponse_Audit",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AIAtFault",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AIAtFault_Audit",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AI_FaultDomain",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AI_FaultCause",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AI_FaultCause_Audit",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AI_CarrierVendor",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AI_PrimarySymptom",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AI_LikelyRootCause",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AI_ConfidenceScore",
+        "type": "FLOAT"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AI_EvidenceSummary",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AI_DeviceName",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "AI_CircuitReference",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "pagerduty_escalation_count",
+        "type": "INTEGER"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "pagerduty_escalation_policies_used",
+        "type": "STRING"
+      }
+    ]
+  },
+  "selfLink": "https://bigquery.googleapis.com/bigquery/v2/projects/pccw-internal-virt-agent-uat/datasets/Restricted/tables/TicketMRC",
+  "tableReference": {
+    "datasetId": "Restricted",
+    "projectId": "pccw-internal-virt-agent-uat",
+    "tableId": "TicketMRC"
+  },
+  "type": "VIEW",
+  "view": {
+    "privacyPolicy": {},
+    "query": "-- Restricted.TicketMRC view: ticket + MRC enrichment.\n-- SR product enrichment joined from Mirror.EDP-SR \u2014 the EU cross-region copy of\n-- GSOEDPLink.EDP-SR (daily mirror of edp-prod-lake-data-warehouse.DATA_676.dw_hub_sr).\n-- Previously joined GSO.SHRPeople.\nSELECT\n  -- HelpDeskAllNOC fields (Ticket Table)\n  h.Incident_Number,\n  h.Status,\n  h.CaseType,\n  h.ReportedDate as Reported_Date,\n  h.RespondedDate as Responded_Date,\n  h.LastResolvedDate,\n  h.Submit_Date,\n  h.Closed_Date,\n  h.Assigned_Group,\n  h.Assignee,\n  h.Submitter,\n  h.ReportedBy,\n  h.Closed_By,\n  h.Categorization_Tier_1,\n  h.Categorization_Tier_2,\n  h.Categorization_Tier_3,\n  COALESCE(NULLIF(h.Prod_ID, ''), shr.Product_ID) AS Prod_ID,\n  COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) AS Product_Family,\n  COALESCE(NULLIF(h.ProductDescription, ''), shr.ProductDescription) AS ProductDescription,\n  h.Fault_Cause,\n  h.FaultCauseDetail as Fault_Cause_Detail,\n  h.inserted_at,\n  h.Summary,\n  h.Fault_Location,\n  h.Service_Type,\n  ai.AI_FaultCause AS AIFaultCause,\n  h.Priority,\n  h.Urgency,\n  h.SRno,\n  h.Cust_ID,\n  h.Carrier,\n  h.Customer_Name,\n  h.GSMP_Circuit_ID,\n  NULLIF(ARRAY_TO_STRING(h.RelatedItemRequestID, ' | '), '') AS Related_Item_Request_ID,\n  NULLIF(ARRAY_TO_STRING(h.RelatedItemDescription, ' | '), '') AS Related_Item_Description,\n  NULLIF(ARRAY_TO_STRING(h.RelatedItemRelatedTicketID, ' | '), '') AS Related_Item_Ticket_ID,\n  NULLIF(ARRAY_TO_STRING(h.RelatedItemAssociationType, ' | '), '') AS Related_Item_Association_Type,\n  ci.MRC_USD,\n  shr.Monthly_Revenue,\n  h.TrueMTTR_mins,\n  h.GCSC_1st_Customer_Update,\n  h.GCSC_2nd_Customer_Update,\n  h.GCSC_3rd_Customer_Update,\n  CASE WHEN h.Status = 'Assigned' THEN \"1-Assigned\"\n        WHEN h.Status = 'In Progress' THEN \"2-In Progress\"\n        WHEN h.Status = 'Pending' THEN \"3-Pending\"\n        WHEN h.Status = 'Resolved' THEN \"4-Resolved\"\n        WHEN h.Status = 'Closed' THEN \"5-Closed\"\n        WHEN h.Status = 'Cancelled' THEN \"6-Cancelled\"\n    ELSE NULL \n  END AS TicketProcess,\n  -- MTTR Status (Custom): pass if > 0 and <= 240 mins; 7 days (10080 mins) for Mobility & IoT\n  CASE\n    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)\n    THEN 'MTTRPassed'\n    ELSE 'MTTRFailed'\n  END AS MTTR_Status,\n  CASE\n    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)\n    THEN h.Incident_Number\n    ELSE NULL\n  END AS MTTRFailed,\n  CASE\n    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)\n    THEN h.TrueMTTR_mins\n    ELSE NULL\n  END AS MTTRFailed_mins,\n  CASE\n    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)\n    THEN h.TrueMTTR_mins / 60\n    ELSE NULL\n  END AS MTTRFailed_hrs,\n  CASE\n    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)\n    THEN h.Incident_Number\n    ELSE NULL\n  END AS MTTRPassed,\n  CASE\n    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)\n    THEN h.TrueMTTR_mins\n    ELSE NULL\n  END AS MTTRPassed_mins,\n  CASE\n    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)\n    THEN h.TrueMTTR_mins / 60\n    ELSE NULL\n  END AS MTTRPassed_hrs,\n  -- KPI Calculations (Custom)\n  CASE\n    WHEN h.GCSC_1st_Customer_Update IS NOT NULL AND h.ReportedDate IS NOT NULL\n    THEN TIMESTAMP_DIFF(h.GCSC_1st_Customer_Update, h.ReportedDate, MINUTE)\n    ELSE NULL\n  END AS `1st_Response_Minutes`,\n  CASE\n    WHEN h.GCSC_1st_Customer_Update IS NOT NULL AND h.ReportedDate IS NOT NULL\n    THEN CASE \n      WHEN TIMESTAMP_DIFF(h.GCSC_1st_Customer_Update, h.ReportedDate, MINUTE) <= 30 THEN 'PASS'\n      ELSE 'FAIL'\n    END\n    ELSE 'No Response'\n  END AS `1st_Response_PassFail`,\n  CASE\n    WHEN h.GCSC_1st_Customer_Update IS NOT NULL AND h.GCSC_2nd_Customer_Update IS NOT NULL\n    THEN TIMESTAMP_DIFF(h.GCSC_2nd_Customer_Update, h.GCSC_1st_Customer_Update, MINUTE)\n    ELSE NULL\n  END AS `2nd_Response_Minutes`,\n  CASE\n    WHEN h.GCSC_1st_Customer_Update IS NOT NULL AND h.GCSC_2nd_Customer_Update IS NOT NULL\n    THEN CASE \n      WHEN TIMESTAMP_DIFF(h.GCSC_2nd_Customer_Update, h.GCSC_1st_Customer_Update, MINUTE) <= 90 THEN 'PASS'\n      ELSE 'FAIL'\n    END\n    ELSE 'No Response'\n  END AS `2nd_Response_PassFail`,\n  CASE\n    WHEN h.GCSC_2nd_Customer_Update IS NOT NULL AND h.GCSC_3rd_Customer_Update IS NOT NULL\n    THEN TIMESTAMP_DIFF(h.GCSC_3rd_Customer_Update, h.GCSC_2nd_Customer_Update, MINUTE)\n    ELSE NULL\n  END AS `3rd_Response_Minutes`,\n  CASE\n    WHEN h.GCSC_2nd_Customer_Update IS NOT NULL AND h.GCSC_3rd_Customer_Update IS NOT NULL\n    THEN CASE\n      WHEN TIMESTAMP_DIFF(h.GCSC_3rd_Customer_Update, h.GCSC_2nd_Customer_Update, MINUTE) <= 90 THEN 'PASS'\n      ELSE 'FAIL'\n    END\n    ELSE 'No Response'\n  END AS `3rd_Response_PassFail`,\n  h.LastModifiedDate as LastModifiedDateHD,\n  \n  -- WorkLogAllNOC fields\n  w.WorkLog_ID,\n  w.WorkLog_Type,\n  w.WorkLog_Submit_Date,\n  w.WorkLog_Submitter,\n  w.Last_Modified_Date as LastModifiedDateWL,\n  w.Last_Modified_By,\n  w.ExtractedDescription,\n  \n  -- Analytics\n  COUNT(w.WorkLog_ID) OVER (PARTITION BY h.Incident_Number) as WorkLog_Count,\n  ROW_NUMBER() OVER (PARTITION BY h.Incident_Number ORDER BY w.WorkLog_Submit_Date) as WorkLog_Sequence,\n\n  -- AI Infused Fields\n  ai.AIFirstResponse,\n  ai.AIFirstResponseTimestamp,\n  ai.AIFirstResponse_Audit,\n  ai.AIAtFault,\n  ai.AIAtFault_Audit,\n  ai.AI_FaultDomain,\n  ai.AI_FaultCause,\n  ai.AI_FaultCause_Audit,\n  ai.AI_CarrierVendor,\n  ai.AI_PrimarySymptom,\n  ai.AI_LikelyRootCause,\n  ai.AI_ConfidenceScore,\n  ai.AI_EvidenceSummary,\n  ai.AI_DeviceName,\n  ai.AI_CircuitReference,\n\n  -- PagerDuty escalation fields\n  pd.pagerduty_escalation_count,\n  pd.pagerduty_escalation_policies_used\n\nFROM\n  `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h\n  \nLEFT JOIN\n  `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` w\n  ON h.Incident_Number = w.Incident_Number\n\nLEFT JOIN (\n  -- SR product enrichment now sourced from the daily EDP mirror (GSOEDPLink.EDP-SR)\n  SELECT\n    CONCAT('SR', CAST(sr_id AS STRING)) AS SRNo,\n    product_id AS Product_ID,\n    product_family AS Product_Family,\n    product_description AS ProductDescription,\n    monthly_revenue AS Monthly_Revenue\n  FROM `pccw-internal-virt-agent-uat.Mirror.EDP-SR`\n) shr\n  ON CASE\n    WHEN REGEXP_REPLACE(h.SRno, r'\"', '') LIKE 'SR%'\n      THEN REGEXP_REPLACE(h.SRno, r'\"', '')\n    ELSE CONCAT('SR', REGEXP_REPLACE(h.SRno, r'\"', ''))\n  END = shr.SRNo\n\nLEFT JOIN (\n  SELECT\n    CONCAT('SR', CAST(SalesRecord AS STRING)) AS SalesRecordKey,\n    SUM(MRC_USD) AS MRC_USD\n  FROM `pccw-internal-virt-agent-uat.Mirror.all_cost_items_report`\n  GROUP BY SalesRecordKey\n) ci\n  ON CASE\n    WHEN REGEXP_REPLACE(h.SRno, r'\"', '') LIKE 'SR%'\n      THEN REGEXP_REPLACE(h.SRno, r'\"', '')\n    ELSE CONCAT('SR', REGEXP_REPLACE(h.SRno, r'\"', ''))\n  END = ci.SalesRecordKey\n\nLEFT JOIN (\n  SELECT\n    Incident_Number,\n    AIFirstResponse,\n    AIFirstResponseTimestamp,\n    AIFirstResponse_Audit,\n    AIAtFault,\n    AIAtFault_Audit,\n    AI_FaultDomain,\n    AI_FaultCause,\n    AI_FaultCause_Audit,\n    AI_CarrierVendor,\n    AI_PrimarySymptom,\n    AI_LikelyRootCause,\n    AI_ConfidenceScore,\n    AI_EvidenceSummary,\n    AI_DeviceName,\n    AI_CircuitReference,\n    ROW_NUMBER() OVER (\n      PARTITION BY Incident_Number\n      ORDER BY ClassifiedAt DESC\n    ) AS rn\n  FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`\n) ai\n  ON ai.Incident_Number = h.Incident_Number\n  AND ai.rn = 1\n\nLEFT JOIN (\n  SELECT\n    RemedyIncidentNumber,\n    COUNT(*) AS pagerduty_escalation_count,\n    STRING_AGG(escalation_policy_label, ', ' ORDER BY sort_key) AS pagerduty_escalation_policies_used\n  FROM (\n    SELECT DISTINCT\n      RemedyIncidentNumber,\n      escalation_policy_label,\n      CASE\n        WHEN REGEXP_CONTAINS(escalation_policy_label, r'T[0-9]+') THEN CAST(REGEXP_EXTRACT(escalation_policy_label, r'T([0-9]+)') AS INT64)\n        ELSE 999\n      END AS sort_key\n    FROM `pccw-internal-virt-agent-uat.GSO.PagerDutyIncidentCleansed`\n    WHERE RemedyIncidentNumber IS NOT NULL\n      AND escalation_policy_label IS NOT NULL\n  )\n  GROUP BY RemedyIncidentNumber\n) pd\n  ON h.Incident_Number = pd.RemedyIncidentNumber\n\nORDER BY\n  h.Incident_Number,\n  w.WorkLog_Submit_Date\n",
+    "useLegacySql": false
+  }
+}

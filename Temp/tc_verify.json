@@ -1,0 +1,25 @@
+{
+  "dataSourceId": "scheduled_query",
+  "datasetRegion": "europe-west2",
+  "destinationDatasetId": "GSOEDPLink",
+  "displayName": "EDP-SR-daily-mirror",
+  "emailPreferences": {},
+  "name": "projects/14417857267/locations/europe-west2/transferConfigs/6aa1ff96-0000-2c08-8faf-d4f547f94300",
+  "nextRunTime": "2026-09-10T23:00:00Z",
+  "ownerInfo": {
+    "email": "jjkli@consoleconnect.com"
+  },
+  "params": {
+    "query": "CREATE OR REPLACE TABLE `pccw-internal-virt-agent-uat.GSOEDPLink.EDP-SR` CLUSTER BY sr_id, status_name, sales_region AS SELECT * FROM `edp-prod-lake-data-warehouse.DATA_676.dw_hub_sr`;"
+  },
+  "schedule": "every day 23:00",
+  "scheduleOptions": {},
+  "scheduleOptionsV2": {
+    "timeBasedSchedule": {
+      "schedule": "every day 23:00"
+    }
+  },
+  "state": "SUCCEEDED",
+  "updateTime": "2026-09-10T06:35:25.265772Z",
+  "userId": "6533834101130353896"
+}

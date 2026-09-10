@@ -1,0 +1,9 @@
+WARNING: This command is using service account impersonation. All API calls will be executed as [14417857267-compute@developer.gserviceaccount.com].
+ERROR: (gcloud.auth.print-access-token) PERMISSION_DENIED: Failed to impersonate [14417857267-compute@developer.gserviceaccount.com]. Make sure the account that's trying to impersonate it has access to the service account itself and the "roles/iam.serviceAccountTokenCreator" role. Permission 'iam.serviceAccounts.getAccessToken' denied on resource (or it may not exist). Remediate access with this Troubleshooter URL or share it with your administrator - https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMWEwODU5Yy03ZmI5LTdlNWEtYmY4NC04NTkzOGI4NTc3N2ESAA%3D%3D . This command is authenticated as jjkli@consoleconnect.com which is the active account specified by the [core/account] property. Impersonation is used to impersonate 14417857267-compute@developer.gserviceaccount.com. 
+- '@type': type.googleapis.com/google.rpc.ErrorInfo
+  domain: iam.googleapis.com
+  metadata:
+    error_info_id: CiQwMWEwODU5Yy03ZmI5LTdlNWEtYmY4NC04NTkzOGI4NTc3N2ESAA==
+    permission: iam.serviceAccounts.getAccessToken
+    troubleshooter_url: https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMWEwODU5Yy03ZmI5LTdlNWEtYmY4NC04NTkzOGI4NTc3N2ESAA%3D%3D
+  reason: IAM_PERMISSION_DENIED

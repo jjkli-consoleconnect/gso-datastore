@@ -279,3 +279,6 @@ Key ID:
 1
 API Key: 
 !ZDtGmfygV9.gPHp
+
+Bearer Token:
+1:!ZDtGmfygV9.gPHp
