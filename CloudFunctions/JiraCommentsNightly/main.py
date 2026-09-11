@@ -321,19 +321,31 @@ def mark_progress(
     ).result()
 
 
-def get_secret(secret_id, project_id="pccw-internal-virtual-agent"):
-    """Retrieve a secret, falling back to the newest enabled version if the latest alias is destroyed."""
+def get_secret(secret_id, project_id="pccw-internal-virtual-agent", max_attempts=3):
+    """Retrieve a secret, retrying latest before falling back to an enabled version."""
     client = secretmanager.SecretManagerServiceClient()
     secret_path = f"projects/{project_id}/secrets/{secret_id}"
     latest_name = f"{secret_path}/versions/latest"
+    latest_error = None
 
-    try:
-        response = client.access_secret_version(request={"name": latest_name})
-        return response.payload.data.decode("UTF-8")
-    except Exception as exc:
-        logging.warning(
-            f"Latest secret alias failed for {secret_id}: {exc}. Trying newest enabled version."
-        )
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = client.access_secret_version(request={"name": latest_name})
+            return response.payload.data.decode("UTF-8")
+        except Exception as exc:
+            latest_error = exc
+            if attempt < max_attempts:
+                delay = 2 ** (attempt - 1)
+                logging.warning(
+                    f"Latest secret alias failed for {secret_id} "
+                    f"(attempt {attempt}/{max_attempts}): {exc}. Retrying in {delay}s."
+                )
+                time.sleep(delay)
+            else:
+                logging.warning(
+                    f"Latest secret alias failed for {secret_id} after "
+                    f"{max_attempts} attempts: {exc}. Trying newest enabled version."
+                )
 
     try:
         versions = list(client.list_secret_versions(request={"parent": secret_path}))
@@ -351,11 +363,15 @@ def get_secret(secret_id, project_id="pccw-internal-virtual-agent"):
             response = client.access_secret_version(request={"name": chosen_name})
             return response.payload.data.decode("UTF-8")
     except Exception as fallback_exc:
-        logging.error(
-            f"Failed to recover fallback secret for {secret_id}: {fallback_exc}"
-        )
+        raise RuntimeError(
+            f"Failed to access latest or recover fallback secret {secret_id}: "
+            f"latest error: {latest_error}; fallback error: {fallback_exc}"
+        ) from fallback_exc
 
-    raise
+    raise RuntimeError(
+        f"Failed to access secret {secret_id}: latest error: {latest_error}; "
+        "no enabled fallback version was found"
+    ) from latest_error
 
 
 def insert_rows_resilient(
@@ -403,13 +419,9 @@ def insert_rows_resilient(
 
 
 def load_config():
-    try:
-        api_token = get_secret("jira-api-token")
-        user_email = get_secret("jira-user-email")
-        return {"jira_api_token": api_token, "jira_user": user_email}
-    except Exception as e:
-        logging.error(f"Failed to load config from Secret Manager: {e}")
-        return None
+    api_token = get_secret("jira-api-token")
+    user_email = get_secret("jira-user-email")
+    return {"jira_api_token": api_token, "jira_user": user_email}
 
 
 def _body_to_string(body):
@@ -453,18 +465,8 @@ def _body_to_string(body):
 
 
 def fetch_and_sync_jira_comments_nightly():
-    config = load_config()
-    if config is None:
-        return
-
     jira_base_url = "https://consoleconnect.atlassian.net"
     search_url = f"{jira_base_url}/rest/api/3/search/jql"
-    username = (
-        config.get("jira_user")
-        or config.get("jira_user_email")
-        or "jjkli@consoleconnect.com"
-    )
-    api_token = config.get("jira_api_token")
 
     run_id = str(uuid.uuid4())
     table_id = "JiraComments"
@@ -493,6 +495,14 @@ def fetch_and_sync_jira_comments_nightly():
             message="Pipeline started",
             status="RUNNING",
         )
+
+        config = load_config()
+        username = (
+            config.get("jira_user")
+            or config.get("jira_user_email")
+            or "jjkli@consoleconnect.com"
+        )
+        api_token = config.get("jira_api_token")
 
         ensure_soft_delete_columns(client, dataset_id, table_id)
 

@@ -10,6 +10,8 @@ Central runbooks and operational notes for this repo.
 - `HELIX_ServiceSpec_v8_Field_Matrix.md` - field and operation matrix for Helix ticket automation.
 - `Jira_to_Helix_Automation_Admin_Instructions.md` - production Jira automation setup for the Jira-to-Helix function.
 - `Jira_to_Helix_Duplication_Automation_Blueprint.md` - Jira-to-Helix duplication design and workflow blueprint.
+- `Linxa_CDR_Datapipe_Architecture.md` - planning notes for a future Linxa CDR API-to-BigQuery sync through the existing VPC connector pattern.
+- `Linxa_API_Integration_Guide.md` - detailed Linxa API connection, authentication, CDR, pagination, VPC, and security guidance.
 - `RemedyJira.md` - schema and semantics reference for `pccw-internal-virtual-agent.wanda_ds.RemedyJira`.
 - `RemedyJiraWorkLogView.md` - LLM-oriented schema and semantics reference for `pccw-internal-virtual-agent.wanda_ds.RemedyJiraWorkLogView`.
 - `VPC_UAT.md` - UAT VPC connector and Cloud Functions deployment guidance.

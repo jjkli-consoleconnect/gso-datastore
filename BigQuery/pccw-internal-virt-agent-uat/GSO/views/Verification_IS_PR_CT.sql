@@ -37,6 +37,29 @@ FROM `pccw-internal-virt-agent-uat.GSO.VerificationVerifierPerformance` AS v
 FULL OUTER JOIN `pccw-internal-virt-agent-uat.GSO.VerificationPRRequesterPerformance` AS r
   ON v.reportdate = r.reportdate
  AND v.verifier_name = r.requester_name
-JOIN `pccw-internal-virt-agent-uat.GSO.VerificationTeamNames` AS t
-  ON COALESCE(v.verifier_name, r.requester_name) = t.FullNameRawData
+WHERE COALESCE(v.verifier_name, r.requester_name) IN (
+  'Ng, Carmen (Verification Team)',
+  'Tong, Edmond, KW',
+  'Kwok, SW, Gavin',
+  'Lau, Shing Chung, Ivanson',
+  'Leung, Judy, HL',
+  'Lo, Kwun Wa Kelvin',
+  'Lee, Lok Sze',
+  'Yau, Ho Hsuan',
+  'Chee, Winny Grace',
+  'Leung, Christopher SL',
+  'To, Lai Shan Lisa',
+  'Lau, Olivia, SY',
+  'Law, Alex',
+  'Granado, Ana Lea',
+  'Divina, Cristina',
+  'Ho, Emily',
+  'Yim, Emily, TH',
+  'Rai, Mark Brian',
+  'Pang, Patten Ting Pong',
+  'Chan, Priscilla',
+  'Yuen, Rebecca',
+  'Lee, Roy, HY',
+  'Ng, Sara'
+)
 ORDER BY reportdate, person_name;
