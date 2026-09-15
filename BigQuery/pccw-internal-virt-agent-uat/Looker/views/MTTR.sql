@@ -19,7 +19,7 @@ WITH ValidFaults AS (
     'Network connectivity down','Network Issue','Non-Customer Application','Non-Customer equipment failure',
     'Non-Customer Fault Issues','Other(Console)','Others','Partner Network','Performance',
     'PCCW equipment','Prolonged Maintenance','Right When Test','Satellite Interference',
-    'Service Layer Issue(Console)','Speed config (ôno negotiateö) not aligned between Console and Cust router',
+    'Service Layer Issue(Console)','Speed config (??no negotiate??) not aligned between Console and Cust router',
     'Support Service Outage','Switch Data','Untraced Fault','VAS - Non-PCCW Fault Issues',
     'VAS - PCCW Fault Issues','VLAN configs not correctly setup','Voice re-route','x-connect faulty cabling'
   ]) AS fault

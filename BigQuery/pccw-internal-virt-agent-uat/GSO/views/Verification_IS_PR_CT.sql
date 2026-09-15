@@ -63,3 +63,4 @@ WHERE COALESCE(v.verifier_name, r.requester_name) IN (
   'Ng, Sara'
 )
 ORDER BY reportdate, person_name;
+

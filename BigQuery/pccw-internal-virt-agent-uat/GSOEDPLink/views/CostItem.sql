@@ -262,3 +262,4 @@ enriched AS (
 SELECT
 	enriched.*
 FROM enriched
+

@@ -11,7 +11,8 @@ WITH base AS (
   FROM `pccw-internal-virtual-agent.LookerStudio.CCAI_Dialogflow`
   WHERE 
     requisitionStartTime IS NOT NULL 
-    AND DATE_TRUNC(DATE(requisitionStartTime), MONTH) = DATE_TRUNC(CURRENT_DATE(), MONTH)
+    AND DATE_TRUNC(DATE(requisitionStartTime), MONTH) <= DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 MONTH), MONTH)
+    AND DATE(requisitionStartTime) >= DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 2 MONTH), MONTH)
   QUALIFY ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY requisitionStartTime DESC) = 1
 ),
 

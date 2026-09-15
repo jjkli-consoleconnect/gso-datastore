@@ -482,3 +482,4 @@ LEFT JOIN feedback_latest fb
 LEFT JOIN pagerduty_escalation_latest sc
   ON TRIM(CAST(core.Incident_Number AS STRING)) = TRIM(CAST(sc.PagerDuty_Escalation_Incident_Number AS STRING))
 
+
