@@ -1,7 +1,0 @@
-Waiting on bqjob_r5421fc3b8f0ffbaa_000001a089ee65f6_1 ... (0s) Current status: RUNNING                                                                                      Waiting on bqjob_r5421fc3b8f0ffbaa_000001a089ee65f6_1 ... (0s) Current status: DONE   
-Incident_Number,SRno,MRC_USD,Monthly_Revenue
-INC000001167123,"""SR120826""",0,600
-INC000001225053,"""SR122905""",3503.72,2650
-INC000001227384,"""SR122905""",3503.72,2650
-INC000001227944,"""SR122907""",4060,2365
-INC000001235818,"""SR122907""",4060,2365

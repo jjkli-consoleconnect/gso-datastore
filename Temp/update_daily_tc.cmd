@@ -1,3 +1,0 @@
-@echo off
-rem Update the daily mirror transfer config's params.query to the clustered SQL
-call bq update --transfer_config --location=europe-west2 --params="{\"query\":\"CREATE OR REPLACE TABLE `pccw-internal-virt-agent-uat.GSOEDPLink.EDP-SR` CLUSTER BY sr_id, status_name, sales_region AS SELECT * FROM `edp-prod-lake-data-warehouse.DATA_676.dw_hub_sr`;\"}" projects/14417857267/locations/europe-west2/transferConfigs/6aa1ff96-0000-2c08-8faf-d4f547f94300

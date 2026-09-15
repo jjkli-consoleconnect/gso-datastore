@@ -1,6 +1,0 @@
-sr_id,product_id,product_family,product_description
-147594,,,
-147587,,,
-109529,TRB,Fiber,Backhaul de-muxing and B-end local loop
-109524,VPP,Voice,Voice (IP Interconnect)
-109526,IST,Voice,Bilateral Traffic

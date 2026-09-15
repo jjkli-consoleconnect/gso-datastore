@@ -20,7 +20,7 @@ WITH FlattenedTierTwo AS (
     AND NOT LOWER(COALESCE(t.Summary, '')) LIKE 'insight alert%'
     AND (
       t.Key IS NULL
-      OR REGEXP_CONTAINS(t.Key, r'(TXCE|GSDT|ITHD|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE|CCPROV)')
+      OR REGEXP_CONTAINS(t.Key, r'(TXCE|ITHD|MSS|IOTCE|TAC|VOICECE|CCAS|SMSCE)')
     )
 ),
 RankedJira AS (
@@ -82,6 +82,23 @@ LatestAI AS (
       AI_CircuitReference,
       ROW_NUMBER() OVER (PARTITION BY Incident_Number ORDER BY ClassifiedAt DESC) AS rn
     FROM `pccw-internal-virt-agent-uat.GSO.HDWL_AIInfused`
+  )
+  WHERE rn = 1
+),
+SHR_Dedup AS (
+  -- One SHRPeople row per normalized SR number (prefer a row that carries Product_Family)
+  SELECT * EXCEPT(rn)
+  FROM (
+    SELECT
+      REGEXP_REPLACE(REGEXP_EXTRACT(UPPER(REGEXP_REPLACE(TRIM(SRNo), r'[^A-Z0-9]', '')), r'(\d+)'), r'^0+', '') AS sr_num,
+      CustName,
+      Product_ID,
+      Product_Family,
+      ProductDescription,
+      SR_Status,
+      ROW_NUMBER() OVER (PARTITION BY REGEXP_REPLACE(REGEXP_EXTRACT(UPPER(REGEXP_REPLACE(TRIM(SRNo), r'[^A-Z0-9]', '')), r'(\d+)'), r'^0+', '') ORDER BY CASE WHEN Product_Family IS NOT NULL THEN 0 ELSE 1 END) AS rn
+    FROM `pccw-internal-virt-agent-uat.GSO.SHRPeople`
+    WHERE SRNo IS NOT NULL AND TRIM(SRNo) != ''
   )
   WHERE rn = 1
 )
@@ -993,10 +1010,7 @@ SELECT
     WHEN hd.ProductDescription IS NULL THEN CONCAT(shr.Product_ID, ' ', shr.`ProductDescription`)
     ELSE hd.ProductDescription
   END AS ProductID,
-  CASE 
-    WHEN hd.Product_Family IS NULL THEN shr.Product_Family
-    ELSE hd.Product_Family
-  END AS ProductFamily,
+  NULLIF(COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family), '') AS ProductFamily,
   shr.SR_Status AS SR_Status,
   st.SR_Ref AS JiraSRNo,
   COALESCE(st.SyncTime, hd.inserted_at) AS SyncTime,
@@ -1019,7 +1033,7 @@ SELECT
 FROM `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` AS hd
 FULL OUTER JOIN UniqueJira AS st
   ON hd.Incident_Number = st.RemedyTicketNumber_flat AND st.unique_rank = 1
-LEFT JOIN `pccw-internal-virt-agent-uat.GSO.SHRPeople` AS shr
-  ON CONCAT('SR', st.SR_Ref) = shr.SRNo
+LEFT JOIN SHR_Dedup AS shr
+  ON REGEXP_REPLACE(REGEXP_EXTRACT(UPPER(REGEXP_REPLACE(TRIM(st.SR_Ref), r'[^A-Z0-9]', '')), r'(\d+)'), r'^0+', '') = shr.sr_num
 LEFT JOIN LatestAI AS ai
   ON ai.Incident_Number = hd.Incident_Number

@@ -1,7 +1,0 @@
-[
-  {"name":"snapshot_date","type":"DATE"},
-  {"name":"SR_Status","type":"STRING"},
-  {"name":"Circuit_Owner","type":"STRING"},
-  {"name":"sr_count","type":"INTEGER"},
-  {"name":"updated_at","type":"TIMESTAMP"}
-]

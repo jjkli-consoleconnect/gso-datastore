@@ -1,3 +1,0 @@
-Waiting on bqjob_r494ec56f87a9fdd3_000001a085ae8a30_1 ... (0s) Current status: DONE   
-source_rows,mirror_rows
-254101,254101

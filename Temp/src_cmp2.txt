@@ -1,8 +1,0 @@
-src_minus_mirror,mirror_minus_src
-0,0
-rows_,sum_mrc,nonnull_mrc
-254101,333736720.58,129526
-rows_,sum_mrc,nonnull_mrc
-254101,333736720.58,129526
-srs_in_edp_source,srs_in_cost_items,matching,mismatching,total_edp_mrc,total_cost_items_mrc
-254101,67856,146740,107362,333736721,801786662

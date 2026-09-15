@@ -1,2 +1,0 @@
-@echo off
-call bq query --use_legacy_sql=false --format=csv "SELECT Incident_Number, SRno, MRC_USD, Monthly_Revenue FROM `pccw-internal-virt-agent-uat.Restricted.TicketMRC` WHERE SRno IS NOT NULL AND Monthly_Revenue IS NOT NULL LIMIT 5"

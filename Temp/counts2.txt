@@ -1,2 +1,0 @@
-total,distinct_sr
-254101,254101

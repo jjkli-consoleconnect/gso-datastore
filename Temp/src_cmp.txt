@@ -1,9 +1,0 @@
-src_minus_mirror,mirror_minus_src
-0,0
-rows_,sum_mrc,nonnull_mrc
-254101,333736720.58,129526
-rows_,sum_mrc,nonnull_mrc
-254101,333736720.58,129526
-BigQuery error in query operation: Error processing job 'pccw-internal-virt-
-agent-uat:bqjob_r1fba4f1d0596e702_000001a089123959_1': Not found: Dataset pccw-
-internal-virt-agent-uat:Mirror was not found in location europe-west2
