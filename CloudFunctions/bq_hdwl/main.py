@@ -506,10 +506,46 @@ def manage_gmail_labels(
         raise
 
 
+RFC822_HEADER_RE = re.compile(
+    r"^(date|from|to|cc|bcc|subject|sent|reply-to|mime-version|content-type"
+    r"|content-transfer-encoding|message-id|delivered-to|x-mailer)\s*:",
+    re.IGNORECASE,
+)
+
+
+def sanitize_csv_text(text: str) -> Tuple[str, int]:
+    """Strip forwarded-email artifacts from CSV export payloads.
+
+    BMC Remedy exports intermittently wrap the CSV rows in a forwarded email body:
+    separator rules ('====', '++++'), RFC-822 headers ('Date: ...'), and blank lines.
+    Those lines parse as 1-3 column rows and trip the row-width guard, failing the
+    whole run. Only unambiguous junk is removed; any line containing a quote
+    character is left untouched so quoted multi-line fields stay intact.
+    """
+    removed = 0
+    kept = []
+    in_quotes = False
+    for line in text.splitlines():
+        if not in_quotes:
+            stripped = line.strip()
+            if not stripped:
+                removed += 1
+                continue
+            if not re.search(r"[A-Za-z0-9]", stripped) or RFC822_HEADER_RE.match(stripped):
+                removed += 1
+                continue
+        # Track whether we are inside a quoted (possibly multi-line) CSV field so
+        # continuation lines of quoted values are never treated as junk.
+        in_quotes = in_quotes ^ (line.count('"') % 2 == 1)
+        kept.append(line)
+    return "\n".join(kept), removed
+
+
 def robust_parse_csv(csv_data: bytes) -> List[List[str]]:
     """Parse CSV with multiple encoding attempts"""
     encodings = ["utf-8", "utf-16", "latin-1", "cp1252"]
     candidates: List[List[List[str]]] = []
+    junk_removed_counts: List[int] = []
 
     def try_parse(
         text: str, delimiter: str, quote_none: bool = False
@@ -527,6 +563,8 @@ def robust_parse_csv(csv_data: bytes) -> List[List[str]]:
         try:
             text = csv_data.decode(encoding)
             text = text.lstrip("\ufeff")  # Remove BOM
+            text, junk_removed = sanitize_csv_text(text)
+            junk_removed_counts.append(junk_removed)
 
             sample = text[:4096]
             sniffer_delimiter = None
