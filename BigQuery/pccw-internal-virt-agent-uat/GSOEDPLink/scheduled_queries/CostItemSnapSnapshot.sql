@@ -90,13 +90,87 @@ start_scope AS (
     AND StartBillingDate BETWEEN DATE_TRUNC((SELECT source_snapshot_date FROM meta), YEAR)
       AND DATE_SUB(DATE_ADD(DATE_TRUNC((SELECT source_snapshot_date FROM meta), YEAR), INTERVAL 1 YEAR), INTERVAL 1 DAY)
 ),
+-- v5 2026-09-16: stop_gap aligned to dashboard. Confirmed parity:
+-- total=51, avg(StopGapDays)=321.8 (322d), SUM(MRC_USD)=53.9k, SUM(EstimatedStopGapCostUSD)=333.3k
+-- Changes vs v4: (1) no ItemCode filter for stop gap (dashboard includes NRC),
+-- (2) no SRTerminationDate range (dashboard scorecards have no date dimension;
+--     verified numbers identical with and without date filter),
+-- (3) all metrics computed over ALL in-scope rows (no OpenStopGapFlag restriction).
+stop_base AS (
+  SELECT *
+  FROM `pccw-internal-virt-agent-uat.GSOEDPLink.CostItem`
+  WHERE snapshot_date = (SELECT source_snapshot_date FROM meta)
+    AND BillingType IN ('Monthly', 'Half-yearly', 'Quarterly', 'Yearly')
+    AND (
+      CTStatus IS NULL
+      OR CTStatus = ''
+      OR CTStatus IN (
+        'Awaiting Confirmation',
+        'Awaiting Processing',
+        'Awaiting Verification',
+        'Cancel',
+        'Denied',
+        'Saved'
+      )
+    )
+    AND (
+      CostType IS NULL
+      OR CostType IN (
+        'Network (Voice-Wholesale)',
+        'Direct Cost (IPVPN/SDWAN)',
+        'Direct Cost (Transmission)',
+        'Direct Cost (Security)',
+        'Network (Security)',
+        'Direct Cost (Mobility)',
+        'Direct Cost (IoD)',
+        'Direct Cost (Others)',
+        'Direct Cost (UCaaS)',
+        'Network (ONTAPtv.com)',
+        'Research and Development',
+        'Network (Satellite)',
+        'Network (Telex)',
+        'Network (Console Partner Interconnect)',
+        'Direct Cost (Media)',
+        'Direct Cost (Satellite Connectivity)',
+        'Direct Cost (SDI)',
+        'Direct Cost (Satellite GTVN)',
+        'Network (ex-MDS)',
+        'Network (IoT)',
+        'Network (GTVN)',
+        'IT cost (Internal/Office Use)',
+        'Old Direct Cost (for RFQ only)',
+        'Network (Infonet)',
+        'Direct Cost (Voice-Wholesale)',
+        'Direct Cost (IP Transit/GIA)',
+        'Network (Optify)',
+        'Direct Cost (Data Center as a Product)',
+        'Network (Digital Platform)',
+        'SG&A',
+        'Direct Cost (ex-MDS)',
+        'Direct Cost (Cloud)',
+        'Network (IP Transit/GIA)',
+        'Network (VAS)',
+        'Network (Data Center as a Product)',
+        'Network (Transmission)',
+        'Network (ex-MSDS)',
+        'Network (IP)',
+        'Network (Mobility)',
+        'Direct Cost (GDS)',
+        'Direct Cost (Meeting Place)',
+        'Direct Cost (IoT)',
+        'Direct Cost (L1)',
+        'Network (Common Infrastructure)',
+        'Network (Core Pop Colocation)',
+        'Network (Media)'
+      )
+    )
+    AND CostTypeCleaned = 'Direct Cost'
+),
 stop_scope AS (
   SELECT *
-  FROM base
+  FROM stop_base
   WHERE SRStatus = 'Terminated'
     AND ItemStatus IN ('Active', 'Ordered')
-    AND SRTerminationDate BETWEEN DATE_TRUNC((SELECT source_snapshot_date FROM meta), YEAR)
-      AND DATE_SUB(DATE_ADD(DATE_TRUNC((SELECT source_snapshot_date FROM meta), YEAR), INTERVAL 1 YEAR), INTERVAL 1 DAY)
 ),
 result_rows AS (
   SELECT
@@ -127,8 +201,8 @@ result_rows AS (
     (SELECT run_ts FROM meta) AS run_ts,
     (SELECT source_snapshot_date FROM meta) AS source_snapshot_date,
     DATE_TRUNC((SELECT source_snapshot_date FROM meta), MONTH) AS source_snapshot_month,
-    'v4_2026_07_16' AS filter_version,
-    'MRC' AS filter_itemcode,
+    'v5_2026_09_16' AS filter_version,
+    'MRC|NRC' AS filter_itemcode,
     'Monthly|Half-yearly|Quarterly|Yearly' AS filter_billing_type,
     'NULL_OR_BLANK_OR_[Awaiting Confirmation,Awaiting Processing,Awaiting Verification,Cancel,Denied,Saved]' AS filter_ctstatus,
     'Direct Cost' AS filter_costtype_cleaned,
@@ -138,9 +212,9 @@ result_rows AS (
     COUNT(*) AS total_cost_items,
     COUNTIF(OpenStopGapFlag = 1) AS open_gap_action_required_count,
     COUNTIF(StopGapActionRequired <> 'No Action Required') AS action_required_non_no_count,
-    ROUND(AVG(IF(OpenStopGapFlag = 1, CAST(TerminatedNotStoppedAgingDays AS FLOAT64), NULL)), 1) AS avg_gap_duration_days,
-    ROUND(SUM(IF(OpenStopGapFlag = 1, MRC_USD, 0)), 1) AS mrc_usd,
-    ROUND(SUM(IF(OpenStopGapFlag = 1, EstimatedStopGapCostUSD, 0)), 1) AS estimated_gap_cost_usd
+    ROUND(AVG(CAST(StopGapDays AS FLOAT64)), 1) AS avg_gap_duration_days,
+    ROUND(SUM(MRC_USD), 1) AS mrc_usd,
+    ROUND(SUM(EstimatedStopGapCostUSD), 1) AS estimated_gap_cost_usd
   FROM stop_scope
 )
 SELECT

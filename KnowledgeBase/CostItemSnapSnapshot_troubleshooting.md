@@ -18,11 +18,17 @@ Start Gap scope:
 - `StartBillingDate` within source snapshot year:
   - `StartBillingDate BETWEEN DATE_TRUNC(source_snapshot_date, YEAR) AND DATE_SUB(DATE_ADD(DATE_TRUNC(source_snapshot_date, YEAR), INTERVAL 1 YEAR), INTERVAL 1 DAY)`
 
-Stop Gap scope:
+Stop Gap scope (v5_2026_09_16, aligned to dashboard):
+- Own base without `ItemCode = 'MRC'` filter (dashboard includes NRC rows)
 - `SRStatus = 'Terminated'`
 - `ItemStatus IN ('Active', 'Ordered')`
-- `SRTerminationDate` within source snapshot year:
-  - `SRTerminationDate BETWEEN DATE_TRUNC(source_snapshot_date, YEAR) AND DATE_SUB(DATE_ADD(DATE_TRUNC(source_snapshot_date, YEAR), INTERVAL 1 YEAR), INTERVAL 1 DAY)`
+- No `SRTerminationDate` range — dashboard scorecards have no date dimension; verified numbers identical with and without date filter
+- Metrics computed over ALL in-scope rows (no OpenStopGapFlag restriction):
+  - total = COUNT(*)
+  - avg duration = AVG(StopGapDays)  (not TerminatedNotStoppedAgingDays)
+  - mrc_usd = SUM(MRC_USD)
+  - estimated_gap_cost_usd = SUM(EstimatedStopGapCostUSD)
+- Confirmed dashboard parity (2026-09-15 snapshot): 51 items, 322 days, 53.9k MRC, 333.3k est.
 
 ## Start Gap Action Labels
 The `StartGapActionRequired` field is aligned to the dashboard legend and uses the same labels shown on the report.
@@ -126,4 +132,4 @@ WHERE run_date IN (CURRENT_DATE('Asia/Hong_Kong'), DATE_SUB(CURRENT_DATE('Asia/H
 - File: `BigQuery/pccw-internal-virt-agent-uat/GSOEDPLink/scheduled_queries/CostItemSnapSnapshot.sql`
 - Transfer config:
   `projects/14417857267/locations/europe-west2/transferConfigs/6a293222-0000-2a3f-b18f-94eb2c1cf75e`
-- Current filter version: `v2_2026_06_12`
+- Current filter version: `v5_2026_09_16`
