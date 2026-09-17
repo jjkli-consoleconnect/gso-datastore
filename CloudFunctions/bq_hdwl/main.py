@@ -37,6 +37,11 @@ ERROR_NOTIFICATION_EMAIL = (
 )
 MIN_VALID_CSV_DATA_ROWS = 3
 
+# Maximum share of candidate rows allowed to have an unexpected column count
+# before the attachment is treated as structurally broken (vs. the known
+# forwarded-email wrapper noise, which only contaminates a few lines).
+MAX_RAGGED_ROW_RATIO = 0.25
+
 # Columns stored as ARRAY<STRING> in target tables; staging rows (one per
 # related item) are aggregated into arrays per primary key at merge time.
 ARRAY_COLUMNS = [
@@ -514,31 +519,50 @@ RFC822_HEADER_RE = re.compile(
 
 
 def sanitize_csv_text(text: str) -> Tuple[str, int]:
-    """Strip forwarded-email artifacts from CSV export payloads.
+    """Strip forwarded-email preamble lines that precede the CSV header row.
 
-    BMC Remedy exports intermittently wrap the CSV rows in a forwarded email body:
-    separator rules ('====', '++++'), RFC-822 headers ('Date: ...'), and blank lines.
-    Those lines parse as 1-3 column rows and trip the row-width guard, failing the
-    whole run. Only unambiguous junk is removed; any line containing a quote
-    character is left untouched so quoted multi-line fields stay intact.
+    BMC exports intermittently arrive wrapped in a forwarded-email body:
+    separator rules ('====', '++++'), RFC-822 headers ('Date: ...'), and blank
+    lines ahead of the real CSV header. Those lines parse as 1-3 column rows and
+    trip the row-width guard, failing the whole run.
+
+    Only *leading* junk is removed here. Anything interleaved with the data rows
+    is filtered after parsing (see is_non_data_artifact_row), where csv quoting
+    has already been resolved -- a line-based quote-parity heuristic gets this
+    wrong whenever a description contains a stray quote character, and it would
+    then corrupt legitimately quoted multi-line fields.
     """
+    lines = text.splitlines()
     removed = 0
-    kept = []
-    in_quotes = False
-    for line in text.splitlines():
-        if not in_quotes:
-            stripped = line.strip()
-            if not stripped:
-                removed += 1
-                continue
-            if not re.search(r"[A-Za-z0-9]", stripped) or RFC822_HEADER_RE.match(stripped):
-                removed += 1
-                continue
-        # Track whether we are inside a quoted (possibly multi-line) CSV field so
-        # continuation lines of quoted values are never treated as junk.
-        in_quotes = in_quotes ^ (line.count('"') % 2 == 1)
-        kept.append(line)
-    return "\n".join(kept), removed
+    while lines:
+        stripped = lines[0].strip()
+        if (
+            stripped
+            and re.search(r"[A-Za-z0-9]", stripped)
+            and not RFC822_HEADER_RE.match(stripped)
+        ):
+            break
+        lines.pop(0)
+        removed += 1
+    return "\n".join(lines), removed
+
+
+def is_non_data_artifact_row(row: List[str]) -> bool:
+    """True when a parsed row is forwarded-email junk rather than CSV data.
+
+    Artifacts observed in production are RFC-822 header lines ('To: ...',
+    'Date: ...'), separator rules ('====', '++++') and blank filler lines. A real
+    data row always begins with a ticket/worklog identifier, so it can never be
+    mistaken for an RFC-822 header, and a separator/blank row carries no
+    alphanumeric content. Evaluated after parsing so that newlines belonging to a
+    quoted multi-line field are never considered (they are not rows at all).
+    """
+    cells = [(cell or "").strip() for cell in row]
+    if not any(cells):
+        return True
+    if len(row) == 1 and not re.search(r"[A-Za-z0-9]", cells[0]):
+        return True
+    return RFC822_HEADER_RE.match(cells[0]) is not None
 
 
 def robust_parse_csv(csv_data: bytes) -> List[List[str]]:
@@ -555,9 +579,27 @@ def robust_parse_csv(csv_data: bytes) -> List[List[str]]:
             reader_kwargs.update({"quoting": csv.QUOTE_NONE, "escapechar": "\\"})
         reader = csv.reader(io.StringIO(text), **reader_kwargs)
         rows = list(reader)
-        if len(rows) > 1 and len(rows[0]) > 1 and any(h.strip() for h in rows[0]):
-            return rows
-        return None
+        if len(rows) < 2:
+            return None
+
+        # Leading wrapper lines the sanitizer cannot classify (e.g. 'Hi GSOC:'
+        # carries alphanumerics and is not an RFC-822 header) would otherwise make
+        # the structural check below reject an otherwise valid payload. Find the
+        # widest of the first rows and drop what precedes it -- but only when
+        # everything before it is single-cell filler, so a data row that is wider
+        # than the header is never allowed to push the header out of the payload.
+        probe_limit = min(len(rows), 10)
+        widest_index = 0
+        for index in range(probe_limit):
+            if len(rows[index]) > len(rows[widest_index]):
+                widest_index = index
+        if len(rows[widest_index]) <= 1:
+            return None
+        if widest_index and all(len(rows[i]) <= 1 for i in range(widest_index)):
+            rows = rows[widest_index:]
+        if not any(cell.strip() for cell in rows[0]):
+            return None
+        return rows
 
     for encoding in encodings:
         try:
@@ -789,6 +831,28 @@ def handle_empty_values(value: Any, is_timestamp: bool, is_integer: bool) -> Any
     return value_str
 
 
+def locate_header_row(rows: List[List[str]], config: Dict[str, Any]) -> int:
+    """Return the index of the row holding the CSV header.
+
+    Normally this is row 0, but forwarded-email wrapper content can precede the
+    real header, so the rows are scanned forward for the first one that satisfies
+    the header contract. Raises ValueError when no row does -- which is what
+    catches a genuine format change (e.g. a different delimiter) instead of
+    silently merging a fraction of the file.
+    """
+    expected_headers = list(config["all_columns"])
+    headers: List[str] = []
+    for index, row in enumerate(rows):
+        headers = [standardize_field_name(h, config["field_map"]) for h in row]
+        if all(column in headers for column in expected_headers):
+            return index
+    missing_headers = [column for column in expected_headers if column not in headers]
+    raise ValueError(
+        f"Header contract violation for {config['name']}: missing required "
+        f"headers {missing_headers}. Got: {headers}"
+    )
+
+
 def process_csv_attachment(
     service, message_id: str, attachment_filename: str, config: Dict[str, Any]
 ) -> Tuple[bool, int, Optional[str]]:
@@ -819,7 +883,22 @@ def process_csv_attachment(
         # Parse CSV
         rows = robust_parse_csv(csv_data)
 
-        data_rows = max(len(rows) - 1, 0)
+        # ---- Locate the header row and enforce the header contract. Normally this
+        # ---- is rows[0]; forwarded-email wrapper content can precede it, so the
+        # ---- rows are scanned forward for the first row that satisfies the contract.
+        header_index = locate_header_row(rows, config)
+        headers = [
+            standardize_field_name(header, config["field_map"])
+            for header in rows[header_index]
+        ]
+        if header_index:
+            logger.warning(
+                "Skipped %s non-header line(s) before the header row in %s",
+                header_index,
+                attachment_filename,
+            )
+
+        data_rows = max(len(rows) - header_index - 1, 0)
         if data_rows < MIN_VALID_CSV_DATA_ROWS:
             logger.warning(
                 "Skipping attachment %s due to insufficient data rows (%s < %s)",
@@ -829,28 +908,34 @@ def process_csv_attachment(
             )
             return True, 0, "insufficient_csv_rows"
 
-        # Convert to NDJSON
-        headers = [standardize_field_name(h, config["field_map"]) for h in rows[0]]
-
-        # ---- Header contract guard: fail fast instead of silently mis-placing ----
-        expected_headers = list(config["all_columns"])
-        missing_headers = [c for c in expected_headers if c not in headers]
-        if missing_headers:
-            raise ValueError(
-                f"Header contract violation for {config['name']}: missing required "
-                f"headers {missing_headers}. Got: {headers}"
-            )
-
         ndjson_lines = []
 
-        for row in rows[1:]:
-            # ---- Row-width guard: a ragged row would shift values into wrong columns ----
+        junk_rows_skipped = 0
+        ragged_rows_skipped = 0
+        over_width_rows_skipped = 0
+        ragged_row_samples: List[List[str]] = []
+
+        for row in rows[header_index + 1 :]:
+            # ---- Non-data artifact rows: forwarded-email junk interleaved in the
+            # ---- export (e.g. 'To: ...', 'Date: ...', '===='). These are dropped
+            # ---- rather than failing the run. Classified post-parse, so newlines
+            # ---- inside quoted multi-line fields are never touched.
+            if is_non_data_artifact_row(row):
+                junk_rows_skipped += 1
+                continue
+
+            # ---- A real data row must match the header width. Narrower rows are
+            # ---- stray wrapper text ('Hi GSOC:', 'To: ...'), so they are dropped
+            # ---- with a warning; wider rows mean the payload itself is broken
+            # ---- (e.g. a delimiter leaking out of an unquoted field) and are
+            # ---- rate-limited below so a genuine data problem still fails loudly.
             if len(row) != len(headers):
-                raise ValueError(
-                    f"Row width mismatch in {config['name']}: expected "
-                    f"{len(headers)} columns, got {len(row)}. Row: {row[:5]}... "
-                    f"(Incident: {row[0] if row else ''})"
-                )
+                ragged_rows_skipped += 1
+                if len(row) > len(headers):
+                    over_width_rows_skipped += 1
+                if len(ragged_row_samples) < 3:
+                    ragged_row_samples.append(row[:5])
+                continue
             obj = {}
             for i, header in enumerate(headers):
                 value = row[i] if i < len(row) else None
@@ -870,6 +955,51 @@ def process_csv_attachment(
                     normalized_value = normalize_customer_name(normalized_value)
                 obj[header] = normalized_value
             ndjson_lines.append(json.dumps(obj))
+
+        if junk_rows_skipped:
+            logger.warning(
+                "Skipped %s non-CSV artifact row(s) in %s (forwarded-email junk interleaved in export)",
+                junk_rows_skipped,
+                attachment_filename,
+            )
+
+        # ---- Guardrails: the export is known to interleave forwarded-email wrapper
+        # ---- text, so stray rows are dropped with a warning rather than failing
+        # ---- the run. Over-wide rows (extra delimiters) are the real
+        # ---- data-integrity signal (a shifted/broken payload), so they are
+        # ---- rate-limited and still raise once they dominate the attachment.
+        usable_rows = len(ndjson_lines)
+        if ragged_rows_skipped:
+            logger.warning(
+                "Skipped %s row(s) with unexpected column count in %s (%s over-width). "
+                "Samples: %s",
+                ragged_rows_skipped,
+                attachment_filename,
+                over_width_rows_skipped,
+                ragged_row_samples,
+            )
+            candidate_rows = ragged_rows_skipped + usable_rows
+            if (
+                over_width_rows_skipped
+                and candidate_rows
+                and over_width_rows_skipped / candidate_rows > MAX_RAGGED_ROW_RATIO
+            ):
+                raise ValueError(
+                    f"Row width mismatch in {config['name']}: "
+                    f"{over_width_rows_skipped} of {candidate_rows} candidate rows had "
+                    f"more than the expected {len(headers)} columns. "
+                    f"Samples: {ragged_row_samples}"
+                )
+
+        if not usable_rows:
+            logger.warning(
+                "Skipping attachment %s: no usable data rows after dropping %s "
+                "artifact row(s) and %s malformed row(s)",
+                attachment_filename,
+                junk_rows_skipped,
+                ragged_rows_skipped,
+            )
+            return True, 0, "no_usable_rows"
 
         ndjson_content = "\n".join(ndjson_lines)
 
