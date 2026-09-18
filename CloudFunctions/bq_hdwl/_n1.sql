@@ -1,0 +1,1 @@
+SELECT RunTime, Status, ErrorCode, SUBSTR(Message,1,200) AS msg FROM `pccw-internal-virt-agent-uat.GSO.PipelineRuns` WHERE RunTime >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR) AND (Status != 'SUCCESS' OR LogLevel != 'INFO') ORDER BY RunTime DESC LIMIT 20
