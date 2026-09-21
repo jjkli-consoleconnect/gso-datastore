@@ -73,7 +73,7 @@ WITH base AS (
 		OperationD AS OperationStartDate,
 		project_manager AS ProjectManager
 	FROM `edp-prod-lake-data-warehouse.Cost_Items.all_cost_items_report`
-	WHERE ItemCode = 'MRC'
+	WHERE ItemCode IN ('MRC', 'NRC')
 		AND MRC_USD > 0
 		AND IFNULL(CTStatus, '') != 'Confirmed'
 		AND IFNULL(CostType, '') != 'Direct Cost (Optify)'
