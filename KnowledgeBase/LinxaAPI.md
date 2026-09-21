@@ -275,10 +275,31 @@ export interface CdrSearchFilters {
 }
 
 
-Key ID: 
-1
-API Key: 
-!ZDtGmfygV9.gPHp
+## Credentials
 
-Bearer Token:
-1:!ZDtGmfygV9.gPHp
+This file intentionally contains no credentials.
+
+The Linxa API authorization credential is stored in Google Cloud Secret Manager:
+
+- Secret name: `linxa-api-authorization`
+- Project: `pccw-internal-virt-agent-uat`
+- Full resource path: `projects/pccw-internal-virt-agent-uat/secrets/linxa-api-authorization/versions/latest`
+- IAM: `pccw-internal-virt-agent-uat@appspot.gserviceaccount.com` has `roles/secretmanager.secretAccessor` on the secret.
+
+How to reference it:
+
+- Python (repo pattern, see `shared/secrets_manager.py`):
+  ```python
+  from shared.secrets_manager import get_secret
+  credential = get_secret("linxa-api-authorization", project_id="pccw-internal-virt-agent-uat")
+  ```
+- gcloud (local testing; never print the value):
+  ```powershell
+  $cred = gcloud secrets versions access latest --secret=linxa-api-authorization --project=pccw-internal-virt-agent-uat
+  # Use as: Authorization = $cred  (raw credential format: "<id>:<key>")
+  ```
+- Cloud Function runtime: use Secret Manager volume mount or
+  `--set-secrets LINXA_AUTHORIZATION=linxa-api-authorization:latest` at deploy time.
+
+If this credential is ever exposed in a file, log, chat, or terminal history, rotate it with Linxa and add a new secret version:
+`gcloud secrets versions add linxa-api-authorization --project=pccw-internal-virt-agent-uat --data-file=-`
