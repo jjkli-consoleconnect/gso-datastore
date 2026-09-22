@@ -1,7 +1,0 @@
-# Files not needed to build wanda-web
-.gcloudignore
-.git
-.gitignore
-.DS_Store
-source.tgz
-google-cloud-sdk/
