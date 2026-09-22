@@ -16,7 +16,7 @@ gcloud pubsub topics create gmail-snapshot-reports --project=pccw-internal-virt-
 
 ## Step 3: Deploy snapshot_reports Cloud Function
 ```powershell
-cd "G:\My Drive\Scripts\CloudFunctions\snapshot_reports"
+cd "G:\My Drive\Scripts\CloudFunctions\pccw-internal-virt-agent-uat\snapshot_reports"
 
 gcloud functions deploy snapshot_reports `
   --gen2 `
@@ -33,7 +33,7 @@ gcloud functions deploy snapshot_reports `
 
 ## Step 4: Redeploy gmail_checker to include new pattern
 ```powershell
-cd "G:\My Drive\Scripts\CloudFunctions\gmail_checker"
+cd "G:\My Drive\Scripts\CloudFunctions\pccw-internal-virt-agent-uat\gmail_checker"
 
 gcloud functions deploy gmail_checker `
   --gen2 `

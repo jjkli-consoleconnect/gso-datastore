@@ -56,7 +56,7 @@ bq mk --table \
 ## Step 5: Deploy the Cloud Function
 
 ```bash
-cd CloudFunctions/pagerduty_incident_data
+cd CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data
 
 gcloud functions deploy sync_pagerduty_incidents \
   --gen2 \
@@ -222,7 +222,7 @@ gcloud functions delete sync_pagerduty_incidents --gen2 --region us-central1
 gcloud functions list-runtimes | grep python
 
 # Redeploy with previous code
-cd CloudFunctions/pagerduty_incident_data
+cd CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data
 gcloud functions deploy sync_pagerduty_incidents --gen2 --runtime python311 ...
 ```
 

@@ -10,19 +10,19 @@ if errorlevel 1 (
 
 set COMMON=--gen2 --runtime python311 --region europe-west2 --source . --entry-point main --trigger-http --timeout 3600s --memory 2048Mi --max-instances 5 --vpc-connector projects/pccw-internal-virtual-agent/locations/europe-west2/connectors/eu-prod-wanda-vpc-conn --egress-settings all --service-account jira-sync-runtime@pccw-internal-virtual-agent.iam.gserviceaccount.com --no-allow-unauthenticated --project pccw-internal-virtual-agent
 
-pushd "%REPO_ROOT%\CloudFunctions\JiraTicketsNightly"
+pushd "%REPO_ROOT%\CloudFunctions\pccw-internal-virtual-agent\JiraTicketsNightly"
 echo === TICKETS NIGHTLY ===
 call gcloud.cmd functions deploy jira-tickets-nightly %COMMON%
 if errorlevel 1 goto :err
 
 popd
-pushd "%REPO_ROOT%\CloudFunctions\JiraCommentsNightly"
+pushd "%REPO_ROOT%\CloudFunctions\pccw-internal-virtual-agent\JiraCommentsNightly"
 echo === COMMENTS NIGHTLY ===
 call gcloud.cmd functions deploy jira-comments-nightly %COMMON%
 if errorlevel 1 goto :err
 
 popd
-pushd "%REPO_ROOT%\CloudFunctions\JiraChangelogsNightly"
+pushd "%REPO_ROOT%\CloudFunctions\pccw-internal-virtual-agent\JiraChangelogsNightly"
 echo === CHANGELOGS NIGHTLY ===
 call gcloud.cmd functions deploy jira-changelogs-nightly %COMMON%
 if errorlevel 1 goto :err

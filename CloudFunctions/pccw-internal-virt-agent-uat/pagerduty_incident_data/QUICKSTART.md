@@ -45,7 +45,7 @@ gcloud secrets get-iam-policy pagerduty-api-token
 ## Step 3: Deploy the Cloud Function (5 minutes)
 
 ```bash
-cd CloudFunctions/pagerduty_incident_data
+cd CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data
 
 # Deploy
 gcloud functions deploy sync_pagerduty_incidents \
@@ -241,8 +241,8 @@ LIMIT 5
 ## 📚 Full Documentation
 
 - **Architecture**: `PAGERDUTY_PIPELINE_SUMMARY.md` (this folder)
-- **Detailed Setup**: `CloudFunctions/pagerduty_incident_data/DEPLOYMENT.md`
-- **Code Docs**: `CloudFunctions/pagerduty_incident_data/README.md`
+- **Detailed Setup**: `CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data/DEPLOYMENT.md`
+- **Code Docs**: `CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data/README.md`
 - **CSV Consolidation**: `consolidate_insights.py` (for reference)
 
 ---

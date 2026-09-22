@@ -8,7 +8,7 @@ Your production-grade PagerDuty incident data pipeline is **complete and ready t
 
 ## 📦 What Was Built
 
-### New Folder: `CloudFunctions/pagerduty_incident_data/`
+### New Folder: `CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data/`
 A complete, production-ready Cloud Function with:
 
 **Core Files**:
@@ -35,7 +35,7 @@ A complete, production-ready Cloud Function with:
 echo -n "YOUR_TOKEN" | gcloud secrets create pagerduty-api-token --data-file=-
 
 # 2. Deploy the Cloud Function
-cd CloudFunctions/pagerduty_incident_data
+cd CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data
 gcloud functions deploy sync_pagerduty_incidents --runtime python311 \
   --trigger-http --allow-unauthenticated --memory 512MB --gen2
 
@@ -144,7 +144,7 @@ bq query 'SELECT * FROM GSO.PagerDutyIncidentData LIMIT 10'
 
 ```
 START HERE:
-├─ CloudFunctions/pagerduty_incident_data/QUICKSTART.md
+├─ CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data/QUICKSTART.md
 │  └─ 30-minute end-to-end deployment
 │
 Then read:
@@ -255,7 +255,7 @@ gcloud scheduler jobs list --location us-central1
 
 **Status**: ✅ **COMPLETE & PRODUCTION READY**
 
-📖 **Get Started**: Open `CloudFunctions/pagerduty_incident_data/QUICKSTART.md`
+📖 **Get Started**: Open `CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data/QUICKSTART.md`
 
 ---
 

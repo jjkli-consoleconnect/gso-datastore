@@ -33,7 +33,7 @@ gcloud functions deploy mss-to-remedy-create-uat \
   --region europe-west2 \
   --vpc-connector eu-uat-wanda-vpc-conn \
   --set-env-vars DRY_RUN=false \
-  --source CloudFunctions/jira-to-helix/mss-to-remedy-create-uat/ \
+  --source CloudFunctions/pccw-internal-virt-agent-uat/mss-to-remedy-create-uat/ \
   --timeout 120 \
   --memory 512MB
 ```

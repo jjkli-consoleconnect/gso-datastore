@@ -10,7 +10,7 @@
 The **Jira → Helix UAT datapipe** is the canonical example:
 
 ```
-CloudFunctions/jira-to-helix/mss-to-remedy-create-uat/
+CloudFunctions/pccw-internal-virt-agent-uat/mss-to-remedy-create-uat/
 ```
 
 - Deploy command lives in `DEPLOY.md` in that folder.
@@ -152,7 +152,7 @@ Then confirm `STATE: READY` before deploying the function.
 ## 8. Full working example (from this repo)
 
 Reference the live deploy in
-`CloudFunctions/jira-to-helix/mss-to-remedy-create-uat/DEPLOY.md`:
+`CloudFunctions/pccw-internal-virt-agent-uat/mss-to-remedy-create-uat/DEPLOY.md`:
 
 ```bash
 gcloud functions deploy mss-to-remedy-create-uat \
@@ -163,7 +163,7 @@ gcloud functions deploy mss-to-remedy-create-uat \
   --project pccw-internal-virt-agent-uat \
   --region europe-west2 \
   --vpc-connector eu-uat-wanda-vpc-conn \
-  --source CloudFunctions/jira-to-helix/mss-to-remedy-create-uat/ \
+  --source CloudFunctions/pccw-internal-virt-agent-uat/mss-to-remedy-create-uat/ \
   --timeout 120 \
   --memory 512MB
 ```

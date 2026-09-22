@@ -7,7 +7,7 @@
 ## 📋 What You Get
 
 ### 1. **Production Cloud Function** ✅
-**Location**: `CloudFunctions/pagerduty_incident_data/`
+**Location**: `CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data/`
 
 A fully-featured Cloud Function that:
 - Pulls ALL incident data from PagerDuty API
@@ -73,7 +73,7 @@ Maps all three datasets into unified incident view.
 
 2. **Deploy Function** (5 min)
    ```bash
-   cd CloudFunctions/pagerduty_incident_data
+  cd CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data
    gcloud functions deploy sync_pagerduty_incidents --gen2 --runtime python311 ...
    ```
 
@@ -410,7 +410,7 @@ Reference:
 
 ## 📞 Getting Started
 
-1. Open: `CloudFunctions/pagerduty_incident_data/QUICKSTART.md`
+1. Open: `CloudFunctions/pccw-internal-virt-agent-uat/pagerduty_incident_data/QUICKSTART.md`
 2. Follow the 5-step deployment
 3. Run your first query
 4. Schedule hourly syncs

@@ -8,7 +8,7 @@
 - Keep coding quality top-tier: robust logic, safe changes, correct edge-case handling, and clear code structure.
 - Follow existing repo patterns when changing CloudFunctions pipelines.
 - Keep logging consistent with existing pipeline style.
-- Keep `CloudFunctions/` production-only: each function belongs in its own named subfolder; shared runtime code belongs in `CloudFunctions/shared/`.
+- Organize deployable functions as `CloudFunctions/<gcp-project-id>/<function-name>/`; shared runtime code belongs in `CloudFunctions/shared/`.
 - Put one-off backfills, probes, migration helpers, and ad hoc trigger scripts under `Temp/<work-item>/`, never directly under `CloudFunctions/`.
 - Put reusable repo-level commands and automation under `shared/commands/`. Keep function-specific deployment commands inside that function's folder.
 - Put reusable runbooks, specifications, operational notes, and other shared knowledge under `KnowledgeBase/`; link to the canonical document instead of keeping copies elsewhere.

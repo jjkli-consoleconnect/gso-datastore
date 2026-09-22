@@ -114,8 +114,8 @@ Never deploy a source or configuration change directly into live mode. Use this 
 Local preflight:
 
 ```powershell
-& '.\.venv\Scripts\python.exe' -m py_compile 'CloudFunctions\jira-to-helix\mss-to-remedy-create-prod\main.py'
-git -c core.whitespace=cr-at-eol diff --check -- 'CloudFunctions/jira-to-helix/mss-to-remedy-create-prod/main.py' 'CloudFunctions/jira-to-helix/mss-to-remedy-create-prod/DEPLOY.md'
+& '.\.venv\Scripts\python.exe' -m py_compile 'CloudFunctions\pccw-internal-virtual-agent\mss-to-remedy-create-prod\main.py'
+git -c core.whitespace=cr-at-eol diff --check -- 'CloudFunctions/pccw-internal-virtual-agent/mss-to-remedy-create-prod/main.py' 'CloudFunctions/pccw-internal-virtual-agent/mss-to-remedy-create-prod/DEPLOY.md'
 ```
 
 PowerShell-safe deployment template:
@@ -133,7 +133,7 @@ gcloud functions deploy mss-to-remedy-create-prod `
   --vpc-connector=projects/pccw-internal-virtual-agent/locations/europe-west2/connectors/eu-prod-wanda-vpc-conn `
   --egress-settings=all `
   '--set-env-vars=DRY_RUN=true,ENABLE_HELIX_CLOSE_PATCH=false,JIRA_TO_HELIX_DATASET_ID=jiratohelix,JIRA_TO_HELIX_TABLE_ID=jira_to_helix_sync,JIRA_TO_HELIX_COMMENT_TABLE_ID=jira_to_helix_comment_sync,JIRA_TO_HELIX_CLOSE_DUP_TABLE_ID=jira_to_helix_close_dup_sync' `
-  --source='CloudFunctions/jira-to-helix/mss-to-remedy-create-prod/' `
+  --source='CloudFunctions/pccw-internal-virtual-agent/mss-to-remedy-create-prod/' `
   --timeout=120 `
   --memory=512MB `
   --quiet
