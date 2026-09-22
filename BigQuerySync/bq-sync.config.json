@@ -4,7 +4,8 @@
     "pccw-internal-virtual-agent"
   ],
   "datasets": [],
-  "outputDir": "BigQuery",
+  "outputDir": ".",
+  "resourceSubdir": "BigQuery",
   "location": "",
   "include": {
     "views": true,

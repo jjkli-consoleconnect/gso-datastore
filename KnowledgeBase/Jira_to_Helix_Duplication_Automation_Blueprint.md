@@ -240,8 +240,8 @@ Phase 4: Full production
 
 ## Concrete implementation tasks for current codebase
 Target files:
-- CloudFunctions/pccw-internal-virt-agent-uat/mss-to-remedy-create-uat/main.py
-- CloudFunctions/pccw-internal-virtual-agent/mss-to-remedy-create-prod/main.py
+- pccw-internal-virt-agent-uat/CloudFunctions/mss-to-remedy-create-uat/main.py
+- pccw-internal-virtual-agent/CloudFunctions/mss-to-remedy-create-prod/main.py
 
 Implementation status:
 - Core create/comment/close flow is already present in the current UAT codebase.

@@ -479,7 +479,7 @@ If no worklog is posted and function says no ticket number:
 
 ### 12.6 Code Notes
 
-- File: `CloudFunctions/pccw-internal-virt-agent-uat/mss-to-remedy-create-uat/main.py`
+- File: `pccw-internal-virt-agent-uat/CloudFunctions/mss-to-remedy-create-uat/main.py`
 - Keep `relatedParty` reserved for actual contact info only.
 - Do not reintroduce `relatedParty` with `role = "Assigned Group"`.
 - Any future support-group change should be validated against Helix UI with a fresh dummy create before deploying.

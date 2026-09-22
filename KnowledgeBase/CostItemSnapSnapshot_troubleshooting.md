@@ -129,7 +129,7 @@ WHERE run_date IN (CURRENT_DATE('Asia/Hong_Kong'), DATE_SUB(CURRENT_DATE('Asia/H
 4. Re-check table values and compare to scorecards.
 
 ## Current Scheduled Query
-- File: `BigQuery/pccw-internal-virt-agent-uat/GSOEDPLink/scheduled_queries/CostItemSnapSnapshot.sql`
+- File: `pccw-internal-virt-agent-uat/BigQuery/GSOEDPLink/scheduled_queries/CostItemSnapSnapshot.sql`
 - Transfer config:
   `projects/14417857267/locations/europe-west2/transferConfigs/6a293222-0000-2a3f-b18f-94eb2c1cf75e`
 - Current filter version: `v5_2026_09_16`

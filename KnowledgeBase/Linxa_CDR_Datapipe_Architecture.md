@@ -23,10 +23,10 @@ Planning note for a future Linxa CDR sync. No implementation exists yet.
 
 Canonical examples:
 
-- `CloudFunctions/pccw-internal-virtual-agent/JiraTicketsNightly/deploy.ps1`
-- `CloudFunctions/pccw-internal-virtual-agent/JiraCommentsNightly/deploy.ps1`
-- `CloudFunctions/pccw-internal-virtual-agent/JiraTickets/deploy.sh`
-- `CloudFunctions/pccw-internal-virtual-agent/JiraComments/deploy.sh`
+- `pccw-internal-virtual-agent/CloudFunctions/JiraTicketsNightly/deploy.ps1`
+- `pccw-internal-virtual-agent/CloudFunctions/JiraCommentsNightly/deploy.ps1`
+- `pccw-internal-virtual-agent/CloudFunctions/JiraTickets/deploy.sh`
+- `pccw-internal-virtual-agent/CloudFunctions/JiraComments/deploy.sh`
 - `KnowledgeBase/VPC_UAT.md`
 
 Shared deployment shape:

@@ -348,8 +348,8 @@ Cloud Scheduler
 
 Suggested runtime behavior:
 
-- Use a dedicated function folder under `CloudFunctions/`.
-- Put reusable helpers under `CloudFunctions/shared/`.
+- Use a dedicated function folder under `<gcp-project-id>/CloudFunctions/`.
+- Put reusable helpers under `shared/`.
 - Use the repo's `setup_root_logging` and `PipelineRuns` logging pattern.
 - Use the previous complete day as the normal extraction window.
 - Add a small overlap window if Linxa records can arrive late.

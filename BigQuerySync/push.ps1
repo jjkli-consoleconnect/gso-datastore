@@ -58,6 +58,7 @@ $config = Load-BqsConfig $ConfigPath
 Initialize-GoogleAuth $config
 
 $outputRoot = if ([IO.Path]::IsPathRooted($config.outputDir)) { $config.outputDir } else { Join-Path (Split-Path $PSScriptRoot -Parent) $config.outputDir }
+$resourceSubdir = if ($config.resourceSubdir) { $config.resourceSubdir } else { 'BigQuery' }
 
 $projects = $config.projects
 $datasets = $config.datasets
@@ -65,7 +66,7 @@ $location = $null
 if ($config.location -and $config.location.Trim()) { $location = $config.location.Trim() }
 
 foreach ($project in $projects) {
-  $projDir = Join-Path $outputRoot $project
+  $projDir = Join-Path $outputRoot (Join-Path $project $resourceSubdir)
   if (!(Test-Path $projDir)) { continue }
   $dsDirs = if ($datasets -and $datasets.Count -gt 0) { $datasets | ForEach-Object { Join-Path $projDir $_ } } else { Get-ChildItem $projDir -Directory | ForEach-Object { $_.FullName } }
   foreach ($dsDir in $dsDirs) {
@@ -74,14 +75,15 @@ foreach ($project in $projects) {
     $mviewsDir = Join-Path $dsDir 'materialized_views'
     $routinesDir = Join-Path $dsDir 'routines'
 
-  $locFlag = if ($location) { " --location=$location" } else { "" }
-  if ($config.include.views -and (Test-Path $viewsDir)) {
+    $locFlag = if ($location) { " --location=$location" } else { "" }
+    if ($config.include.views -and (Test-Path $viewsDir)) {
       Get-ChildItem $viewsDir -Filter *.sql -File | ForEach-Object {
         $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
         $sql = (Get-Content $_.FullName -Raw)
         if ($DryRun) {
           Write-Host "[DRY RUN] View would update: ${project}:${dataset}.$name"
-        } else {
+        }
+        else {
           $tmp = New-TemporaryFile
           $json = @{ view = @{ query = $sql; useLegacySql = $false } } | ConvertTo-Json -Depth 5
           $json | Out-File -Encoding utf8 $tmp
@@ -89,18 +91,20 @@ foreach ($project in $projects) {
             $viewSql = $sql -replace "'", "''"
             BqRun (("update --project_id={0} {1} --view='{2}' {3}.{4}") -f $project, $locFlag.Trim(), $viewSql, $dataset, $name)
             Write-Host "Updated view: ${project}:${dataset}.$name"
-          } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
+          }
+          finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
         }
       }
     }
 
-  if ($config.include.materializedViews -and (Test-Path $mviewsDir)) {
+    if ($config.include.materializedViews -and (Test-Path $mviewsDir)) {
       Get-ChildItem $mviewsDir -Filter *.sql -File | ForEach-Object {
         $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
         $sql = (Get-Content $_.FullName -Raw)
         if ($DryRun) {
           Write-Host "[DRY RUN] Materialized view would update: ${project}:${dataset}.$name"
-        } else {
+        }
+        else {
           $tmp = New-TemporaryFile
           $json = @{ materializedView = @{ query = $sql } } | ConvertTo-Json -Depth 5
           $json | Out-File -Encoding utf8 $tmp
@@ -108,12 +112,13 @@ foreach ($project in $projects) {
             $mvSql = $sql -replace "'", "''"
             BqRun (("update --project_id={0} {1} --materialized_view='{2}' {3}.{4}") -f $project, $locFlag.Trim(), $mvSql, $dataset, $name)
             Write-Host "Updated materialized view: ${project}:${dataset}.$name"
-          } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
+          }
+          finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
         }
       }
     }
 
-  if ($config.include.routines -and (Test-Path $routinesDir)) {
+    if ($config.include.routines -and (Test-Path $routinesDir)) {
       Get-ChildItem $routinesDir -Filter *.sql -File | ForEach-Object {
         $name = [IO.Path]::GetFileNameWithoutExtension($_.Name)
         $sql = (Get-Content $_.FullName -Raw)
@@ -124,21 +129,23 @@ foreach ($project in $projects) {
         $meta = (Get-Content $metaPath -Raw) | ConvertFrom-Json
         if ($DryRun) {
           Write-Host "[DRY RUN] Routine would update: ${project}:${dataset}.$name"
-        } else {
+        }
+        else {
           $tmp = New-TemporaryFile
           $spec = [ordered]@{
-            routineType  = $meta.routineType
-            language     = $meta.language
-            definitionBody = $sql
-            arguments    = $meta.arguments
-            returnType   = $meta.returnType
+            routineType       = $meta.routineType
+            language          = $meta.language
+            definitionBody    = $sql
+            arguments         = $meta.arguments
+            returnType        = $meta.returnType
             importedLibraries = $meta.importedLibraries
           }
           ($spec | ConvertTo-Json -Depth 10) | Out-File -Encoding utf8 $tmp
           try {
             BqRun ("update --project_id={0} {1} --routine --source=`"{2}`" {3}:{4}.{5}" -f $project, $locFlag.Trim(), $tmp, $project, $dataset, $name)
             Write-Host "Updated routine: ${project}:${dataset}.$name"
-          } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
+          }
+          finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
         }
       }
     }

@@ -27,7 +27,7 @@
     "**/.cleanup_backup_venv-1_*",
     "**/__pycache__",
     "Backup/**",
-    "BigQuery/**",
+    "**/BigQuery/**",
     "GAS/**",
     "KnowledgeBase/**",
     "Temp/**"

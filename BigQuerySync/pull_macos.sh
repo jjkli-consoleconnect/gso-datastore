@@ -91,7 +91,8 @@ def main():
 
     output_root = Path(cfg.get('outputDir'))
     if not output_root.is_absolute():
-        output_root = (cfg_path.parent / output_root).resolve()
+        output_root = (cfg_path.parent.parent / output_root).resolve()
+    resource_subdir = cfg.get('resourceSubdir', 'BigQuery')
     ensure_dir(output_root)
 
     start = time.time()
@@ -125,7 +126,7 @@ def main():
                 print(f'Failed to read dataset info for {project}:{dataset}: {e}', file=sys.stderr)
                 continue
 
-            base = output_root / project / dataset
+            base = output_root / project / resource_subdir / dataset
             views_dir = base / 'views'
             mviews_dir = base / 'materialized_views'
             routines_dir = base / 'routines'

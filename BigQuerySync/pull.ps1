@@ -79,6 +79,7 @@ if ($config.location -and $config.location.Trim()) { $location = $config.locatio
 Initialize-GoogleAuth $config
 
 $outputRoot = if ([IO.Path]::IsPathRooted($config.outputDir)) { $config.outputDir } else { Join-Path (Split-Path $PSScriptRoot -Parent) $config.outputDir }
+$resourceSubdir = if ($config.resourceSubdir) { $config.resourceSubdir } else { 'BigQuery' }
 New-BqsDirectory $outputRoot
 
 # Progress + timing
@@ -119,7 +120,7 @@ foreach ($project in ${projects}) {
       Write-Warning ("Failed to read dataset info for {0}:{1}: {2}" -f $project, $dataset, $_)
       continue
     }
-    $base = Join-Path $outputRoot (Join-Path $project $dataset)
+    $base = Join-Path $outputRoot (Join-Path $project (Join-Path $resourceSubdir $dataset))
     $viewsDir = Join-Path $base 'views'
     $mviewsDir = Join-Path $base 'materialized_views'
     $routinesDir = Join-Path $base 'routines'
