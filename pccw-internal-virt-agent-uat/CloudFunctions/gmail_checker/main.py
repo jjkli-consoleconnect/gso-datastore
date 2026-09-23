@@ -20,6 +20,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = "pccw-internal-virt-agent-uat"
+HDWL_PROCESSING_LABEL = "HDWL_PROCESSING"
 
 # Email patterns to monitor
 EMAIL_PATTERNS = [
@@ -36,6 +37,7 @@ EMAIL_PATTERNS = [
         "subject": "pubsub - HDWL",
         "from": "noreply-bmchelix@onbmc.com",
         "label": "pubsub",
+        "processing_label": HDWL_PROCESSING_LABEL,
         "pubsub_topic": "gmail-to-bq-hdwl"
     },
     {
@@ -107,6 +109,8 @@ def search_gmail_for_pattern(service, pattern: Dict) -> List[str]:
             query_parts.append(f'from:{pattern["from"]}')
         if pattern.get("label"):
             query_parts.append(f'label:{pattern["label"]}')
+        if pattern.get("processing_label"):
+            query_parts.append(f'-label:{pattern["processing_label"]}')
         search_query = ' '.join(query_parts)
         
         logger.info(f"Searching Gmail with query: {search_query}")
@@ -241,9 +245,18 @@ def gmail_checker_oauth(request):
                         # Remove UNREAD
                         if 'UNREAD' in labels:
                             remove_ids.append(labels['UNREAD'])
-                        # Remove current pattern label (e.g., 'pubsub')
-                        if pattern.get('label') and pattern['label'] in labels:
-                            remove_ids.append(labels[pattern['label']])
+                        # Keep the source label until the processor confirms a full
+                        # load. A processing label prevents this one-minute poller
+                        # from publishing the same failed message repeatedly.
+                        processing_label = pattern.get('processing_label')
+                        if processing_label and processing_label not in labels:
+                            created = service.users().labels().create(
+                                userId='me',
+                                body={'name': processing_label},
+                            ).execute()
+                            labels[processing_label] = created['id']
+                        if processing_label and processing_label in labels:
+                            add_ids.append(labels[processing_label])
                         # Add ArchivedReports label if available
                         if 'ArchivedReports' in labels:
                             add_ids.append(labels['ArchivedReports'])

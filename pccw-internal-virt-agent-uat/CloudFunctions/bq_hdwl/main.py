@@ -464,7 +464,11 @@ def reconcile_merged_primary_keys(
 
 
 def manage_gmail_labels(
-    service, message_id: str, remove_label_name: str, add_label_name: str
+    service,
+    message_id: str,
+    remove_label_name: str,
+    add_label_name: str,
+    extra_remove_label_name: Optional[str] = None,
 ):
     """Remove and add labels to Gmail message, and mark as read"""
     try:
@@ -485,6 +489,11 @@ def manage_gmail_labels(
 
         if remove_label_id:
             remove_ids.append(remove_label_id)
+
+        if extra_remove_label_name:
+            extra_remove_label_id = labels.get(extra_remove_label_name)
+            if extra_remove_label_id:
+                remove_ids.append(extra_remove_label_id)
 
         if unread_label_id:
             remove_ids.append(unread_label_id)
@@ -1604,7 +1613,13 @@ def process_bq_hdwl_email(cloud_event):
             )
 
         # Manage labels: remove 'pubsub', add 'ArchivedReports'
-        manage_gmail_labels(service, message_id, "pubsub", "ArchivedReports")
+        manage_gmail_labels(
+            service,
+            message_id,
+            "pubsub",
+            "ArchivedReports",
+            extra_remove_label_name="HDWL_PROCESSING",
+        )
 
         success_message = (
             "Pipeline finished. "
