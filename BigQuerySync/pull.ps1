@@ -8,6 +8,12 @@ function New-BqsDirectory($p) {
   if (!(Test-Path $p)) { New-Item -ItemType Directory -Path $p | Out-Null }
 }
 
+function Assert-BqsPathSegment([string]$value, [string]$name) {
+  if ([string]::IsNullOrWhiteSpace($value) -or $value -in '.', '..' -or $value.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0 -or $value.Contains('/') -or $value.Contains('\')) {
+    throw "$name must be one safe folder name: $value"
+  }
+}
+
 function Write-Text($path, $text) {
   $dir = Split-Path $path -Parent
   New-BqsDirectory $dir
@@ -78,8 +84,10 @@ if ($config.location -and $config.location.Trim()) { $location = $config.locatio
 
 Initialize-GoogleAuth $config
 
-$outputRoot = if ([IO.Path]::IsPathRooted($config.outputDir)) { $config.outputDir } else { Join-Path (Split-Path $PSScriptRoot -Parent) $config.outputDir }
+$repoRoot = Split-Path $PSScriptRoot -Parent
+$outputRoot = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($config.outputDir)) { $config.outputDir } else { Join-Path $repoRoot $config.outputDir }))
 $resourceSubdir = if ($config.resourceSubdir) { $config.resourceSubdir } else { 'BigQuery' }
+Assert-BqsPathSegment $resourceSubdir 'resourceSubdir'
 New-BqsDirectory $outputRoot
 
 # Progress + timing
@@ -88,7 +96,10 @@ Write-Host "Starting BigQuery pull..." -ForegroundColor Cyan
 Write-Host ("Projects: {0}" -f (($projects) -join ', ')) -ForegroundColor Cyan
 
 foreach ($project in ${projects}) {
+  Assert-BqsPathSegment $project 'project ID'
+  $projectOutput = Join-Path $outputRoot (Join-Path $project $resourceSubdir)
   Write-Host ("`nProcessing project: {0}" -f $project) -ForegroundColor Yellow
+  Write-Host ("  Output: {0}" -f $projectOutput) -ForegroundColor DarkGray
   $locArg = if ($location) { "--location=$location" } else { "" }
   $datasets = if ($config.datasets -and $config.datasets.Count -gt 0) { 
     $config.datasets 
@@ -120,7 +131,7 @@ foreach ($project in ${projects}) {
       Write-Warning ("Failed to read dataset info for {0}:{1}: {2}" -f $project, $dataset, $_)
       continue
     }
-    $base = Join-Path $outputRoot (Join-Path $project (Join-Path $resourceSubdir $dataset))
+    $base = Join-Path $projectOutput $dataset
     $viewsDir = Join-Path $base 'views'
     $mviewsDir = Join-Path $base 'materialized_views'
     $routinesDir = Join-Path $base 'routines'

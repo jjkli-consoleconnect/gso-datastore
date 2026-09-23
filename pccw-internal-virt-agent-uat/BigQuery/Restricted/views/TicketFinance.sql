@@ -132,19 +132,6 @@ SELECT
     ELSE 'No Response'
   END AS `3rd_Response_PassFail`,
   h.LastModifiedDate as LastModifiedDateHD,
-  
-  -- WorkLogAllNOC fields
-  w.WorkLog_ID,
-  w.WorkLog_Type,
-  w.WorkLog_Submit_Date,
-  w.WorkLog_Submitter,
-  w.Last_Modified_Date as LastModifiedDateWL,
-  w.Last_Modified_By,
-  w.ExtractedDescription,
-  
-  -- Analytics
-  COUNT(w.WorkLog_ID) OVER (PARTITION BY h.Incident_Number) as WorkLog_Count,
-  ROW_NUMBER() OVER (PARTITION BY h.Incident_Number ORDER BY w.WorkLog_Submit_Date) as WorkLog_Sequence,
 
   -- AI Infused Fields
   ai.AIFirstResponse,
@@ -161,28 +148,30 @@ SELECT
   ai.AI_ConfidenceScore,
   ai.AI_EvidenceSummary,
   ai.AI_DeviceName,
-  ai.AI_CircuitReference,
-
-  -- PagerDuty escalation fields
-  pd.pagerduty_escalation_count,
-  pd.pagerduty_escalation_policies_used
+  ai.AI_CircuitReference
 
 FROM
   `pccw-internal-virt-agent-uat.GSO.HelpDeskAllNOC` h
   
-LEFT JOIN
-  `pccw-internal-virt-agent-uat.GSO.WorkLogAllNOC` w
-  ON h.Incident_Number = w.Incident_Number
-
 LEFT JOIN (
-  -- SR product enrichment now sourced from the daily EDP mirror (GSOEDPLink.EDP-SR)
+  -- Deduped: one row per SR so the join never fans out
   SELECT
     CONCAT('SR', CAST(sr_id AS STRING)) AS SRNo,
     product_id AS Product_ID,
     product_family AS Product_Family,
     product_description AS ProductDescription,
     monthly_revenue AS Monthly_Revenue
-  FROM `pccw-internal-virt-agent-uat.Mirror.EDP-SR`
+  FROM (
+    SELECT
+      sr_id,
+      product_id,
+      product_family,
+      product_description,
+      monthly_revenue,
+      ROW_NUMBER() OVER (PARTITION BY sr_id) AS rn
+    FROM `pccw-internal-virt-agent-uat.Mirror.EDP-SR`
+  )
+  WHERE rn = 1
 ) shr
   ON CASE
     WHEN REGEXP_REPLACE(h.SRno, r'"', '') LIKE 'SR%'
@@ -230,28 +219,4 @@ LEFT JOIN (
   ON ai.Incident_Number = h.Incident_Number
   AND ai.rn = 1
 
-LEFT JOIN (
-  SELECT
-    RemedyIncidentNumber,
-    COUNT(*) AS pagerduty_escalation_count,
-    STRING_AGG(escalation_policy_label, ', ' ORDER BY sort_key) AS pagerduty_escalation_policies_used
-  FROM (
-    SELECT DISTINCT
-      RemedyIncidentNumber,
-      escalation_policy_label,
-      CASE
-        WHEN REGEXP_CONTAINS(escalation_policy_label, r'T[0-9]+') THEN CAST(REGEXP_EXTRACT(escalation_policy_label, r'T([0-9]+)') AS INT64)
-        ELSE 999
-      END AS sort_key
-    FROM `pccw-internal-virt-agent-uat.GSO.PagerDutyIncidentCleansed`
-    WHERE RemedyIncidentNumber IS NOT NULL
-      AND escalation_policy_label IS NOT NULL
-  )
-  GROUP BY RemedyIncidentNumber
-) pd
-  ON h.Incident_Number = pd.RemedyIncidentNumber
-
-ORDER BY
-  h.Incident_Number,
-  w.WorkLog_Submit_Date
 

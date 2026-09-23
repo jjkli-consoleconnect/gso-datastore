@@ -23,6 +23,7 @@ CASE
     WHEN Email_Address = 'kmagnaye@pccwglobal.com' THEN 'kmagnaye@consoleconnect.com'
     WHEN Email_Address = "Tony.PF.So@pccw.com" THEN "tso@consoleconnect.com"
     WHEN Email_Address = "Taylor.SW.Cheng@pccw.com" THEN "ctaylorsw@consoleconnect.com"
+    WHEN Email_Address= "Wah-Wai.Tong@pccw.com" THEN "wwtong@consoleconnect.com"
     ELSE Email_Address
 END AS Email_Address, 
 REGEXP_SUBSTR(LOWER(Email_Address), '^[^@]+') AS UserID,
@@ -49,6 +50,7 @@ CASE
     WHEN Email_Address = 'kmagnaye@pccwglobal.com' THEN 'kmagnaye@consoleconnect.com'
     WHEN Email_Address = "Tony.PF.So@pccw.com" THEN "tso@consoleconnect.com"
     WHEN Email_Address = "Taylor.SW.Cheng@pccw.com" THEN "ctaylorsw@consoleconnect.com"
+    WHEN Email_Address= "Wah-Wai.Tong@pccw.com" THEN "wwtong@consoleconnect.com"
     ELSE CONCAT(REGEXP_SUBSTR(LOWER(Email_Address), '^[^@]+'), '@consoleconnect.com')
 END AS ConsoleConnectEmailAddress
 

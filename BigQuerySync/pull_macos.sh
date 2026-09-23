@@ -5,13 +5,14 @@ set -euo pipefail
 # Usage: ./pull_macos.sh [path/to/bq-sync.config.json]
 
 CONFIG_PATH="${1:-$(dirname "$0")/bq-sync.config.json}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Pre-flight checks
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found. Install Python 3 and retry." >&2; exit 1; }
 command -v bq >/dev/null 2>&1 || { echo "bq (BigQuery CLI) not found. Install Google Cloud SDK and enable bq component." >&2; exit 1; }
 command -v gcloud >/dev/null 2>&1 || { echo "gcloud not found. Install Google Cloud SDK (gcloud)." >&2; exit 1; }
 
-python3 - "$CONFIG_PATH" <<'PY'
+python3 - "$CONFIG_PATH" "$SCRIPT_DIR" <<'PY'
 import json
 import os
 import subprocess
@@ -54,6 +55,10 @@ def bq_query_json(project, loc_flag, sql):
 def ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
 
+def assert_path_segment(value, name):
+    if not isinstance(value, str) or not value or value in ('.', '..') or Path(value).name != value or '/' in value or '\\' in value:
+        raise ValueError(f'{name} must be one safe folder name: {value}')
+
 def write_text(path: Path, text: str):
     ensure_dir(path.parent)
     path.write_text(text, encoding='utf-8')
@@ -76,6 +81,7 @@ def initialize_google_auth(cfg, script_root: Path):
 
 def main():
     cfg_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('bq-sync.config.json')
+    script_dir = Path(sys.argv[2]).resolve()
     if not cfg_path.exists():
         print(f'Config not found: {cfg_path}', file=sys.stderr)
         sys.exit(2)
@@ -91,8 +97,9 @@ def main():
 
     output_root = Path(cfg.get('outputDir'))
     if not output_root.is_absolute():
-        output_root = (cfg_path.parent.parent / output_root).resolve()
+        output_root = (script_dir.parent / output_root).resolve()
     resource_subdir = cfg.get('resourceSubdir', 'BigQuery')
+    assert_path_segment(resource_subdir, 'resourceSubdir')
     ensure_dir(output_root)
 
     start = time.time()
@@ -100,7 +107,10 @@ def main():
     print('Projects: ' + ', '.join(projects))
 
     for project in projects:
+        assert_path_segment(project, 'project ID')
+        project_output = output_root / project / resource_subdir
         print(f'\nProcessing project: {project}')
+        print(f'  Output: {project_output}')
         datasets = cfg.get('datasets') or []
         if not datasets:
             ls_args = ['ls', f'--project_id={project}']
@@ -126,7 +136,7 @@ def main():
                 print(f'Failed to read dataset info for {project}:{dataset}: {e}', file=sys.stderr)
                 continue
 
-            base = output_root / project / resource_subdir / dataset
+            base = project_output / dataset
             views_dir = base / 'views'
             mviews_dir = base / 'materialized_views'
             routines_dir = base / 'routines'

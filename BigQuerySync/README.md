@@ -32,9 +32,9 @@ Local override example:
 
 ## Layout
 ```
-<outputDir>/
-  <project>/
-    <resourceSubdir>/
+<repository>/
+  <project-id>/
+    BigQuery/
       <dataset>/
         views/
           <view>.sql
@@ -44,6 +44,11 @@ Local override example:
           <routine>.sql
           <routine>.meta.json   # arguments, return type, language, routineType
 ```
+
+With the checked-in config, pulls write to:
+
+- `pccw-internal-virt-agent-uat/BigQuery/<dataset>/`
+- `pccw-internal-virtual-agent/BigQuery/<dataset>/`
 
 ## Notes
 - Views and materialized views are stored as SQL only; we assume GoogleSQL (not legacy).
