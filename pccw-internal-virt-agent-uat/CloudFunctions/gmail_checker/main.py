@@ -249,14 +249,16 @@ def gmail_checker_oauth(request):
                         # load. A processing label prevents this one-minute poller
                         # from publishing the same failed message repeatedly.
                         processing_label = pattern.get('processing_label')
-                        if processing_label and processing_label not in labels:
-                            created = service.users().labels().create(
-                                userId='me',
-                                body={'name': processing_label},
-                            ).execute()
-                            labels[processing_label] = created['id']
-                        if processing_label and processing_label in labels:
+                        if processing_label:
+                            if processing_label not in labels:
+                                created = service.users().labels().create(
+                                    userId='me',
+                                    body={'name': processing_label},
+                                ).execute()
+                                labels[processing_label] = created['id']
                             add_ids.append(labels[processing_label])
+                        elif pattern.get('label') and pattern['label'] in labels:
+                            remove_ids.append(labels[pattern['label']])
                         # Add ArchivedReports label if available
                         if 'ArchivedReports' in labels:
                             add_ids.append(labels['ArchivedReports'])
