@@ -1652,6 +1652,27 @@ def process_bq_hdwl_email(cloud_event):
 
     except Exception as e:
         logger.error(f"Pipeline error: {e}")
+
+        try:
+            if "message_id" in locals() and message_id:
+                manage_gmail_labels(
+                    service,
+                    message_id,
+                    "pubsub",
+                    "ArchivedReports",
+                    extra_remove_label_name="HDWL_PROCESSING",
+                )
+                logger.warning(
+                    "Archived failed HDWL message %s to stop retry-loop reprocessing.",
+                    message_id,
+                )
+        except Exception as label_error:
+            logger.warning(
+                "Failed to archive retry-loop message %s after processing error: %s",
+                message_id if "message_id" in locals() else None,
+                label_error,
+            )
+
         log_pipeline_run(
             _current_run_id,
             "ERROR",
@@ -1678,4 +1699,4 @@ def process_bq_hdwl_email(cloud_event):
                 "rowsByTable": rows_by_config if "rows_by_config" in locals() else {},
             },
         )
-        raise
+        return

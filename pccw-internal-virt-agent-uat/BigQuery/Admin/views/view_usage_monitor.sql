@@ -1,20 +1,11 @@
+-- Project-wide listing of views. Avoids per-dataset UNION branches, which broke
+-- (2026-09) when the referenced wanda_billing dataset was deleted: any
+-- INFORMATION_SCHEMA reference to a missing dataset fails the whole view.
 WITH view_objects AS (
-  SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.Admin.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.BMC.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.BMCQA.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.CostItemExpiration.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.GSO.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.JIRAProjects.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.Looker.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.QMS.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.RemedyICS.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.Snapshot.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.Staging.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.SubCableEvents.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.Testing.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.sheldon_testing.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.wanda_billing.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
-  UNION ALL SELECT table_catalog, table_schema, table_name FROM `pccw-internal-virt-agent-uat.wanda_ds.INFORMATION_SCHEMA.TABLES` WHERE table_type = 'VIEW'
+  SELECT table_catalog, table_schema, table_name
+  FROM `region-eu`.INFORMATION_SCHEMA.TABLES
+  WHERE table_type = 'VIEW'
+    AND table_catalog = 'pccw-internal-virt-agent-uat'
 ),
 jobs AS (
   SELECT job_id, user_email, creation_time, query, referenced_tables
