@@ -1,5 +1,5 @@
 -- Restricted.TicketMRC view: ticket + MRC enrichment.
--- SR product enrichment joined from Mirror.EDP-SR ù the EU cross-region copy of
+-- SR product enrichment joined from Mirror.EDP-SR — the EU cross-region copy of
 -- GSOEDPLink.EDP-SR (daily mirror of edp-prod-lake-data-warehouse.DATA_676.dw_hub_sr).
 -- Previously joined GSO.SHRPeople.
 SELECT
@@ -47,14 +47,6 @@ SELECT
   h.GCSC_1st_Customer_Update,
   h.GCSC_2nd_Customer_Update,
   h.GCSC_3rd_Customer_Update,
-  CASE WHEN h.Status = 'Assigned' THEN "1-Assigned"
-        WHEN h.Status = 'In Progress' THEN "2-In Progress"
-        WHEN h.Status = 'Pending' THEN "3-Pending"
-        WHEN h.Status = 'Resolved' THEN "4-Resolved"
-        WHEN h.Status = 'Closed' THEN "5-Closed"
-        WHEN h.Status = 'Cancelled' THEN "6-Cancelled"
-    ELSE NULL 
-  END AS TicketProcess,
   -- MTTR Status (Custom): pass if > 0 and <= 240 mins; 7 days (10080 mins) for Mobility & IoT
   CASE
     WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080 ELSE 240 END)

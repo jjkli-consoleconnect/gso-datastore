@@ -76,6 +76,9 @@ venv*/
 # Local BigQuerySync overrides
 BigQuerySync/bq-sync.config.local.json
 
+# BigQuery pull fingerprint cache (delta mode; regenerated on every pull)
+/BigQuerySync/.bq-sync.state.json
+
 # Local Jira config overrides
 config.local.json
 .config.json

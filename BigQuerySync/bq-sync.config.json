@@ -11,5 +11,9 @@
     "views": true,
     "materializedViews": true,
     "routines": true
-  }
+  },
+  "prune": true,
+  "verifyRemovals": true,
+  "delta": false,
+  "stateFile": ".bq-sync.state.json"
 }

@@ -8,7 +8,7 @@ WITH extracted_links AS (
     Team,
     slack_fullname,
     DATE(requisitionStartTime) AS activity_date,
-    -- 提取完整連結區塊
+    -- Extract full link blocks
     REGEXP_EXTRACT_ALL(transcript, r'<(https?://[^>|]+(?:\|[^>]*)?)>') AS all_matches,
     transcript
   FROM `pccw-internal-virtual-agent.LookerStudio.CCAI_Dialogflow`
@@ -36,21 +36,24 @@ SELECT
   u.slack_fullname,
   u.activity_date,
   
-  -- 原始連結資訊
+  -- Original link info
   REGEXP_EXTRACT(u.match_item, r'https?://[^>|]+') AS extracted_url,
   
-  -- 提取 Space 和 Page ID (僅針對 Confluence 連結)
-  REGEXP_EXTRACT(u.match_item, r'/spaces/([^/]+)') AS confluence_space,
-  REGEXP_EXTRACT(u.match_item, r'/pages/([^/]+)') AS confluence_page_id,
+  -- Extract Space Key/Name (captures segment between /spaces/ and /pages/)
+  REGEXP_EXTRACT(u.match_item, r'/spaces/([^/]+)/pages/') AS confluence_space,
   
-  -- 標題處理邏輯
+  -- Extract Page ID
+  REGEXP_EXTRACT(u.match_item, r'/pages/([^/]+)') AS confluence_page_id,
+  c.title,
+
+  -- Page title logic
   CASE 
     WHEN REGEXP_EXTRACT(u.match_item, r'https?://[^>|]+') LIKE '%consoleconnect.atlassian.net/wiki/spaces%'
       THEN COALESCE(REGEXP_EXTRACT(u.match_item, r'\|([^>]+)'), 'Confluence Page')
     ELSE NULL
   END AS cleaned_page_title,
   
-  -- 來源分類
+  -- Source classification
   CASE 
     WHEN REGEXP_EXTRACT(u.match_item, r'https?://[^>|]+') LIKE '%consoleconnect.atlassian.net/wiki/spaces%' THEN 'confluence'
     ELSE 'others'
@@ -61,4 +64,6 @@ SELECT
   ikm.DirectoryInternal AS dept_owning_the_space
 FROM unnested_links AS u
 LEFT JOIN ikm_base AS ikm
-  ON   REGEXP_EXTRACT(u.match_item, r'/spaces/([^/]+)') =   REGEXP_EXTRACT(ikm.ConfluenceURL, r'/spaces/([^/]+)')
+  ON REGEXP_EXTRACT(u.match_item, r'/spaces/([^/]+)/pages/') = REGEXP_EXTRACT(ikm.ConfluenceURL, r'/spaces/([^/]+)/pages/') 
+LEFT JOIN `pccw-internal-virtual-agent.GSO.confluence_pages` c
+  ON REGEXP_EXTRACT(u.match_item, r'/pages/([^/]+)') = c.page_id

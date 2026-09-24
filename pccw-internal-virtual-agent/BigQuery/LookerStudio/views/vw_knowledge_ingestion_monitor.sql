@@ -16,6 +16,6 @@ SELECT
   IFNULL(b.SuccessFailureFinal,"Unknown") AS Status,
   a.success_count,
   a.fail_count
-FROM `pccw-internal-virtual-agent.wanda_ds.knowledge_activity_audit` a
-LEFT JOIN `pccw-internal-virt-agent-uat.GSO.IKM` b
+FROM `pccw-internal-virt-agent-uat.GSO.IKM` b
+LEFT JOIN `pccw-internal-virtual-agent.wanda_ds.knowledge_activity_audit` a
 ON a.issue_key=b.Ticket_Key

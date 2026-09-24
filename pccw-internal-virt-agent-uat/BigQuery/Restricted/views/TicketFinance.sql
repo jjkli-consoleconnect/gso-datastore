@@ -1,7 +1,3 @@
--- Restricted.TicketMRC view: ticket + MRC enrichment.
--- SR product enrichment joined from Mirror.EDP-SR ù the EU cross-region copy of
--- GSOEDPLink.EDP-SR (daily mirror of edp-prod-lake-data-warehouse.DATA_676.dw_hub_sr).
--- Previously joined GSO.SHRPeople.
 SELECT
   -- HelpDeskAllNOC fields (Ticket Table)
   h.Incident_Number,
@@ -218,5 +214,3 @@ LEFT JOIN (
 ) ai
   ON ai.Incident_Number = h.Incident_Number
   AND ai.rn = 1
-
-

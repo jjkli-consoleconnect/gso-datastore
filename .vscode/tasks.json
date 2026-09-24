@@ -15,6 +15,34 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "BigQuery: Pull (Delta)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/BigQuerySync/pull.ps1",
+				"-Delta"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "BigQuery: Pull (DryRun)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}/BigQuerySync/pull.ps1",
+				"-DryRun"
+			],
+			"problemMatcher": []
+		},
+		{
 			"label": "BigQuery: Pull (macOS)",
 			"type": "shell",
 			"command": "${workspaceFolder}/BigQuerySync/pull_macos.sh",

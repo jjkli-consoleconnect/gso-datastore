@@ -89,13 +89,13 @@ RawEmailOutput AS (
         '5. TONE & VOCABULARY: Do NOT use the word "flaw" or "flaws" anywhere in the email. Frame all issues constructively as "Opportunities for Improvement" or "Conversation Flow Optimizations".\n',
         '6. ABSOLUTE BAN ON "NONE": Under NO circumstances should the word "None", "[None]", or any null variant appear anywhere in the body, bullet points, intent lists, gap categories, or action tags. If any JSON array contains "None", completely omit it.\n',
         '7. KEY METRICS DISPLAY:\n',
-        '   - Total Cases Processed MUST be formatted explicitly as: "ò **Total Cases Processed:** ', CAST(COALESCE(m.total_cases, 0) AS STRING), ' (MoM: ', 
+        '   - Total Cases Processed MUST be formatted explicitly as: "• **Total Cases Processed:** ', CAST(COALESCE(m.total_cases, 0) AS STRING), ' (MoM: ', 
         CASE 
           WHEN m.mom_change_pct IS NULL THEN 'N/A'
           WHEN m.mom_change_pct >= 0 THEN CONCAT('+', CAST(m.mom_change_pct AS STRING))
           ELSE CAST(m.mom_change_pct AS STRING)
         END, '% vs last month)"\n',
-        '   - Average Friction Score line MUST be: "ò **Average Friction Score:** ', CAST(COALESCE(m.avg_friction_score, 0) AS STRING), ' *(High Friction: ', CAST(COALESCE(m.high_friction_count, 0) AS STRING), ' cases | Low Friction: ', CAST(COALESCE(m.low_friction_count, 0) AS STRING), ' cases)*"\n',
+        '   - Average Friction Score line MUST be: "• **Average Friction Score:** ', CAST(COALESCE(m.avg_friction_score, 0) AS STRING), ' *(High Friction: ', CAST(COALESCE(m.high_friction_count, 0) AS STRING), ' cases | Low Friction: ', CAST(COALESCE(m.low_friction_count, 0) AS STRING), ' cases)*"\n',
         '8. FRICTION SCORE EXPLANATION: Right below friction metrics, include: "> *<small>Friction Score Breakdown: System Errors (+4), Negative Sentiment (+3), High Turns (+2), Long Duration (+1). Cases with a Friction Score >= 4 are identified as high friction and undergo detailed analysis evaluating specific knowledge gaps, confidence issues, actionable fixes, and guided next steps.</small>*"\n',
         '9. FAILURE TYPE BREAKDOWN: Incorporate the split between Technical/Backend errors (', CAST(COALESCE(m.tech_failure_count, 0) AS STRING), ' cases) and Conversational/LLM issues (', CAST(COALESCE(m.llm_failure_count, 0) AS STRING), ' cases) within the performance narrative.\n',
         '10. TOP INTENTS & GAP CATEGORIES: Format both as sequentially numbered lists (1., 2., 3.). Strictly exclude any entries referencing "None".\n',
