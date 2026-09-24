@@ -14,8 +14,9 @@ SELECT
   t.KnowledgeManagement, 
   t.DirectoryInternal, 
   t.ConfluenceURL, 
-  t.IncludeChildPages, 
+  CASE WHEN t.IncludeChildPages = 'Yes' THEN 'Yes' ELSE 'No' END AS IncludeChildPages, 
   latest_kaa.latest_outcome AS SuccessFailureFinal,
+  REGEXP_EXTRACT(t.ConfluenceURL, r'/spaces/([^/]+)/pages/') AS confluence_space_name,
   -- ka fields removed, all audit info in KnowledgeActivityAudit array
   t.Verifier, 
   t.Approvers,
