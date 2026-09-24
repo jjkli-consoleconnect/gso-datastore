@@ -448,13 +448,13 @@ foreach ($project in $projects) {
     $routineRows = $null
     $regionQueries = @()
     if ($include.views) {
-      $regionQueries += ('SELECT 1 AS kind, table_schema, table_name, view_definition AS body, CAST(NULL AS STRING) AS last_altered FROM `{0}`.`region-{1}`.INFORMATION_SCHEMA.VIEWS' -f $project, $dsLocation)
+      $regionQueries += ('SELECT 1 AS kind, table_schema, table_name, view_definition, CAST(NULL AS STRING) AS last_altered FROM `{0}`.`region-{1}`.INFORMATION_SCHEMA.VIEWS' -f $project, $dsLocation)
     }
     if ($include.materializedViews) {
-      $regionQueries += ('SELECT 2 AS kind, table_schema, table_name, CAST(NULL AS STRING) AS body, CAST(NULL AS STRING) AS last_altered FROM `{0}`.`region-{1}`.INFORMATION_SCHEMA.TABLES WHERE table_type = ''MATERIALIZED VIEW''' -f $project, $dsLocation)
+      $regionQueries += ('SELECT 2 AS kind, table_schema, table_name, CAST(NULL AS STRING) AS view_definition, CAST(NULL AS STRING) AS last_altered FROM `{0}`.`region-{1}`.INFORMATION_SCHEMA.TABLES WHERE table_type = ''MATERIALIZED VIEW''' -f $project, $dsLocation)
     }
     if ($include.routines) {
-      $regionQueries += ('SELECT 3 AS kind, routine_schema AS table_schema, routine_name AS table_name, CAST(NULL AS STRING) AS body, CAST(last_altered AS STRING) AS last_altered FROM `{0}`.`region-{1}`.INFORMATION_SCHEMA.ROUTINES' -f $project, $dsLocation)
+      $regionQueries += ('SELECT 3 AS kind, routine_schema AS table_schema, routine_name AS table_name, CAST(NULL AS STRING) AS view_definition, CAST(last_altered AS STRING) AS last_altered FROM `{0}`.`region-{1}`.INFORMATION_SCHEMA.ROUTINES' -f $project, $dsLocation)
     }
 
     if ($regionQueries.Count -gt 0 -and $dsLocation -ne 'unknown') {

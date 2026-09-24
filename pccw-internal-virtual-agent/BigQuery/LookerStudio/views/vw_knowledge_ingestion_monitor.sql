@@ -3,6 +3,7 @@ SELECT
   IFNULL(b.DirectoryInternal,"Unknown") AS Department,
   IFNULL(a.activity_type,"Unknown") AS Activity,
   IFNULL(b.Reporter,"Unknown") AS Reporter,
+  REGEXP_EXTRACT(a.root_page_url, r'/spaces/([^/]+)/pages/') AS confluence_space_name,
   IFNULL(REPLACE(REGEXP_EXTRACT(a.root_page_url, r'([^/]+)$'), '+', ' '),"Unknown") AS Page_Title,
   IFNULL(
     (
@@ -12,6 +13,7 @@ SELECT
     ),
     "Unknown")
     AS Page_ID,
+  a.root_page_url AS root_page_url,
   a.issue_key AS Issue_Key,
   IFNULL(b.SuccessFailureFinal,"Unknown") AS Status,
   a.success_count,

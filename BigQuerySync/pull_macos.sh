@@ -354,11 +354,11 @@ def main():
             show_location = None if ds_location == 'unknown' else ds_location
             region_queries = []
             if inc_views:
-                region_queries.append(f'SELECT 1 AS kind, table_schema, table_name, view_definition AS body, CAST(NULL AS STRING) AS last_altered FROM `{project}`.`region-{ds_location}`.INFORMATION_SCHEMA.VIEWS')
+                region_queries.append(f'SELECT 1 AS kind, table_schema, table_name, view_definition, CAST(NULL AS STRING) AS last_altered FROM `{project}`.`region-{ds_location}`.INFORMATION_SCHEMA.VIEWS')
             if inc_mviews:
-                region_queries.append(f"SELECT 2 AS kind, table_schema, table_name, CAST(NULL AS STRING) AS body, CAST(NULL AS STRING) AS last_altered FROM `{project}`.`region-{ds_location}`.INFORMATION_SCHEMA.TABLES WHERE table_type = 'MATERIALIZED VIEW'")
+                region_queries.append(f"SELECT 2 AS kind, table_schema, table_name, CAST(NULL AS STRING) AS view_definition, CAST(NULL AS STRING) AS last_altered FROM `{project}`.`region-{ds_location}`.INFORMATION_SCHEMA.TABLES WHERE table_type = 'MATERIALIZED VIEW'")
             if inc_routines:
-                region_queries.append(f'SELECT 3 AS kind, routine_schema AS table_schema, routine_name AS table_name, CAST(NULL AS STRING) AS body, CAST(last_altered AS STRING) AS last_altered FROM `{project}`.`region-{ds_location}`.INFORMATION_SCHEMA.ROUTINES')
+                region_queries.append(f'SELECT 3 AS kind, routine_schema AS table_schema, routine_name AS table_name, CAST(NULL AS STRING) AS view_definition, CAST(last_altered AS STRING) AS last_altered FROM `{project}`.`region-{ds_location}`.INFORMATION_SCHEMA.ROUTINES')
 
             views_by_ds = None
             mviews_by_ds = None
