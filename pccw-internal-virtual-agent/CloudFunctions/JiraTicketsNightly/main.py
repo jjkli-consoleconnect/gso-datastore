@@ -126,6 +126,9 @@ CONFLUENCE_URL_JIRA_ID = "customfield_11184"
 INCLUDE_CHILD_PAGES_JIRA_ID = "customfield_15829"
 VERIFIER_JIRA_ID = "customfield_10674"
 APPROVERS_JIRA_ID = "customfield_10516"
+RFO_DESCRIPTION_JIRA_ID = "customfield_10625"
+RFO_CATEGORY_JIRA_ID = "customfield_12378"
+FIX_JIRA_ID = "customfield_10666"
 
 
 def to_utc_aware(dt):
@@ -180,6 +183,9 @@ def ensure_soft_delete_columns(client, dataset_id, table_id):
         ("Symptoms", "STRING"),
         ("ATTCK", "STRING"),
         ("Description", "STRING"),
+        ("RFODescription", "STRING"),
+        ("RFOCategory", "STRING"),
+        ("Fix", "STRING"),
         ("IssueId", "STRING"),
         ("Creator", "STRING"),
         ("ReporterId", "STRING"),
@@ -382,14 +388,28 @@ def get_project_keys_missing_creator(client, dataset_id, table_id, project):
     return {r.Key for r in rows if getattr(r, "Key", None)}
 
 
-def add_creator_insert_mapping(merge_query):
+def add_insert_mappings(merge_query):
     column_anchor = "Resolved, DueDate, Reporter"
     value_anchor = "S.Resolved, S.DueDate, S.Reporter"
     if merge_query.count(column_anchor) != 1 or merge_query.count(value_anchor) != 1:
         raise ValueError("Unexpected JiraTicketsNightly MERGE insert shape")
-    return merge_query.replace(
+    merge_query = merge_query.replace(
         column_anchor, "Resolved, DueDate, Creator, Reporter"
     ).replace(value_anchor, "S.Resolved, S.DueDate, S.Creator, S.Reporter")
+    field_column_anchor = "Description, Labels"
+    field_value_anchor = "S.Description, S.Labels"
+    if (
+        merge_query.count(field_column_anchor) != 1
+        or merge_query.count(field_value_anchor) != 1
+    ):
+        raise ValueError("Unexpected JiraTicketsNightly custom-field insert shape")
+    return merge_query.replace(
+        field_column_anchor,
+        "Description, RFODescription, RFOCategory, Fix, Labels",
+    ).replace(
+        field_value_anchor,
+        "S.Description, S.RFODescription, S.RFOCategory, S.Fix, S.Labels",
+    )
 
 
 def get_recent_window_metrics(client, dataset_id, table_id, project, sample_size=5):
@@ -984,6 +1004,9 @@ def build_ticket_row(
         or get_field_value(fields.get("customfield_10088")),
         "Links": extract_issue_links(fields.get("issuelinks")),
         "Description": extract_adf_text(fields.get("description")),
+        "RFODescription": extract_adf_text(fields.get(RFO_DESCRIPTION_JIRA_ID)),
+        "RFOCategory": get_field_value(fields.get(RFO_CATEGORY_JIRA_ID)),
+        "Fix": extract_adf_text(fields.get(FIX_JIRA_ID)),
         "Attachment": json.dumps(fields.get("attachment"))
         if fields.get("attachment")
         else None,
@@ -1188,6 +1211,9 @@ def fetch_and_sync_jira_tickets_nightly():
             bigquery.SchemaField("RemedyTicketNumber", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Links", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Description", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("RFODescription", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("RFOCategory", "STRING", mode="NULLABLE"),
+            bigquery.SchemaField("Fix", "STRING", mode="NULLABLE"),
             bigquery.SchemaField("Labels", "STRING", mode="REPEATED"),
             bigquery.SchemaField("Attachment", "JSON", mode="NULLABLE"),
             bigquery.SchemaField(SR_REF_BQ_NAME, "STRING", mode="NULLABLE"),
@@ -1333,6 +1359,9 @@ def fetch_and_sync_jira_tickets_nightly():
             "resolution",
             "issuelinks",
             "description",
+            RFO_DESCRIPTION_JIRA_ID,
+            RFO_CATEGORY_JIRA_ID,
+            FIX_JIRA_ID,
             "labels",
             "attachment",
             "customfield_10088",
@@ -1748,6 +1777,9 @@ def fetch_and_sync_jira_tickets_nightly():
                             T.RemedyTicketNumber = IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]),
                             T.Links = COALESCE(S.Links, T.Links),
                             T.Description = COALESCE(S.Description, T.Description),
+                            T.RFODescription = COALESCE(S.RFODescription, T.RFODescription),
+                            T.RFOCategory = COALESCE(S.RFOCategory, T.RFOCategory),
+                            T.Fix = COALESCE(S.Fix, T.Fix),
                             T.Labels = COALESCE(S.Labels, T.Labels),
                             T.Attachment = COALESCE(S.Attachment, T.Attachment),
                             T.{SR_REF_BQ_NAME} = COALESCE(S.{SR_REF_BQ_NAME}, T.{SR_REF_BQ_NAME}),
@@ -1809,7 +1841,7 @@ def fetch_and_sync_jira_tickets_nightly():
                         WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, KnowledgeManagement, DirectoryInternal, ConfluenceURL, IncludeChildPages, Verifier, VerifierId, Approvers, ApproversId, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, StoryPoints, TimeSpentSeconds, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution, AppSupEscalation, SyncTime, IsDeleted, DeletedAt)
                         VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, S.KnowledgeManagement, S.DirectoryInternal, S.ConfluenceURL, S.IncludeChildPages, S.Verifier, S.VerifierId, S.Approvers, S.ApproversId, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.StoryPoints, S.TimeSpentSeconds, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution, S.AppSupEscalation, S.SyncTime, FALSE, NULL)
                     """
-                    merge_query = add_creator_insert_mapping(merge_query)
+                    merge_query = add_insert_mappings(merge_query)
                     execute_bq_query_with_retry(
                         client, merge_query, max_retries=5, initial_delay=10.0
                     )
@@ -1948,6 +1980,9 @@ def fetch_and_sync_jira_tickets_nightly():
                                     T.RemedyTicketNumber = IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]),
                                     T.Links = COALESCE(S.Links, T.Links),
                                     T.Description = COALESCE(S.Description, T.Description),
+                                    T.RFODescription = COALESCE(S.RFODescription, T.RFODescription),
+                                    T.RFOCategory = COALESCE(S.RFOCategory, T.RFOCategory),
+                                    T.Fix = COALESCE(S.Fix, T.Fix),
                                     T.Labels = COALESCE(S.Labels, T.Labels),
                                     T.Attachment = COALESCE(S.Attachment, T.Attachment),
                                     T.{SR_REF_BQ_NAME} = COALESCE(S.{SR_REF_BQ_NAME}, T.{SR_REF_BQ_NAME}),
@@ -2009,7 +2044,7 @@ def fetch_and_sync_jira_tickets_nightly():
                                 WHEN NOT MATCHED THEN INSERT (T, Project, Key, IssueId, Summary, Status, Priority, Resolution, Created, Updated, Resolved, DueDate, Reporter, ReporterId, Assignee, AssigneeId, Component, FeatureTeam, MaintenanceWindowStart, MaintenanceWindowEnd, KnowledgeManagement, DirectoryInternal, ConfluenceURL, IncludeChildPages, Verifier, VerifierId, Approvers, ApproversId, RemedyTicketNumber, Links, Description, Labels, Attachment, {SR_REF_BQ_NAME}, AssociatedTeam, TransactionStatus, Service, Origin, RootCause, ResolutionSecurity, Symptoms, ATTCK, StoryPoints, TimeSpentSeconds, TimeToFirstResponse_Elapsed_hrs, TimeToFirstResponse_Goal_hrs, TimeToFirstResponse_Breached, TimeToFirstResponse_Cycles, TimeToResolve_Elapsed_hrs, TimeToResolve_Goal_hrs, TimeToResolve_Breached, TimeToResolve_Cycles, TimeToResolution_Elapsed_hrs, TimeToResolution_Goal_hrs, TimeToResolution_Breached, TimeToResolution_Cycles, TimeToApproveNormalChange_Elapsed_hrs, TimeToApproveNormalChange_Goal_hrs, TimeToApproveNormalChange_Breached, TimeToApproveNormalChange_Cycles, ProlongCase_Elapsed_hrs, ProlongCase_Goal_hrs, ProlongCase_Breached, ProlongCase_Cycles, TimeToCloseAfterResolution_Elapsed_hrs, TimeToCloseAfterResolution_Goal_hrs, TimeToCloseAfterResolution_Breached, TimeToCloseAfterResolution_Cycles, ITHD_TimeToFirstResponse_Elapsed_hrs, ITHD_TimeToFirstResponse_Goal_hrs, ITHD_TimeToFirstResponse_Breached, ITHD_TimeToFirstResponse_Cycles, ITHD_TimeToResolution_Elapsed_hrs, ITHD_TimeToResolution_Goal_hrs, ITHD_TimeToResolution_Breached, ITHD_TimeToResolution_Cycles, ITHD_ISMSIncidentResponse_Elapsed_hrs, ITHD_ISMSIncidentResponse_Goal_hrs, ITHD_ISMSIncidentResponse_Breached, ITHD_ISMSIncidentResponse_Cycles, ITHD_ISMSIncidentResolution_Elapsed_hrs, ITHD_ISMSIncidentResolution_Goal_hrs, ITHD_ISMSIncidentResolution_Breached, ITHD_ISMSIncidentResolution_Cycles, ITHD_Resolution, AppSupEscalation, SyncTime, IsDeleted, DeletedAt)
                                 VALUES (S.T, S.Project, S.Key, S.IssueId, S.Summary, S.Status, S.Priority, S.Resolution, S.Created, S.Updated, S.Resolved, S.DueDate, S.Reporter, S.ReporterId, S.Assignee, S.AssigneeId, IF(S.Component IS NULL, NULL, [S.Component]), S.FeatureTeam, S.MaintenanceWindowStart, S.MaintenanceWindowEnd, S.KnowledgeManagement, S.DirectoryInternal, S.ConfluenceURL, S.IncludeChildPages, S.Verifier, S.VerifierId, S.Approvers, S.ApproversId, IF(S.RemedyTicketNumber IS NULL, NULL, [S.RemedyTicketNumber]), S.Links, S.Description, S.Labels, S.Attachment, S.{SR_REF_BQ_NAME}, S.AssociatedTeam, S.TransactionStatus, S.Service, S.Origin, S.RootCause, S.ResolutionSecurity, S.Symptoms, S.ATTCK, S.StoryPoints, S.TimeSpentSeconds, S.TimeToFirstResponse_Elapsed_hrs, S.TimeToFirstResponse_Goal_hrs, S.TimeToFirstResponse_Breached, S.TimeToFirstResponse_Cycles, S.TimeToResolve_Elapsed_hrs, S.TimeToResolve_Goal_hrs, S.TimeToResolve_Breached, S.TimeToResolve_Cycles, S.TimeToResolution_Elapsed_hrs, S.TimeToResolution_Goal_hrs, S.TimeToResolution_Breached, S.TimeToResolution_Cycles, S.TimeToApproveNormalChange_Elapsed_hrs, S.TimeToApproveNormalChange_Goal_hrs, S.TimeToApproveNormalChange_Breached, S.TimeToApproveNormalChange_Cycles, S.ProlongCase_Elapsed_hrs, S.ProlongCase_Goal_hrs, S.ProlongCase_Breached, S.ProlongCase_Cycles, S.TimeToCloseAfterResolution_Elapsed_hrs, S.TimeToCloseAfterResolution_Goal_hrs, S.TimeToCloseAfterResolution_Breached, S.TimeToCloseAfterResolution_Cycles, S.ITHD_TimeToFirstResponse_Elapsed_hrs, S.ITHD_TimeToFirstResponse_Goal_hrs, S.ITHD_TimeToFirstResponse_Breached, S.ITHD_TimeToFirstResponse_Cycles, S.ITHD_TimeToResolution_Elapsed_hrs, S.ITHD_TimeToResolution_Goal_hrs, S.ITHD_TimeToResolution_Breached, S.ITHD_TimeToResolution_Cycles, S.ITHD_ISMSIncidentResponse_Elapsed_hrs, S.ITHD_ISMSIncidentResponse_Goal_hrs, S.ITHD_ISMSIncidentResponse_Breached, S.ITHD_ISMSIncidentResponse_Cycles, S.ITHD_ISMSIncidentResolution_Elapsed_hrs, S.ITHD_ISMSIncidentResolution_Goal_hrs, S.ITHD_ISMSIncidentResolution_Breached, S.ITHD_ISMSIncidentResolution_Cycles, S.ITHD_Resolution, S.AppSupEscalation, S.SyncTime, FALSE, NULL)
                             """
-                            merge_query = add_creator_insert_mapping(merge_query)
+                            merge_query = add_insert_mappings(merge_query)
                             execute_bq_query_with_retry(
                                 client, merge_query, max_retries=5, initial_delay=10.0
                             )

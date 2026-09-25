@@ -229,6 +229,9 @@ Important inconsistency: `remedy_mttr_target_status` returns `MTTRFailed` when M
 | `jira_ticket_type` | Jira issue type. |
 | `jira_summary` | Jira issue summary. |
 | `jira_labels` | Jira labels. |
+| `jira_rfo_description` | Plain-text Jira reason-for-outage description. |
+| `jira_rfo_category` | Jira reason-for-outage category. |
+| `jira_fix` | Plain-text Jira corrective action or fix. |
 | `jira_status` | Jira workflow status. Not used by strict tier classification. |
 | `jira_assignee` | Jira assignee. |
 | `jira_project_code` | Alphabetic prefix extracted from the beginning of the Jira key. |

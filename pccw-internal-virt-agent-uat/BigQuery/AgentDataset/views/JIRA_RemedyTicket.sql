@@ -165,6 +165,9 @@ SELECT
   st.Key AS jira_issue_key,
   st.Summary AS jira_summary,
   st.Labels AS jira_labels,
+  st.RFODescription AS jira_rfo_description,
+  st.RFOCategory AS jira_rfo_category,
+  st.Fix AS jira_fix,
   st.Status AS jira_status,
   st.Created AS jira_created_timestamp,
   st.Updated AS jira_updated_timestamp,
@@ -506,9 +509,13 @@ SELECT
   -- Lead_Time_secs: Number of seconds between Jira creation and resolution
   DATETIME_DIFF(CAST(st.Resolved AS DATETIME), CAST(st.Created AS DATETIME), SECOND) AS jira_resolution_lifecycle_seconds,
   
-  -- MTTR_Status: 'MTTRPassed' if MTTR > 0 and <= 240 mins (7 days / 10080 mins for the IoT & Mobility assigned group), otherwise 'MTTRFailed'
+  -- MTTR_Status: 'MTTRPassed' if MTTR > 0 and <= threshold (240 mins, 7200 for Voice, 10080 for Mobility & IoT), otherwise 'MTTRFailed'
   CASE 
-    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE WHEN hd.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END)
+    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN 'MTTRPassed' 
     ELSE 'MTTRFailed' 
   END AS remedy_mttr_target_status,
@@ -522,44 +529,68 @@ SELECT
   -- MTTR_secs: MTTR converted from minutes to seconds
   hd.TrueMTTR_mins * 60 AS remedy_mttr_seconds,
   
-  -- MTTRFailed: Returns Incident_Number if MTTR <= 0 or > threshold (240 mins, 10080 for the IoT & Mobility assigned group)
+  -- MTTRFailed: Returns Incident_Number if MTTR <= 0 or > threshold (240 mins, 7200 for Voice, 10080 for Mobility & IoT)
   CASE 
-    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > (CASE WHEN hd.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END) 
+    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > (CASE
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN hd.Incident_Number 
     ELSE NULL 
   END AS mttr_target_failed_incident_id,
   
   -- MTTRFailed_mins: MTTR minutes when failed
   CASE 
-    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > (CASE WHEN hd.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END) 
+    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > (CASE
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN hd.TrueMTTR_mins 
     ELSE NULL 
   END AS failed_remedy_mttr_minutes,
   
   -- MTTRFailed_hrs: MTTRFailed minutes converted to hours
   CASE 
-    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > (CASE WHEN hd.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END) 
+    WHEN hd.TrueMTTR_mins <= 0 OR hd.TrueMTTR_mins > (CASE
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN hd.TrueMTTR_mins / 60 
     ELSE NULL 
   END AS failed_remedy_mttr_hours,
   
-  -- MTTRPassed: Returns Incident_Number if MTTR > 0 and <= threshold (240 mins, 10080 for the IoT & Mobility assigned group)
+  -- MTTRPassed: Returns Incident_Number if MTTR > 0 and <= threshold (240 mins, 7200 for Voice, 10080 for Mobility & IoT)
   CASE 
-    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE WHEN hd.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END) 
+    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN hd.Incident_Number 
     ELSE NULL 
   END AS mttr_target_passed_incident_id,
   
   -- MTTRPassed_mins: MTTR minutes when passed
   CASE 
-    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE WHEN hd.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END) 
+    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN hd.TrueMTTR_mins 
     ELSE NULL 
   END AS passed_remedy_mttr_minutes,
   
   -- MTTRPassed_hrs: MTTRPassed minutes converted to hours
   CASE 
-    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE WHEN hd.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END) 
+    WHEN hd.TrueMTTR_mins > 0 AND hd.TrueMTTR_mins <= (CASE
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(hd.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN hd.TrueMTTR_mins / 60 
     ELSE NULL 
   END AS passed_remedy_mttr_hours,

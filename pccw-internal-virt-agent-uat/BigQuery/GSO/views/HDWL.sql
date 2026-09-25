@@ -50,39 +50,67 @@ SELECT
         WHEN h.Status = 'Cancelled' THEN "6-Cancelled"
     ELSE NULL 
   END AS TicketProcess,
-  -- MTTR Status (Custom): pass if > 0 and <= 240 mins; 7 days (10080 mins) for the IoT & Mobility assigned group
+  -- MTTR Status (Custom): pass if > 0 and <= threshold (240 mins, 7200 for Voice, 10080 for Mobility & IoT)
   CASE
-    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN h.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END)
+    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN 'MTTRPassed'
     ELSE 'MTTRFailed'
   END AS MTTR_Status,
   CASE
-    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE WHEN h.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END)
+    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN h.Incident_Number
     ELSE NULL
   END AS MTTRFailed,
   CASE
-    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE WHEN h.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END)
+    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN h.TrueMTTR_mins
     ELSE NULL
   END AS MTTRFailed_mins,
   CASE
-    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE WHEN h.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END)
+    WHEN h.TrueMTTR_mins <= 0 OR h.TrueMTTR_mins > (CASE
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN h.TrueMTTR_mins / 60
     ELSE NULL
   END AS MTTRFailed_hrs,
   CASE
-    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN h.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END)
+    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN h.Incident_Number
     ELSE NULL
   END AS MTTRPassed,
   CASE
-    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN h.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END)
+    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN h.TrueMTTR_mins
     ELSE NULL
   END AS MTTRPassed_mins,
   CASE
-    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE WHEN h.Assigned_Group = 'IoT & Mobility' THEN 10080 ELSE 240 END)
+    WHEN h.TrueMTTR_mins > 0 AND h.TrueMTTR_mins <= (CASE
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Mobility & IoT' THEN 10080
+      WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 7200
+      ELSE 240
+    END)
     THEN h.TrueMTTR_mins / 60
     ELSE NULL
   END AS MTTRPassed_hrs,
@@ -94,8 +122,10 @@ SELECT
   END AS `1st_Response_Minutes`,
   CASE
     WHEN h.GCSC_1st_Customer_Update IS NOT NULL AND h.ReportedDate IS NOT NULL
-    THEN CASE 
-      WHEN TIMESTAMP_DIFF(h.GCSC_1st_Customer_Update, h.ReportedDate, MINUTE) <= 30 THEN 'PASS'
+    THEN CASE
+      WHEN TIMESTAMP_DIFF(h.GCSC_1st_Customer_Update, h.ReportedDate, MINUTE) <=
+        CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 120 ELSE 30 END
+      THEN 'PASS'
       ELSE 'FAIL'
     END
     ELSE 'No Response'
@@ -107,8 +137,10 @@ SELECT
   END AS `2nd_Response_Minutes`,
   CASE
     WHEN h.GCSC_1st_Customer_Update IS NOT NULL AND h.GCSC_2nd_Customer_Update IS NOT NULL
-    THEN CASE 
-      WHEN TIMESTAMP_DIFF(h.GCSC_2nd_Customer_Update, h.GCSC_1st_Customer_Update, MINUTE) <= 90 THEN 'PASS'
+    THEN CASE
+      WHEN TIMESTAMP_DIFF(h.GCSC_2nd_Customer_Update, h.GCSC_1st_Customer_Update, MINUTE) <=
+        CASE WHEN COALESCE(NULLIF(h.Product_Family, ''), shr.Product_Family) = 'Voice' THEN 240 ELSE 90 END
+      THEN 'PASS'
       ELSE 'FAIL'
     END
     ELSE 'No Response'
