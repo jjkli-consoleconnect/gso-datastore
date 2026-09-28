@@ -169,21 +169,41 @@ Encapsulates date/time filters safely across timezones.
 ## 6. Analytics & CDR Schemas
 
 ### ReportBuilderRequest
+* `presetId` (*string / integer, tenant-specific; observed in Report Builder requests*): Saved Report Builder preset identifier. A preset is valid only for the endpoint and tenant where it is configured.
+* `serviceType` (*string; observed value `V` for voice*): Traffic/service type requested by the preset.
+* `showMasked` (*boolean*): Requests masked number fields where supported. Prefer `true` for analytics and chatbot use.
 * `metrics` (*array<string>*): KPI metrics requested (e.g., `ASR`, `NER`, `ACD`, `DURATION`, `ATTEMPTS`, `REVENUE`).
 * `groupBy` (*array<string>*): Dimensions for data aggregation (e.g., `START_DATE`, `COUNTRY`, `CARRIER`).
 * `startDate` (*string, ISO-8601*): Analytics query start time.
 * `endDate` (*string, ISO-8601*): Analytics query end time.
 * `filters` (*ReportBuilderRequestFilters*): Filter parameters.
+* `range` (*object; behavior not verified for Report Builder*): Candidate pagination fields `start` and `length`; do not assume the endpoint honors them.
+
+### Observed Report Builder response
+* `dataList` (*array<object>*): Report rows. A successful request with preset `2756` returned this property as an array of 10,000 objects.
+* Observed keys included `ASR`, `Destination`, `ACD`, `Outgoing_Carrier`, `Incoming_Trunk`, `Incoming_Account`, `Successful_Calls`, `Unsuccessful_Calls`, `Call_Attempts`, `Incoming_Carrier`, `Outgoing_Account`, `Outgoing_Trunk`, `Destination_Country`, `NER`, `Duration_(Minutes)`, and `Answered_Calls`.
+* The API returned 10,000 rows despite requesting `range.length=1`; changing `range.start` to `10000` returned the same first row. Pagination is unverified.
+* Date filters were included in the successful request, but the result had no date field proving that the requested window was applied. Validate against Linxa UI before relying on date-specific values.
 
 ### ReportBuilderRequestFilters
 * `carrierIds` (*array<integer>*): Filter by carrier IDs.
 * `countryCodes` (*array<string>*): Filter by destination country ISO codes.
 * `successfulCallsOnly` (*boolean*): Restricts output to completed calls.
 
-### CdrArchiveSummaryRequest / CdrArchiveRatedRequest
-* `startDate` (*string, ISO-8601*): CDR search window start time.
-* `endDate` (*string, ISO-8601*): CDR search window end time.
-* `filters` (*CdrArchiveSummaryRequestFilters* / *CdrArchiveRatedRequestFilters*): Specific CDR search conditions.
+### CdrArchiveSummaryRequest
+* `presetId` (*string / integer, tenant-specific*): CDR Archive preset ID. Do not assume a Report Builder preset ID is valid here.
+* `serviceType` (*string; tested value `V` for voice*): Service type.
+* `showMasked` (*boolean*): Prefer `true` unless unmasked fields are explicitly required and authorized.
+* `filters.from` / `filters.to` (*string*, tested format `YYYY-MM-DD HH:mm`): CDR Archive date/time filter.
+* `range.start` / `range.length` (*integer*): Offset/page candidate. CDR Archive accepted these in tested requests; large offsets can be slow or return `403`.
+
+### CdrArchiveRatedRequest
+* `presetId`, `serviceType`, `showMasked`, filters, and range may differ from the Summary request. Confirm the live OpenAPI schema before calling; do not infer that Report Builder fields apply.
+
+### Endpoint separation
+* Saved Report Builder preset: `POST /v1/report-builder/getReport`.
+* CDR Archive summary: `POST /v1/cdr-archive/getSummaryReport`.
+* A saved Report Builder preset `2756` returned HTTP `200` on `getReport` but `Preset does not exists` on `getSummaryReport` with the UAT credential.
 
 ### CdrArchiveRatedRequestFilters
 * `callId` (*string*): Unique SIP Call-ID string.
@@ -248,6 +268,9 @@ export interface WhitelistEntry {
 }
 
 export interface ReportBuilderRequest {
+  presetId: string;
+  serviceType: string;
+  showMasked: boolean;
   metrics: Array<'ASR' | 'NER' | 'ACD' | 'DURATION' | 'ATTEMPTS' | 'REVENUE'>;
   groupBy: Array<'START_DATE' | 'COUNTRY' | 'CARRIER' | 'PREFIX'>;
   startDate: string;
@@ -256,7 +279,23 @@ export interface ReportBuilderRequest {
     carrierIds?: number[];
     countryCodes?: string[];
     successfulCallsOnly?: boolean;
+    from?: string;
+    to?: string;
   };
+  /** Pagination was not demonstrated; the endpoint returned 10,000 rows for length=1. */
+  range?: { start: number; length: number };
+}
+
+export interface ReportBuilderResponse {
+  dataList: Array<Record<string, unknown>>;
+}
+
+export interface CdrArchiveSummaryRequest {
+  presetId: string;
+  serviceType: string;
+  showMasked: boolean;
+  filters: { from: string; to: string };
+  range?: { start: number; length: number };
 }
 
 export interface RoutingTestRequest {

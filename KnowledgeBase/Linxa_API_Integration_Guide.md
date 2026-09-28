@@ -47,6 +47,39 @@ Request:
 
 The response is expected to contain a session token. Different API documentation revisions name the field differently (`accessToken` or `token`), so inspect the response property names without printing the token value. Also capture `tokenType`, `expiresIn`, and any refresh-token field if supplied.
 
+### Deployed credential used by this workspace
+
+The tested workspace credential is stored in Google Secret Manager:
+
+- Secret: `linxa-api-authorization`
+- Project: `pccw-internal-virt-agent-uat`
+- Version: `latest`
+- Observed format: raw authorization value such as `<key-id>:<api-key>`
+
+The API requests tested successfully used the secret value directly as the `Authorization` header. Do not add `Bearer ` unless Linxa provides a JWT and its `tokenType` requires it. The secret is a Linxa credential; signing into Google only authorizes Secret Manager access and does not authenticate the Linxa API by itself.
+
+For local development, retrieve the secret into process memory and never print it:
+
+```powershell
+$authorization = (& gcloud secrets versions access latest `
+  --secret=linxa-api-authorization `
+  --project=pccw-internal-virt-agent-uat).Trim()
+```
+
+The deployed runtime service account needs `roles/secretmanager.secretAccessor` on the secret. Use the repo's Secret Manager helper where available. Do not give the secret or authorization header to an LLM, ADK prompt, tool arguments, browser, or logs.
+
+### ADK chatbot boundary
+
+For an ADK chatbot, the model should call a backend tool such as `get_linxa_saved_report`. The tool implementation, not the model, should:
+
+1. Read the Linxa credential from Secret Manager.
+2. Call the allowed Linxa endpoint from a runtime with the required VPC route.
+3. Validate preset IDs and date ranges against server-side policy.
+4. Apply masking and limit response size.
+5. Return only the report fields or aggregates the user is authorized to see.
+
+Never put the secret in ADK tool arguments, session state, model context, or the tool result. Keep endpoint permissions and allowed presets server-side.
+
 PowerShell login pattern:
 
 ```powershell
@@ -132,6 +165,88 @@ $response.Content
 ```
 
 Expected success is HTTP `200` with a JSON array. The first array element is the column header row. Remaining elements are CDR rows.
+
+## Report Builder: saved presets
+
+Use Report Builder for a saved Report Builder preset. Do not send this preset to the CDR Archive endpoint.
+
+Endpoint:
+
+```http
+POST /v1/report-builder/getReport
+```
+
+The following request was accepted for preset `2756` using the UAT Secret Manager credential. It is a connectivity/schema probe, not yet a validated production query:
+
+```json
+{
+  "presetId": "2756",
+  "serviceType": "V",
+  "showMasked": true,
+  "metrics": ["ATTEMPTS", "ASR", "ACD", "DURATION"],
+  "groupBy": ["START_DATE", "COUNTRY"],
+  "startDate": "2026-09-27T00:00:00Z",
+  "endDate": "2026-09-27T23:59:59Z",
+  "filters": {
+    "from": "2026-09-27 00:00",
+    "to": "2026-09-27 23:59",
+    "successfulCallsOnly": false
+  },
+  "range": {
+    "start": 0,
+    "length": 1
+  }
+}
+```
+
+Observed response:
+
+- HTTP `200`.
+- JSON object with a `dataList` property.
+- `dataList` contained 10,000 objects despite requesting `range.length=1`.
+- Each object contained fields including `ASR`, `Destination`, `ACD`, `Outgoing_Carrier`, `Incoming_Trunk`, `Incoming_Account`, `Successful_Calls`, `Unsuccessful_Calls`, `Call_Attempts`, `Incoming_Carrier`, `Outgoing_Account`, `Outgoing_Trunk`, `Destination_Country`, `NER`, `Duration_(Minutes)`, and `Answered_Calls`.
+- Sending `range.start=10000` returned the same first row and another 10,000 objects. Offset pagination was therefore not demonstrated and must not be assumed to work.
+- The result did not contain an obvious date field. The request returned data, but the date-filter semantics were not independently verified. Do not label the aggregates as a specific date range until validated against the Linxa UI or a known small period.
+
+PowerShell call pattern, with the credential already loaded securely into `$authorization`:
+
+```powershell
+$reportBody = @{
+  presetId = '2756'
+  serviceType = 'V'
+  showMasked = $true
+  metrics = @('ATTEMPTS', 'ASR', 'ACD', 'DURATION')
+  groupBy = @('START_DATE', 'COUNTRY')
+  startDate = '2026-09-27T00:00:00Z'
+  endDate = '2026-09-27T23:59:59Z'
+  filters = @{
+    from = '2026-09-27 00:00'
+    to = '2026-09-27 23:59'
+    successfulCallsOnly = $false
+  }
+} | ConvertTo-Json -Compress -Depth 6
+
+$reportResponse = Invoke-WebRequest -UseBasicParsing `
+  -Method Post `
+  -Uri "$baseUrl/v1/report-builder/getReport" `
+  -Headers @{ Authorization = $authorization; Accept = 'application/json' } `
+  -ContentType 'application/json' `
+  -Body $reportBody
+
+$report = ConvertFrom-Json -InputObject $reportResponse.Content
+$report.dataList
+```
+
+Use the preset's actual configured metrics and dimensions. The sample body above contains both the schema's `startDate`/`endDate` and the filter-style `from`/`to`; confirm which fields the preset honors before relying on a date-specific result. Avoid emitting `$reportResponse.Content` to logs because it may contain sensitive report data.
+
+### Report Builder versus CDR Archive
+
+| Need | Endpoint | Response shape | Tested preset behavior |
+|---|---|---|---|
+| Saved Report Builder report | `POST /v1/report-builder/getReport` | Object containing `dataList` of report objects | `2756` returned HTTP `200` here. |
+| CDR summary/detail archive | `POST /v1/cdr-archive/getSummaryReport` | JSON array; first row contains headers | `264` and `284` returned data in earlier tests; `2756` returned `Preset does not exists` with the UAT credential. |
+
+Preset IDs are endpoint- and tenant-configuration-specific. A Report Builder preset ID is not evidence that the same ID exists in CDR Archive. Use the endpoint where the preset was created.
 
 ## 4. CDR Summary request
 

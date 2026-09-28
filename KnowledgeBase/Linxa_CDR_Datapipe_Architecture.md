@@ -5,6 +5,13 @@ Planning note for a future Linxa CDR sync. No implementation exists yet.
 ## Confirmed API facts
 
 - Base URL: `https://pccwg.linxa.com/api/connect`
+- Saved Report Builder endpoint: `POST /v1/report-builder/getReport`.
+- CDR Archive endpoint: `POST /v1/cdr-archive/getSummaryReport`; this is a different report surface and should not be used for a saved Report Builder preset.
+- UAT credential is stored as Secret Manager secret `linxa-api-authorization` in project `pccw-internal-virt-agent-uat`. Retrieve server-side only; never pass the value to an LLM.
+- Report Builder preset `2756` returned HTTP `200` through `getReport` with the UAT credential and an object containing `dataList`.
+- The Report Builder response contained 10,000 aggregate objects even when `range.length=1`; `range.start=10000` returned the same first result. Pagination is not verified and may be ignored.
+- The Report Builder result fields included `ASR`, `Destination`, `ACD`, `Outgoing_Carrier`, `Incoming_Trunk`, `Incoming_Account`, `Successful_Calls`, `Unsuccessful_Calls`, `Call_Attempts`, `Incoming_Carrier`, `Outgoing_Account`, `Outgoing_Trunk`, `Destination_Country`, `NER`, `Duration_(Minutes)`, and `Answered_Calls`.
+- The date window sent to Report Builder was not independently verified because returned records did not expose a date field. Validate against Linxa UI or a known low-volume date before presenting date-labeled totals.
 - CDR endpoint tested: `POST /v1/cdr-archive/getSummaryReport`
 - Working preset tested: `284`
 - Service type tested: `V`
@@ -46,7 +53,60 @@ Shared deployment shape:
 - Secrets should come from Secret Manager, not source files.
 - Long-running sync functions use larger resource limits, for example `--timeout 3600s`, `--memory 2048Mi`, `--max-instances 5` in the nightly Jira pipes.
 
-## Proposed Linxa sync design
+## Proposed Linxa ADK/reporting design
+
+The chatbot must not connect directly from the model to Linxa. Implement a server-side ADK tool or backend service that owns credentials, network access, request validation, and response-size limits.
+
+```text
+User -> ADK agent -> get_linxa_saved_report tool (server-side)
+                         -> Secret Manager credential
+                         -> VPC-routed HTTPS request to Linxa
+                         -> validate and reduce response
+                         -> return authorized report data to agent
+```
+
+Tool requirements:
+
+- Read `linxa-api-authorization` from Secret Manager at runtime using the workload service account.
+- Send its raw configured value in the `Authorization` header as supplied; do not prepend `Bearer ` unless the credential is a JWT and Linxa requires it.
+- Allow only approved report IDs, initially including Report Builder preset `2756` if approved for the target environment.
+- Call `POST /v1/report-builder/getReport` for Report Builder presets.
+- Never route a Report Builder preset to `/v1/cdr-archive/getSummaryReport`.
+- Keep secrets out of model prompts, tool parameters, tool results, session state, logs, and user-visible errors.
+- Default to masked data and return a bounded result or aggregate rather than blindly returning a large `dataList` to the model.
+- Verify date filtering, limits, and pagination against Linxa before claiming complete date-specific results.
+- Enforce user authorization server-side before making the Linxa request.
+
+### Report Builder request probe
+
+The tested request shape was:
+
+```json
+{
+  "presetId": "2756",
+  "serviceType": "V",
+  "showMasked": true,
+  "metrics": ["ATTEMPTS", "ASR", "ACD", "DURATION"],
+  "groupBy": ["START_DATE", "COUNTRY"],
+  "startDate": "2026-09-27T00:00:00Z",
+  "endDate": "2026-09-27T23:59:59Z",
+  "filters": {
+    "from": "2026-09-27 00:00",
+    "to": "2026-09-27 23:59",
+    "successfulCallsOnly": false
+  }
+}
+```
+
+Response shape: JSON object with `dataList`, an array of objects. The probe returned 10,000 objects, and the offset range fields did not page the data. Treat the response as potentially capped or unbounded until Linxa documents the behavior. The request included date fields, but returned data did not prove that those filters were applied.
+
+### CDR Archive flow
+
+Use this only when the user needs CDR archive rows, not a saved Report Builder report. The tested endpoint is `POST /v1/cdr-archive/getSummaryReport`; it accepts `presetId`, `serviceType`, `showMasked`, `filters.from`/`filters.to`, and `range`. Presets `264`/`284` returned rows in earlier tests. Report Builder preset `2756` returned `Preset does not exists` on this endpoint with the UAT credential, confirming that preset IDs must not be treated as interchangeable across endpoints.
+
+For CDR Archive, the response is a JSON array with the header row at index 0 followed by record rows. Use bounded date windows, mask numbers, and do not pass raw rows to the LLM unless each user is authorized and the use case requires it.
+
+## Proposed scheduled Linxa CDR sync design
 
 1. Cloud Scheduler triggers the function once daily.
 2. Function computes the previous complete day in Linxa local/report time.
@@ -73,6 +133,8 @@ Shared deployment shape:
 6. Load raw rows into a BigQuery staging table.
 7. Merge into a final table using `CDR ID` as the primary dedupe key.
 8. Log every run with the repo's existing `setup_root_logging` plus `PipelineRuns` pattern.
+
+The saved Report Builder endpoint is a separate option for preset-backed report output. Do not base a daily ETL on it until date filtering, output caps, pagination, and repeatability are validated.
 
 ## Open decisions before implementation
 
