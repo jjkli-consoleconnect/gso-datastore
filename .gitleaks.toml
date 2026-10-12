@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Verified code expressions, public identifiers, and documentation placeholders"
+regexTarget = "match"
+regexes = [
+  '''helix_token,\s+dry_run=DRY_RUN''',
+  '''Authorization:\s*Token\s+YOUR_API_TOKEN''',
+  '''clientKey"\s*:\s*"[0-9a-fA-F-]{36}"''',
+  '''GPG_KEY['"]\s*:\s*['"][0-9a-fA-F]{40}['"]''',
+]

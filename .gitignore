@@ -63,8 +63,16 @@ Archive/
 
 # Environment files
 .env
+.env.*
+!.env.example
+!.env.*.example
 .env.local
 .env.*.local
+
+# Local Cloud SDK credentials and token caches
+.gcloud/
+.gcloud-config/
+application_default_credentials.json
 
 # Python virtual environments
 .venv/
