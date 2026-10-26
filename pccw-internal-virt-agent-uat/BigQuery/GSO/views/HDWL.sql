@@ -2,6 +2,7 @@ SELECT
   -- HelpDeskAllNOC fields (Ticket Table)
   h.Incident_Number,
   h.Status,
+  h.VIP,
   h.CaseType,
   h.ReportedDate as Reported_Date,
   h.RespondedDate as Responded_Date,

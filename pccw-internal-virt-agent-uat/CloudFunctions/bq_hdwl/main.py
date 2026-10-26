@@ -26,6 +26,7 @@ from googleapiclient.errors import HttpError
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+csv.field_size_limit(10 * 1024 * 1024)
 
 # Configuration
 PROJECT_ID = "pccw-internal-virt-agent-uat"
@@ -63,6 +64,92 @@ def get_bq_client() -> bigquery.Client:
     if _bq_client is None:
         _bq_client = bigquery.Client(project=PROJECT_ID)
     return _bq_client
+
+
+def is_softdelete_control_message(message_data: Dict[str, Any], message: Dict[str, Any]) -> bool:
+    """Keep soft-delete control reports out of the HelpDesk/WorkLog CSV pipe."""
+    subject = str(message_data.get("subject") or "")
+    if not subject:
+        headers = message.get("payload", {}).get("headers", [])
+        subject = next(
+            (header.get("value", "") for header in headers
+             if header.get("name", "").lower() == "subject"),
+            "",
+        )
+    if re.fullmatch(
+        r"\s*pubsub\s*-\s*(?:HDWL|HD)\s*-\s*softdelete\s*",
+        subject,
+        flags=re.IGNORECASE,
+    ):
+        return True
+
+    csv_filenames = [
+        str(part.get("filename", "")).strip().lower()
+        for part in message.get("payload", {}).get("parts", [])
+        if str(part.get("filename", "")).lower().endswith(".csv")
+    ]
+    return bool(csv_filenames) and all(
+        re.match(r"^for[\s_-]+soft[\s_-]*delete(?:\s|[-_])", filename)
+        for filename in csv_filenames
+    )
+
+
+def is_transient_bq_error(error: Exception) -> bool:
+    """Identify retryable BigQuery transport and backend failures."""
+    status_values = [
+        getattr(error, "code", None),
+        getattr(error, "status_code", None),
+        getattr(getattr(error, "response", None), "status_code", None),
+    ]
+    for status in status_values:
+        if callable(status):
+            try:
+                status = status()
+            except Exception:
+                continue
+        try:
+            if int(status) in {408, 429, 500, 502, 503, 504}:
+                return True
+        except (TypeError, ValueError):
+            continue
+
+    error_text = str(error).lower()
+    return any(
+        marker in error_text
+        for marker in (
+            "service unavailable",
+            "temporarily unavailable",
+            "deadline exceeded",
+            "connection reset",
+            "connection aborted",
+            " 429 ",
+            " 500 ",
+            " 502 ",
+            " 503 ",
+            " 504 ",
+        )
+    )
+
+
+def retry_bq_operation(operation, operation_name: str, max_attempts: int = 4):
+    """Retry an idempotent BigQuery result-fetch operation on transient errors."""
+    delay_seconds = 1.0
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return operation()
+        except Exception as error:
+            if not is_transient_bq_error(error) or attempt == max_attempts:
+                raise
+            logger.warning(
+                "Transient BigQuery error during %s (%s/%s): %s. Retrying in %.1fs.",
+                operation_name,
+                attempt,
+                max_attempts,
+                error,
+                delay_seconds,
+            )
+            time.sleep(delay_seconds)
+            delay_seconds = min(delay_seconds * 2, 8.0)
 
 
 # CSV type configurations
@@ -121,7 +208,32 @@ CSV_CONFIGURATIONS = [
             "RelatedItemDescription",
             "RelatedItemRelatedTicketID",
             "RelatedItemAssociationType",
+            "Status_Reason",
+            "Remarks",
+            "RPO_UMW_Reason",
+            "Scheduled_Start_Date",
+            "Scheduled_End_Date",
+            "Planner",
+            "VIP",
         ],
+        "optional_columns": [
+            "Status_Reason",
+            "Remarks",
+            "RPO_UMW_Reason",
+            "Scheduled_Start_Date",
+            "Scheduled_End_Date",
+            "Planner",
+            "VIP",
+        ],
+        "preserve_target_when_source_null": [
+            "Status_Reason",
+            "Remarks",
+            "RPO_UMW_Reason",
+            "Scheduled_Start_Date",
+            "Scheduled_End_Date",
+            "Planner",
+        ],
+        "raw_text_columns": ["Remarks", "RPO_UMW_Reason", "Planner"],
         "field_map": {
             "Request ID": "RelatedItemRequestID",
             "Description": "RelatedItemDescription",
@@ -136,9 +248,15 @@ CSV_CONFIGURATIONS = [
             "GCSC 1st Customer Update": "GCSC_1st_Customer_Update",
             "GCSC 2nd Customer Update": "GCSC_2nd_Customer_Update",
             "GCSC 3rd Customer Update": "GCSC_3rd_Customer_Update",
+            "GCSC1stCustomerUpdate": "GCSC_1st_Customer_Update",
+            "GCSC2ndCustomerUpdate": "GCSC_2nd_Customer_Update",
+            "GCSC3rdCustomerUpdate": "GCSC_3rd_Customer_Update",
             "Initial Response Time": "Initial_Response_Time",
             "Second Response Time": "Second_Response_Time",
             "Third Response Time": "Third_Response_Time",
+            "InitialResponseTime": "Initial_Response_Time",
+            "SecondResponseTime": "Second_Response_Time",
+            "ThirdResponseTime": "Third_Response_Time",
             "Prod ID": "Prod_ID",
             "FaultCause": "Fault_Cause",
             "Closed Date": "Closed_Date",
@@ -157,6 +275,12 @@ CSV_CONFIGURATIONS = [
             "Fault Location": "Fault_Location",
             "Service Type": "Service_Type",
             "Destination": "Destination",
+            "RPO_UMWReason": "RPO_UMW_Reason",
+            "ScheduledStartDate": "Scheduled_Start_Date",
+            "ScheduledEndDate": "Scheduled_End_Date",
+            "RPO_UMW Reason": "RPO_UMW_Reason",
+            "Scheduled Start Date": "Scheduled_Start_Date",
+            "Scheduled End Date": "Scheduled_End_Date",
         },
         "timestamp_fields": [
             "GCSC_1st_Customer_Update",
@@ -168,6 +292,8 @@ CSV_CONFIGURATIONS = [
             "ReportedDate",
             "RespondedDate",
             "LastModifiedDate",
+            "Scheduled_Start_Date",
+            "Scheduled_End_Date",
         ],
         "integer_fields": [
             "Initial_Response_Time",
@@ -184,6 +310,7 @@ CSV_CONFIGURATIONS = [
         "target_dataset": "GSO",
         "target_table": "WorkLogAllNOC",
         "primary_key": "WorkLog_ID",
+        "overflow_join_column": "ExtractedDescription",
         "all_columns": [
             "Incident_Number",
             "WorkLog_Type",
@@ -452,7 +579,9 @@ def reconcile_merged_primary_keys(
         """
 
     job = bq_client.query(sql, job_config=bigquery.QueryJobConfig(use_legacy_sql=False))
-    row = next(iter(job.result()), None)
+    row = retry_bq_operation(
+        lambda: next(iter(job.result()), None), "primary-key reconciliation"
+    )
     if row is None:
         return 0, 0, 0, []
 
@@ -541,7 +670,7 @@ def sanitize_csv_text(text: str) -> Tuple[str, int]:
     wrong whenever a description contains a stray quote character, and it would
     then corrupt legitimately quoted multi-line fields.
     """
-    lines = text.splitlines()
+    lines = text.splitlines(keepends=True)
     removed = 0
     while lines:
         stripped = lines[0].strip()
@@ -553,7 +682,7 @@ def sanitize_csv_text(text: str) -> Tuple[str, int]:
             break
         lines.pop(0)
         removed += 1
-    return "\n".join(lines), removed
+    return "".join(lines), removed
 
 
 def is_non_data_artifact_row(row: List[str]) -> bool:
@@ -574,10 +703,28 @@ def is_non_data_artifact_row(row: List[str]) -> bool:
     return RFC822_HEADER_RE.match(cells[0]) is not None
 
 
-def robust_parse_csv(csv_data: bytes) -> List[List[str]]:
+def is_worklog_forwarded_body_row(
+    row: List[str], headers: List[str], config: Dict[str, Any]
+) -> bool:
+    """Identify forwarded email body rows that cannot be WorkLog records."""
+    if config["name"] != "WorkLog":
+        return False
+
+    worklog_id_index = headers.index("WorkLog_ID")
+    if len(row) <= worklog_id_index:
+        return True
+
+    return re.fullmatch(r"WLG\d+", row[worklog_id_index].strip(), re.IGNORECASE) is None
+
+
+def robust_parse_csv(
+    csv_data: bytes, config: Optional[Dict[str, Any]] = None
+) -> List[List[str]]:
     """Parse CSV with multiple encoding attempts"""
     encodings = ["utf-8", "utf-16", "latin-1", "cp1252"]
-    candidates: List[List[List[str]]] = []
+    best_rows: Optional[List[List[str]]] = None
+    best_contract_rows: Optional[List[List[str]]] = None
+    best_contract_width = 0
     junk_removed_counts: List[int] = []
 
     def try_parse(
@@ -648,23 +795,36 @@ def robust_parse_csv(csv_data: bytes) -> List[List[str]]:
                 seen_strategies.add(strategy_key)
                 try:
                     rows = try_parse(text, delimiter, quote_none)
-                    if rows:
-                        candidates.append(rows)
+                    if rows and (best_rows is None or len(rows[0]) > len(best_rows[0])):
+                        best_rows = rows
+                    if rows and config:
+                        try:
+                            header_index = locate_header_row(rows, config)
+                        except ValueError:
+                            continue
+                        header_width = len(rows[header_index])
+                        if header_width > best_contract_width:
+                            best_contract_rows = rows
+                            best_contract_width = header_width
                 except Exception:
                     continue
         except Exception:
             continue
 
-    if candidates:
+    if best_contract_rows:
+        return best_contract_rows
+
+    if best_rows:
         # Prefer the parse with the widest header, which is usually the correct delimiter.
-        candidates.sort(key=lambda candidate: len(candidate[0]), reverse=True)
-        return candidates[0]
+        return best_rows
 
     raise ValueError("Could not parse CSV with any encoding/delimiter combination")
 
 
 def detect_known_non_data_payload(csv_data: bytes) -> Optional[str]:
-    """Detect known Remedy outage/maintenance payloads mislabeled as CSV attachments."""
+    """Detect explicit empty exports and known Remedy outage payloads."""
+    if csv_data.removeprefix(b"\xef\xbb\xbf").strip() == b"No data":
+        return "upstream_no_data"
     try:
         preview_text = csv_data.decode("utf-8", errors="ignore").strip()
     except Exception:
@@ -793,8 +953,12 @@ def normalize_rsm_name(value: Any) -> Any:
     return " ".join(parts[1:] + [parts[0]])
 
 
-def handle_empty_values(value: Any, is_timestamp: bool, is_integer: bool) -> Any:
+def handle_empty_values(
+    value: Any, is_timestamp: bool, is_integer: bool, preserve_text: bool = False
+) -> Any:
     """Handle empty values and type conversions"""
+    if preserve_text:
+        return None if value is None or value == "" else value
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
 
@@ -840,6 +1004,17 @@ def handle_empty_values(value: Any, is_timestamp: bool, is_integer: bool) -> Any
     return value_str
 
 
+def normalize_vip_value(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip().casefold()
+    if not normalized or normalized == "null":
+        return None
+    if normalized in {"yes", "no"}:
+        return normalized.title()
+    raise ValueError(f"Invalid VIP value {value!r}; expected Yes, No, or null")
+
+
 def locate_header_row(rows: List[List[str]], config: Dict[str, Any]) -> int:
     """Return the index of the row holding the CSV header.
 
@@ -849,17 +1024,73 @@ def locate_header_row(rows: List[List[str]], config: Dict[str, Any]) -> int:
     catches a genuine format change (e.g. a different delimiter) instead of
     silently merging a fraction of the file.
     """
-    expected_headers = list(config["all_columns"])
+    optional_headers = set(config.get("optional_columns", []))
+    required_headers = [
+        column for column in config["all_columns"] if column not in optional_headers
+    ]
     headers: List[str] = []
     for index, row in enumerate(rows):
         headers = [standardize_field_name(h, config["field_map"]) for h in row]
-        if all(column in headers for column in expected_headers):
+        if all(column in headers for column in required_headers):
             return index
-    missing_headers = [column for column in expected_headers if column not in headers]
+    missing_headers = [column for column in required_headers if column not in headers]
     raise ValueError(
         f"Header contract violation for {config['name']}: missing required "
         f"headers {missing_headers}. Got: {headers}"
     )
+
+
+def get_merge_columns(
+    staging_columns: List[str], target_columns: List[str], source_headers: List[str]
+) -> List[str]:
+    """Match target columns, excluding VIP when a legacy source lacks its header."""
+    target_columns_lower = {column.lower(): column for column in target_columns}
+    source_headers_lower = {header.lower() for header in source_headers}
+    merge_columns = []
+    for column in staging_columns:
+        if column.lower() == "vip" and "vip" not in source_headers_lower:
+            continue
+        target_column = target_columns_lower.get(column.lower())
+        if target_column:
+            merge_columns.append(target_column)
+    return merge_columns
+
+
+def get_missing_target_columns(
+    staging_columns: List[str], target_columns: List[str]
+) -> List[str]:
+    target_columns_lower = {column.lower() for column in target_columns}
+    return [column for column in staging_columns if column.lower() not in target_columns_lower]
+
+
+def repair_trailing_text_overflow(
+    row: List[str], headers: List[str], config: Dict[str, Any]
+) -> Optional[List[str]]:
+    """Rejoin unquoted delimiters in a validated trailing free-text column."""
+    free_text_column = config.get("overflow_join_column")
+    if not free_text_column or len(row) <= len(headers):
+        return None
+
+    text_index = headers.index(free_text_column) if free_text_column in headers else -1
+    if text_index != len(headers) - 1:
+        return None
+
+    worklog_id_index = headers.index("WorkLog_ID")
+    if (
+        len(row) <= worklog_id_index
+        or not row[worklog_id_index].strip().upper().startswith("WLG")
+    ):
+        return None
+
+    for timestamp_column in config["timestamp_fields"]:
+        timestamp_index = headers.index(timestamp_column)
+        if (
+            len(row) <= timestamp_index
+            or handle_empty_values(row[timestamp_index], True, False) is None
+        ):
+            return None
+
+    return row[:text_index] + [",".join(row[text_index:])]
 
 
 def process_csv_attachment(
@@ -890,7 +1121,7 @@ def process_csv_attachment(
 
     try:
         # Parse CSV
-        rows = robust_parse_csv(csv_data)
+        rows = robust_parse_csv(csv_data, config)
 
         # ---- Locate the header row and enforce the header contract. Normally this
         # ---- is rows[0]; forwarded-email wrapper content can precede it, so the
@@ -922,6 +1153,7 @@ def process_csv_attachment(
         junk_rows_skipped = 0
         ragged_rows_skipped = 0
         over_width_rows_skipped = 0
+        repaired_overflow_rows = 0
         ragged_row_samples: List[List[str]] = []
 
         for row in rows[header_index + 1 :]:
@@ -929,9 +1161,16 @@ def process_csv_attachment(
             # ---- export (e.g. 'To: ...', 'Date: ...', '===='). These are dropped
             # ---- rather than failing the run. Classified post-parse, so newlines
             # ---- inside quoted multi-line fields are never touched.
-            if is_non_data_artifact_row(row):
+            if is_non_data_artifact_row(row) or is_worklog_forwarded_body_row(
+                row, headers, config
+            ):
                 junk_rows_skipped += 1
                 continue
+
+            repaired_row = repair_trailing_text_overflow(row, headers, config)
+            if repaired_row is not None:
+                row = repaired_row
+                repaired_overflow_rows += 1
 
             # ---- A real data row must match the header width. Narrower rows are
             # ---- stray wrapper text ('Hi GSOC:', 'To: ...'), so they are dropped
@@ -950,7 +1189,12 @@ def process_csv_attachment(
                 value = row[i] if i < len(row) else None
                 is_ts = header in config["timestamp_fields"]
                 is_int = header in config["integer_fields"]
-                normalized_value = handle_empty_values(value, is_ts, is_int)
+                normalized_value = handle_empty_values(
+                    value,
+                    is_ts,
+                    is_int,
+                    preserve_text=header in config.get("raw_text_columns", []),
+                )
                 if header == "RSMName":
                     normalized_value = normalize_rsm_name(normalized_value)
                 if header in [
@@ -960,10 +1204,20 @@ def process_csv_attachment(
                     "Destination",
                 ]:
                     normalized_value = normalize_text_field(normalized_value)
+                if header == "VIP":
+                    normalized_value = normalize_vip_value(normalized_value)
                 if header == "Customer_Name":
                     normalized_value = normalize_customer_name(normalized_value)
                 obj[header] = normalized_value
             ndjson_lines.append(json.dumps(obj))
+
+        if repaired_overflow_rows:
+            logger.warning(
+                "Rejoined unquoted delimiters in %s %s row(s) into %s",
+                config["name"],
+                repaired_overflow_rows,
+                config["overflow_join_column"],
+            )
 
         if junk_rows_skipped:
             logger.warning(
@@ -1039,7 +1293,7 @@ def process_csv_attachment(
         load_job = bq_client.load_table_from_file(
             io.BytesIO(ndjson_content.encode()), staging_table_id, job_config=job_config
         )
-        load_job.result()
+        retry_bq_operation(load_job.result, f"loading {config['name']} attachment")
         logger.info(f"Loaded data to {staging_table_id}")
         set_temp_table_expiration(bq_client, staging_table_id)
 
@@ -1065,23 +1319,11 @@ def process_csv_attachment(
             f"Staging table has {len(staging_columns)} columns, target table has {len(target_columns)} columns."
         )
 
-        # Build a case-insensitive map of target columns for matching
-        target_columns_lower = {col.lower(): col for col in target_columns}
-
-        # Get all staging columns, using the actual target column name if it exists (case-insensitive)
-        merge_columns = []
-        for col in staging_columns:
-            if col.lower() in target_columns_lower:
-                merge_columns.append(
-                    target_columns_lower[col.lower()]
-                )  # Use the actual target column name
+        # Use only source-present VIP values so older snapshots do not clear them.
+        merge_columns = get_merge_columns(staging_columns, target_columns, headers)
 
         if len(merge_columns) < len(staging_columns):
-            missing = [
-                col
-                for col in staging_columns
-                if col.lower() not in target_columns_lower
-            ]
+            missing = get_missing_target_columns(staging_columns, target_columns)
             logger.warning(
                 f"Warning: {len(missing)} staging columns not in target: {', '.join(missing)}"
             )
@@ -1100,7 +1342,10 @@ def process_csv_attachment(
             duplicate_check_query,
             job_config=bigquery.QueryJobConfig(use_legacy_sql=False),
         )
-        duplicate_check_row = next(iter(duplicate_check_job.result()), None)
+        duplicate_check_row = retry_bq_operation(
+            lambda: next(iter(duplicate_check_job.result())),
+            f"checking duplicate {config['name']} keys",
+        )
         if duplicate_check_row:
             total_rows = int(duplicate_check_row.total_rows or 0)
             distinct_keys = int(duplicate_check_row.distinct_keys or 0)
@@ -1204,7 +1449,14 @@ def process_csv_attachment(
             )
 
         update_cols = [col for col in merge_columns if col != primary_key]
-        update_set = ",".join([f"T.{col} = {source_expr(col)}" for col in update_cols])
+        preserve_null_columns = set(config.get("preserve_target_when_source_null", []))
+        update_assignments = []
+        for col in update_cols:
+            expression = source_expr(col)
+            if col in preserve_null_columns:
+                expression = f"COALESCE({expression}, T.{col})"
+            update_assignments.append(f"T.{col} = {expression}")
+        update_set = ",".join(update_assignments)
         insert_cols = ",".join(merge_columns)
         insert_vals = ",".join([source_expr(col) for col in merge_columns])
 
@@ -1232,7 +1484,9 @@ def process_csv_attachment(
         for attempt in range(1, max_merge_attempts + 1):
             try:
                 merge_job = bq_client.query(merge_query, job_config=query_config)
-                merge_job.result()
+                retry_bq_operation(
+                    merge_job.result, f"merging {config['name']} attachment"
+                )
                 break
             except BadRequest as merge_error:
                 err_text = str(merge_error).lower()
@@ -1290,6 +1544,14 @@ def process_csv_attachment(
 
     except Exception as e:
         error_text = str(e).lower()
+        if is_transient_bq_error(e):
+            logger.warning(
+                "Transient BigQuery failure processing %s; allowing Pub/Sub retry: %s",
+                attachment_filename,
+                e,
+            )
+            raise
+
         non_retryable_reasons = {
             "could not parse csv with any encoding/delimiter combination": "unparseable_csv_payload",
         }
@@ -1405,6 +1667,7 @@ def log_pipeline_run(
                     or "too many dml statements outstanding" in err_text
                     or "could not serialize access" in err_text
                     or "concurrent update" in err_text
+                    or is_transient_bq_error(attempt_error)
                 )
                 if not retryable_logging_error:
                     raise
@@ -1447,7 +1710,10 @@ def cleanup_stale_running() -> None:
             ]
         )
         bq_client = get_bq_client()
-        bq_client.query(cleanup_query, job_config=job_config).result(timeout=45)
+        cleanup_job = bq_client.query(cleanup_query, job_config=job_config)
+        retry_bq_operation(
+            lambda: cleanup_job.result(timeout=45), "cleaning stale pipeline runs"
+        )
         logger.info("Stale RUNNING cleanup completed")
     except Exception as cleanup_error:
         logger.warning(f"Stale RUNNING cleanup failed: {cleanup_error}")
@@ -1561,8 +1827,36 @@ def process_bq_hdwl_email(cloud_event):
             f"Message retrieved. Payload parts count: {len(message['payload'].get('parts', []))}"
         )
 
+        if is_softdelete_control_message(message_data, message):
+            manage_gmail_labels(
+                service,
+                message_id,
+                "pubsub",
+                "ArchivedReports",
+                extra_remove_label_name="HDWL_PROCESSING",
+            )
+            skip_message = "Acknowledged soft-delete control email; no CSV data processed"
+            log_pipeline_run(
+                _current_run_id,
+                "SUCCESS",
+                "INFO",
+                skip_message,
+                None,
+                None,
+                0,
+                None,
+                {
+                    "messageId": message_id,
+                    "skipped": True,
+                    "skipReason": "softdelete_control_email",
+                },
+            )
+            logger.info("Pipeline run %s skipped soft-delete control email", _current_run_id)
+            return
+
         # Process each CSV attachment
         csv_found = False
+        processed_attachment_count = 0
         for part in message["payload"].get("parts", []):
             filename = part.get("filename", "").lower()
             logger.info(f"Checking part: filename='{filename}'")
@@ -1574,6 +1868,7 @@ def process_bq_hdwl_email(cloud_event):
                 for config in CSV_CONFIGURATIONS:
                     if filename.startswith(config["filename_prefix"]):
                         matched_config = True
+                        processed_attachment_count += 1
                         matched_config_names.add(config["name"])
                         logger.info(f"Matched config: {config['name']}")
                         success, rows, skip_reason = process_csv_attachment(
@@ -1628,8 +1923,16 @@ def process_bq_hdwl_email(cloud_event):
             f"MatchedConfigs={sorted(matched_config_names)}; "
             f"SkippedAttachments={len(skipped_attachments)}"
         )
-        success_log_level = "WARNING" if skipped_attachments else "INFO"
-        success_error_code = "UPSTREAM_MAINTENANCE" if skipped_attachments else None
+        unexpected_skips = [
+            item for item in skipped_attachments if item["reason"] != "upstream_no_data"
+        ]
+        all_empty_report = (
+            total_rows_merged == 0
+            and len(skipped_attachments) == processed_attachment_count
+            and not unexpected_skips
+        )
+        success_log_level = "WARNING" if unexpected_skips else "INFO"
+        success_error_code = "UPSTREAM_MAINTENANCE" if unexpected_skips else None
         log_pipeline_run(
             _current_run_id,
             "SUCCESS",
@@ -1646,32 +1949,40 @@ def process_bq_hdwl_email(cloud_event):
                 "failedAttachments": failed_attachments,
                 "unmatchedCsvAttachments": unmatched_csv_attachments,
                 "skippedAttachments": skipped_attachments,
+                **({"skipReason": "upstream_no_data"} if all_empty_report else {}),
             },
         )
         logger.info(f"Pipeline run {_current_run_id} completed successfully")
 
     except Exception as e:
         logger.error(f"Pipeline error: {e}")
+        retryable_bq_failure = is_transient_bq_error(e)
 
-        try:
-            if "message_id" in locals() and message_id:
-                manage_gmail_labels(
-                    service,
-                    message_id,
-                    "pubsub",
-                    "ArchivedReports",
-                    extra_remove_label_name="HDWL_PROCESSING",
-                )
-                logger.warning(
-                    "Archived failed HDWL message %s to stop retry-loop reprocessing.",
-                    message_id,
-                )
-        except Exception as label_error:
+        if retryable_bq_failure:
             logger.warning(
-                "Failed to archive retry-loop message %s after processing error: %s",
+                "Leaving message %s unarchived so Pub/Sub can retry the transient BigQuery failure.",
                 message_id if "message_id" in locals() else None,
-                label_error,
             )
+        else:
+            try:
+                if "message_id" in locals() and message_id:
+                    manage_gmail_labels(
+                        service,
+                        message_id,
+                        "pubsub",
+                        "ArchivedReports",
+                        extra_remove_label_name="HDWL_PROCESSING",
+                    )
+                    logger.warning(
+                        "Archived failed HDWL message %s to stop retry-loop reprocessing.",
+                        message_id,
+                    )
+            except Exception as label_error:
+                logger.warning(
+                    "Failed to archive retry-loop message %s after processing error: %s",
+                    message_id if "message_id" in locals() else None,
+                    label_error,
+                )
 
         log_pipeline_run(
             _current_run_id,
@@ -1699,4 +2010,6 @@ def process_bq_hdwl_email(cloud_event):
                 "rowsByTable": rows_by_config if "rows_by_config" in locals() else {},
             },
         )
+        if retryable_bq_failure:
+            raise
         return
