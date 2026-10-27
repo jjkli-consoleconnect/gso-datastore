@@ -1,0 +1,16 @@
+.gcloudignore
+.git
+.gitignore
+__pycache__/
+*.py[cod]
+*.json
+.env*
+test_*.py
+authorize.py
+deploy.py
+HISTORY.md
+*.bak
+*.txt
+!requirements.txt
+shared/commands/
+shared/test_*.py

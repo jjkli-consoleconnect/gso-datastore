@@ -4,6 +4,8 @@ Central runbooks and operational notes for this repo.
 
 ## Current Documents
 
+- [Calendar maintenance user OAuth](Calendar_Maintenance_User_OAuth.md) - user-only Calendar consent, secure token storage, verification and deployment.
+
 - `Jira_CloudFunctions_Security.md` - security baseline, deployment guardrails, and verification checks for Jira Cloud Functions.
 - `Helix_Service_Spec_v8_Internal.md` - canonical converted Helix Trouble Ticketing API specification.
 - `HELIX_ServiceSpec_v8_Detailed_Notes.md` - implementation notes derived from the Helix v8 specification.
