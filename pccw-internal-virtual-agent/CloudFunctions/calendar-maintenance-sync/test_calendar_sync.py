@@ -287,6 +287,9 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(http_status, code)
                 self.assertEqual(response["rows_processed"], 1)
                 self.assertEqual(log_run.call_args.kwargs["status"], status)
+                self.assertEqual(log_run.call_args.kwargs["project"], "pccw-internal-virtual-agent")
+                self.assertEqual(log_run.call_args.kwargs["dataset"], "Datapipe")
+                self.assertEqual(log_run.call_args.kwargs["table"], "PipelineRuns")
 
     @patch.object(main, "log_pipeline_run")
     @patch.object(main, "upsert_calendar_event", side_effect=http_error(403))
@@ -298,6 +301,9 @@ class PipelineTests(unittest.TestCase):
             main.sync_maintenance_to_calendar(None)
         self.assertEqual(upsert.call_count, 1)
         self.assertEqual(log_run.call_args.kwargs["status"], "FAILED")
+        self.assertEqual(log_run.call_args.kwargs["project"], "pccw-internal-virtual-agent")
+        self.assertEqual(log_run.call_args.kwargs["dataset"], "Datapipe")
+        self.assertEqual(log_run.call_args.kwargs["table"], "PipelineRuns")
 
 
 class AuthorizationSetupTests(unittest.TestCase):

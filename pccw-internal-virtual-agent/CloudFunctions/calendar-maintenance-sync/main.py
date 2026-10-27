@@ -235,6 +235,8 @@ def sync_maintenance_to_calendar(request):
             window_end=None,
             duration_seconds=duration_seconds,
             project=PROJECT_ID,
+            dataset="Datapipe",
+            table="PipelineRuns",
         )
 
         logger.info(
@@ -264,6 +266,8 @@ def sync_maintenance_to_calendar(request):
                 error_code=str(err),
                 duration_seconds=(datetime.utcnow() - start_time).total_seconds(),
                 project=PROJECT_ID,
+                dataset="Datapipe",
+                table="PipelineRuns",
             )
         raise
 

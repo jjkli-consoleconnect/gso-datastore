@@ -117,6 +117,21 @@ only that event. A successful metadata read alone does not prove event writes.
 
 ## Deployment and sync behavior
 
+Success, partial-failure and failure audit records explicitly target
+`pccw-internal-virtual-agent.Datapipe.PipelineRuns` (EU). The Calendar function
+passes the production project, dataset and table to the shared logger rather
+than inheriting its UAT/GSO defaults. The initial 76-event run completed its
+Calendar writes but returned HTTP 500 because logging targeted the nonexistent
+production `GSO.PipelineRuns` table. Do not rerun Calendar writes just to repair
+that audit failure.
+
+The audit-target fix was deployed as revision
+`remedy-maintenance-calendar-sync-00017-com`. All 29 regression tests passed;
+BigQuery accepted a dry run of the actual logger MERGE against the production
+table. Inspection of the deployed source confirmed both audit calls explicitly
+select `Datapipe.PipelineRuns`, and the deployed auth check returned HTTP 200.
+No Calendar sync or real audit write was run during this verification.
+
 Deploy using the function's `deploy.py` after verification. Recreate the local
 environment above if needed:
 
