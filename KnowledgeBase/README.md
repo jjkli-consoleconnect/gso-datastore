@@ -4,6 +4,7 @@ Central runbooks and operational notes for this repo.
 
 ## Current Documents
 
+- [Daily Confluence sync](Confluence_Daily_Sync.md) - schedule, setup, and required secrets for syncing the UAT cutover playbook.
 - [Calendar maintenance user OAuth](Calendar_Maintenance_User_OAuth.md) - user-only Calendar consent, secure token storage, verification and deployment.
 
 - `Jira_CloudFunctions_Security.md` - security baseline, deployment guardrails, and verification checks for Jira Cloud Functions.
